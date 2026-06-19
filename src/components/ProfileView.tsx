@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Folder, File as FileIcon, Download, Loader2, AlertCircle } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useApp } from "../store/app";
+import { useTransfers } from "../store/transfers";
 import { ProviderIcon, providerName } from "./icons";
 import { Button } from "./ui";
 import { listFolder, type RcItem } from "../lib/rc/browse";
 import { formatBytes, formatDate } from "../lib/format";
+import type { DownloadItem } from "../lib/tauri/commands";
+
+const FOLDER_KEY = "default_download_folder";
 
 export function ProfileView({ id }: { id: string }) {
   const account = useApp((s) => s.accounts.find((a) => a.id === id));
+  const startTransfer = useTransfers((s) => s.start);
 
   const [path, setPath] = useState("");
   const [items, setItems] = useState<RcItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [downloadErr, setDownloadErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!account) return;
@@ -34,14 +41,15 @@ export function ProfileView({ id }: { id: string }) {
     load();
   }, [load]);
 
-  const files = useMemo(() => items.filter((i) => !i.IsDir), [items]);
   const totalSelected = useMemo(
-    () => files.filter((f) => selected.has(f.Path)).reduce((sum, f) => sum + Math.max(0, f.Size), 0),
-    [files, selected],
+    () =>
+      items.filter((i) => selected.has(i.Path)).reduce((sum, i) => sum + Math.max(0, i.Size), 0),
+    [items, selected],
   );
 
   const rootLabel = account?.provider === "drive" ? "Shared with me" : "Home";
   const segments = path ? path.split("/") : [];
+  const allSelected = items.length > 0 && selected.size === items.length;
 
   function toggle(p: string) {
     setSelected((prev) => {
@@ -52,9 +60,27 @@ export function ProfileView({ id }: { id: string }) {
   }
 
   function toggleAll() {
-    setSelected((prev) =>
-      prev.size === files.length && files.length > 0 ? new Set() : new Set(files.map((f) => f.Path)),
-    );
+    setSelected(allSelected ? new Set() : new Set(items.map((i) => i.Path)));
+  }
+
+  async function download() {
+    if (!account || selected.size === 0) return;
+    setDownloadErr(null);
+    let dest = localStorage.getItem(FOLDER_KEY) ?? "";
+    if (!dest) {
+      const picked = await open({ directory: true, multiple: false });
+      if (typeof picked !== "string") return; // cancelled
+      dest = picked;
+    }
+    const chosen: DownloadItem[] = items
+      .filter((i) => selected.has(i.Path))
+      .map((i) => ({ path: i.Path, name: i.Name, isDir: i.IsDir, size: Math.max(0, i.Size) }));
+    try {
+      await startTransfer(account.id, chosen, dest);
+      setSelected(new Set());
+    } catch (e) {
+      setDownloadErr(String(e));
+    }
   }
 
   if (!account) return <div className="p-8 text-sm text-[var(--text-2)]">Account not found.</div>;
@@ -112,14 +138,12 @@ export function ProfileView({ id }: { id: string }) {
             <thead>
               <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--text-3)]">
                 <th className="w-8 py-2">
-                  {files.length > 0 && (
-                    <input
-                      type="checkbox"
-                      aria-label="Select all files"
-                      checked={selected.size === files.length && files.length > 0}
-                      onChange={toggleAll}
-                    />
-                  )}
+                  <input
+                    type="checkbox"
+                    aria-label="Select all"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                  />
                 </th>
                 <th className="py-2 font-medium">Name</th>
                 <th className="w-32 py-2 text-right font-medium">Size</th>
@@ -130,14 +154,12 @@ export function ProfileView({ id }: { id: string }) {
               {items.map((item) => (
                 <tr key={item.Path} className="border-b border-[var(--border)]/50 hover:bg-[var(--hover)]">
                   <td className="py-2">
-                    {!item.IsDir && (
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${item.Name}`}
-                        checked={selected.has(item.Path)}
-                        onChange={() => toggle(item.Path)}
-                      />
-                    )}
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${item.Name}`}
+                      checked={selected.has(item.Path)}
+                      onChange={() => toggle(item.Path)}
+                    />
                   </td>
                   <td className="py-2">
                     {item.IsDir ? (
@@ -168,12 +190,13 @@ export function ProfileView({ id }: { id: string }) {
 
       {/* Selection summary bar */}
       {selected.size > 0 && (
-        <div className="flex items-center justify-between border-t border-[var(--border)] bg-[var(--surface)] px-6 py-3">
+        <div className="flex items-center justify-between gap-4 border-t border-[var(--border)] bg-[var(--surface)] px-6 py-3">
           <span className="text-sm text-[var(--text-2)]">
             Selected: <span className="tnum text-[var(--text)]">{selected.size}</span> items ·{" "}
             <span className="tnum text-[var(--text)]">{formatBytes(totalSelected)}</span>
+            {downloadErr && <span className="ml-3 text-[var(--error)]">{downloadErr}</span>}
           </span>
-          <Button variant="primary" disabled title="Downloads arrive in the next update">
+          <Button variant="primary" onClick={download}>
             <Download size={16} /> Download
           </Button>
         </div>

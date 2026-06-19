@@ -54,3 +54,51 @@ export const SECRET_KEYS = {
   drive: { id: "google_client_id", secret: "google_client_secret" },
   dropbox: { id: "dropbox_app_key", secret: "dropbox_app_secret" },
 } as const;
+
+/** An item to download. */
+export interface DownloadItem {
+  path: string;
+  name: string;
+  isDir: boolean;
+  size: number;
+}
+
+/** Live status of a download job. */
+export interface JobStatus {
+  jobId: number;
+  accountId: string;
+  name: string;
+  dest: string;
+  totalBytes: number;
+  bytes: number;
+  speed: number;
+  eta: number | null;
+  finished: boolean;
+  success: boolean;
+  cancelled: boolean;
+  error: string;
+}
+
+/** Start downloads for the selected items into `dest`; returns the new jobs. */
+export function startDownload(
+  accountId: string,
+  items: DownloadItem[],
+  dest: string,
+): Promise<JobStatus[]> {
+  return invoke<JobStatus[]>("start_download", { accountId, items, dest });
+}
+
+/** Poll live status of all tracked jobs. */
+export function listJobs(): Promise<JobStatus[]> {
+  return invoke<JobStatus[]>("list_jobs");
+}
+
+/** Cancel a running job. */
+export function cancelJob(jobId: number): Promise<void> {
+  return invoke("cancel_job", { jobId });
+}
+
+/** Drop finished/cancelled jobs from tracking. */
+export function clearFinishedJobs(): Promise<void> {
+  return invoke("clear_finished_jobs");
+}

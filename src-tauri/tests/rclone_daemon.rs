@@ -5,6 +5,7 @@
 //! the supervisor's `wait_until_ready` / `RcConnection`, but spawns the raw
 //! binary via `std::process::Command` instead of the Tauri sidecar API.
 
+use google_drive_downloader_lib::download::{build_copy, DownloadItem};
 use google_drive_downloader_lib::rclone::config::{build_rcd_args, pick_free_port, RcConfig};
 use google_drive_downloader_lib::rclone::supervisor::{rc_post, wait_until_ready, RcConnection};
 use std::path::PathBuf;
@@ -167,5 +168,87 @@ fn rclone_daemon_listremotes_empty_with_temp_config() {
     );
 
     // Cleanup the temp config if rclone created it.
+    let _ = std::fs::remove_file(&config_path);
+}
+
+/// Proves the full download machinery offline: an async `operations/copyfile`
+/// (built by `build_copy`) from one local dir to another, polled to completion
+/// via `job/status`, with the bytes actually landing. No cloud account needed —
+/// this exercises the exact rc plumbing the `start_download`/`list_jobs`
+/// commands use.
+#[test]
+fn rclone_async_copyfile_completes_locally() {
+    let binary = match find_rclone_binary() {
+        Some(p) => p,
+        None => {
+            eprintln!("SKIP: no rclone binary found under binaries/rclone-* — skipping test");
+            return;
+        }
+    };
+
+    // Set up temp src (with a file) + dst dirs.
+    let base = std::env::temp_dir().join(format!("dl-test-{}", std::process::id()));
+    let src = base.join("src");
+    let dst = base.join("dst");
+    std::fs::create_dir_all(&src).expect("mk src");
+    std::fs::create_dir_all(&dst).expect("mk dst");
+    let content = "hello rclone download path";
+    std::fs::write(src.join("f.bin"), content).expect("write src file");
+
+    let port = pick_free_port().expect("pick a free port");
+    let config_path = temp_config_path("download");
+    let cfg = RcConfig {
+        host: "127.0.0.1".into(),
+        port,
+        user: "testuser".into(),
+        pass: "testpass".into(),
+        config_path: config_path.to_string_lossy().into_owned(),
+    };
+    let args = build_rcd_args(&cfg);
+    let child = Command::new(&binary).args(&args).spawn().expect("spawn rclone rcd");
+    let _guard = ChildGuard(child);
+
+    let connection = RcConnection {
+        base_url: format!("http://{}:{}", cfg.host, cfg.port),
+        user: cfg.user.clone(),
+        pass: cfg.pass.clone(),
+    };
+    wait_until_ready(&connection).expect("rclone daemon became ready");
+
+    // Build the copy request via the production helper (local fs as "account").
+    let item = DownloadItem {
+        path: "f.bin".into(),
+        name: "f.bin".into(),
+        is_dir: false,
+        size: content.len() as i64,
+    };
+    let (endpoint, params) = build_copy(&src.to_string_lossy(), &item, &dst.to_string_lossy());
+    assert_eq!(endpoint, "operations/copyfile");
+
+    let resp = rc_post(&connection, endpoint, &params).expect("start async copyfile");
+    let jobid = resp.get("jobid").and_then(|v| v.as_i64()).expect("jobid in response");
+    eprintln!("started async copy job {jobid}");
+
+    // Poll job/status until finished (generous local timeout).
+    let mut finished = false;
+    let mut success = false;
+    for _ in 0..100 {
+        let js = rc_post(&connection, "job/status", &serde_json::json!({ "jobid": jobid }))
+            .expect("job/status");
+        if js.get("finished").and_then(|v| v.as_bool()).unwrap_or(false) {
+            finished = true;
+            success = js.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(finished, "copy job should finish");
+    assert!(success, "copy job should succeed");
+
+    // The bytes actually landed.
+    let copied = std::fs::read_to_string(dst.join("f.bin")).expect("dst file exists");
+    assert_eq!(copied, content, "copied content matches source");
+
+    let _ = std::fs::remove_dir_all(&base);
     let _ = std::fs::remove_file(&config_path);
 }

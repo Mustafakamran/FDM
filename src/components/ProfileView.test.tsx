@@ -1,11 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 
 import { ProfileView } from "./ProfileView";
 import { useApp } from "../store/app";
+import { useTransfers } from "../store/transfers";
 import type { Account } from "../lib/tauri/commands";
 
 const account: Account = { id: "drive_x", provider: "drive", label: "x" };
@@ -18,15 +20,23 @@ const folder = [
 
 beforeEach(() => {
   invokeMock.mockReset();
+  localStorage.clear();
   useApp.setState({ accounts: [account], openTabs: ["drive_x"], view: { kind: "profile", id: "drive_x" } });
+  useTransfers.setState({ jobs: [], dockOpen: true });
   invokeMock.mockImplementation((cmd: string, args?: { params?: { remote?: string } }) => {
     if (cmd === "rc_call") {
       const remote = args?.params?.remote ?? "";
       if (remote === "") return Promise.resolve({ list: folder });
       return Promise.resolve({ list: [] });
     }
+    if (cmd === "start_download") return Promise.resolve([]);
+    if (cmd === "list_jobs") return Promise.resolve([]);
     return Promise.resolve({});
   });
+});
+
+afterEach(() => {
+  useTransfers.getState().stopPolling();
 });
 
 describe("ProfileView", () => {
@@ -56,6 +66,26 @@ describe("ProfileView", () => {
       expect(invokeMock).toHaveBeenCalledWith(
         "rc_call",
         expect.objectContaining({ endpoint: "operations/list", params: expect.objectContaining({ remote: "FolderA" }) }),
+      );
+    });
+  });
+
+  it("downloads selected files to the default folder", async () => {
+    localStorage.setItem("default_download_folder", "/Volumes/EXT");
+    render(<ProfileView id="drive_x" />);
+    await waitFor(() => expect(screen.queryByText("a.mxf")).not.toBeNull());
+
+    fireEvent.click(screen.getByLabelText("Select a.mxf"));
+    fireEvent.click(screen.getByText("Download"));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        "start_download",
+        expect.objectContaining({
+          accountId: "drive_x",
+          dest: "/Volumes/EXT",
+          items: [{ path: "a.mxf", name: "a.mxf", isDir: false, size: 1000 }],
+        }),
       );
     });
   });

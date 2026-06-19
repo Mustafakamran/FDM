@@ -10,6 +10,23 @@ export function formatBytes(n: number): string {
   return `${val.toFixed(decimals)} ${UNITS[i]}`;
 }
 
+/** Transfer speed, e.g. "910 MB/s". */
+export function formatSpeed(bytesPerSec: number): string {
+  if (!bytesPerSec || bytesPerSec < 0) return "—";
+  return `${formatBytes(bytesPerSec)}/s`;
+}
+
+/** ETA seconds → "1h 02m", "3m 20s", "12s", or "—". */
+export function formatEta(seconds: number | null): string {
+  if (seconds == null || seconds < 0 || !Number.isFinite(seconds)) return "—";
+  const s = Math.round(seconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
 /** Short date for the file table; invalid → "—". */
 export function formatDate(iso: string): string {
   const d = new Date(iso);

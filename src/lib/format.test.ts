@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatBytes } from "./format";
+import { formatBytes, formatSpeed, formatEta } from "./format";
 
 describe("formatBytes", () => {
   it("handles zero, negative, and NaN", () => {
@@ -14,5 +14,22 @@ describe("formatBytes", () => {
     expect(formatBytes(5 * 1024 * 1024)).toBe("5.00 MB");
     expect(formatBytes(3 * 1024 ** 3)).toBe("3.00 GB");
     expect(formatBytes(2 * 1024 ** 4)).toBe("2.00 TB");
+  });
+});
+
+describe("formatSpeed", () => {
+  it("appends /s and handles zero", () => {
+    expect(formatSpeed(0)).toBe("—");
+    expect(formatSpeed(5 * 1024 * 1024)).toBe("5.00 MB/s");
+  });
+});
+
+describe("formatEta", () => {
+  it("formats seconds, minutes, hours, and null", () => {
+    expect(formatEta(null)).toBe("—");
+    expect(formatEta(-1)).toBe("—");
+    expect(formatEta(45)).toBe("45s");
+    expect(formatEta(200)).toBe("3m 20s");
+    expect(formatEta(3720)).toBe("1h 02m");
   });
 });

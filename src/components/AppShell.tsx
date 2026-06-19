@@ -1,12 +1,18 @@
 import { Users, Settings as SettingsIcon, X } from "lucide-react";
 import { useApp } from "../store/app";
+import { useTransfers } from "../store/transfers";
 import { ProviderIcon } from "./icons";
 import { AccountsView } from "./AccountsView";
 import { SettingsView } from "./SettingsView";
 import { ProfileView } from "./ProfileView";
+import { TransfersDock } from "./TransfersDock";
+import { formatSpeed } from "../lib/format";
 
 export function AppShell() {
   const { view, setView, accounts, openTabs, openProfile, closeTab } = useApp();
+  const jobs = useTransfers((s) => s.jobs);
+  const activeJobs = jobs.filter((j) => !j.finished && !j.cancelled);
+  const totalSpeed = activeJobs.reduce((sum, j) => sum + Math.max(0, j.speed), 0);
 
   const navActive = (kind: "accounts" | "settings") =>
     view.kind === kind
@@ -71,12 +77,26 @@ export function AppShell() {
         </div>
       )}
 
-      {/* Content */}
-      <main className="min-h-0 flex-1 overflow-auto">
-        {view.kind === "accounts" && <AccountsView />}
-        {view.kind === "settings" && <SettingsView />}
-        {view.kind === "profile" && <ProfileView id={view.id} />}
-      </main>
+      {/* Content + transfers dock */}
+      <div className="flex min-h-0 flex-1">
+        <main className="min-h-0 flex-1 overflow-auto">
+          {view.kind === "accounts" && <AccountsView />}
+          {view.kind === "settings" && <SettingsView />}
+          {view.kind === "profile" && <ProfileView id={view.id} />}
+        </main>
+        <TransfersDock />
+      </div>
+
+      {/* Status bar */}
+      <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-[var(--border)] bg-[var(--surface)] px-3 text-xs text-[var(--text-3)]">
+        <span>
+          <span className="tnum text-[var(--text-2)]">{activeJobs.length}</span> active
+        </span>
+        <span>
+          ↓ <span className="tnum text-[var(--text-2)]">{formatSpeed(totalSpeed)}</span>
+        </span>
+        <span className="ml-auto">{accounts.length} account{accounts.length === 1 ? "" : "s"}</span>
+      </footer>
     </div>
   );
 }

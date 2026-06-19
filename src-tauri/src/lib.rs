@@ -1,7 +1,9 @@
 pub mod accounts;
+pub mod download;
 pub mod rclone;
 pub mod secrets;
 
+use download::JobsState;
 use rclone::supervisor::{start_rclone, stop_rclone, RcloneState};
 use tauri::Manager;
 
@@ -26,6 +28,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(RcloneState::default())
+        .manage(JobsState::default())
         .invoke_handler(tauri::generate_handler![
             rc_call,
             accounts::list_accounts,
@@ -34,6 +37,10 @@ pub fn run() {
             accounts::set_secret,
             accounts::get_secret,
             accounts::delete_secret,
+            download::start_download,
+            download::list_jobs,
+            download::cancel_job,
+            download::clear_finished_jobs,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
