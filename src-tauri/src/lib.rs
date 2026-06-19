@@ -41,6 +41,7 @@ pub fn run() {
             accounts::set_secret,
             accounts::get_secret,
             accounts::delete_secret,
+            accounts::account_email,
             download::start_download,
             download::list_jobs,
             download::cancel_job,

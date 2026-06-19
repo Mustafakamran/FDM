@@ -8,6 +8,7 @@ import { useTransfers } from "../store/transfers";
 import { useToasts } from "../store/toast";
 import { useStarred } from "../store/starred";
 import { useSearch } from "../store/search";
+import { useAccountMeta, prettyLabel } from "../store/account-meta";
 import { ProviderIcon } from "./icons";
 import { Button } from "./ui";
 import { fileType } from "../lib/file-types";
@@ -37,6 +38,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const q = useSearch((s) => s.q);
   const starred = useStarred((s) => s.byAccount[account.id]) ?? EMPTY_STARS;
   const toggleStar = useStarred((s) => s.toggle);
+  const displayLabel = useAccountMeta((s) => s.byId[account.id]?.label) ?? prettyLabel(account.label);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [grid, setGrid] = useState(false);
@@ -166,7 +168,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           ) : folderView ? (
             <>
               <button className="ml-1 font-medium text-[var(--text)] hover:text-[var(--accent)]" onClick={() => setView({ kind: "browse", accountId: account.id, section, path: "" })}>
-                {account.label}
+                {displayLabel}
               </button>
               {segments.map((seg, i) => (
                 <span key={i} className="flex items-center gap-1.5 text-[var(--text-2)]">

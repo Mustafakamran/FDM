@@ -3,6 +3,7 @@ import { Plus, FolderOpen, Clock, Star, Users, Download, Check, Pause, AlertCirc
 import { useApp, type Section } from "../store/app";
 import { useTransfers } from "../store/transfers";
 import { useStorage } from "../store/storage";
+import { useAccountMeta, prettyLabel } from "../store/account-meta";
 import { ProviderIcon, providerName } from "./icons";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { formatBytes, formatSpeed } from "../lib/format";
@@ -20,13 +21,18 @@ export function Sidebar() {
   const jobs = useTransfers((s) => s.jobs);
   const storage = useStorage((s) => s.byAccount);
   const fetchStorage = useStorage((s) => s.fetch);
+  const meta = useAccountMeta((s) => s.byId);
+  const fetchEmail = useAccountMeta((s) => s.fetchEmail);
   const [addProvider, setAddProvider] = useState<Provider | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
   useEffect(() => {
-    for (const a of accounts) void fetchStorage(a);
-  }, [accounts, fetchStorage]);
+    for (const a of accounts) {
+      void fetchStorage(a);
+      void fetchEmail(a.id);
+    }
+  }, [accounts, fetchStorage, fetchEmail]);
 
   const activeAccount = view.kind === "browse" ? view.accountId : null;
   const activeSection = view.kind === "browse" ? view.section : null;
@@ -89,8 +95,12 @@ export function Sidebar() {
                 <div className="flex items-center gap-2.5">
                   <ProviderIcon provider={a.provider} size={20} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-[var(--text)]">{a.label}</div>
-                    <div className="truncate text-xs text-[var(--text-3)]">{providerName(a.provider)}</div>
+                    <div className="truncate text-sm font-medium text-[var(--text)]">
+                      {meta[a.id]?.label ?? prettyLabel(a.label)}
+                    </div>
+                    <div className="truncate text-xs text-[var(--text-3)]" title={meta[a.id]?.email}>
+                      {meta[a.id]?.email ?? providerName(a.provider)}
+                    </div>
                   </div>
                   <button
                     aria-label={`Remove ${a.label}`}

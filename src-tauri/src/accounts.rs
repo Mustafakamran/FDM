@@ -277,6 +277,76 @@ pub async fn add_account(
     }
 }
 
+/// Run an rclone sidecar one-shot and capture its stdout.
+async fn run_rclone_capture(app: &AppHandle, args: Vec<String>) -> Result<String, String> {
+    let (mut rx, child) = app
+        .shell()
+        .sidecar("rclone")
+        .map_err(|e| format!("sidecar: {e}"))?
+        .args(args)
+        .spawn()
+        .map_err(|e| format!("spawn: {e}"))?;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let collect = async {
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                CommandEvent::Stdout(b) => stdout.push_str(&String::from_utf8_lossy(&b)),
+                CommandEvent::Stderr(b) => stderr.push_str(&String::from_utf8_lossy(&b)),
+                CommandEvent::Terminated(p) => return p.code,
+                _ => {}
+            }
+        }
+        None
+    };
+    let code = match tokio::time::timeout(Duration::from_secs(30), collect).await {
+        Ok(c) => c,
+        Err(_) => {
+            let _ = child.kill();
+            return Err("rclone timed out".into());
+        }
+    };
+    match code {
+        Some(0) => Ok(stdout),
+        other => Err(format!("rclone failed (exit {other:?}): {stderr}")),
+    }
+}
+
+/// The signed-in account's email. Drive uses the native about API; Dropbox uses
+/// `rclone config userinfo`. Best-effort: None/Err when unavailable.
+#[tauri::command]
+pub async fn account_email(app: AppHandle, account_id: String) -> Result<Option<String>, String> {
+    let provider = parse_remote(&account_id)
+        .map(|a| a.provider)
+        .ok_or_else(|| format!("bad account id: {account_id}"))?;
+
+    if provider == "drive" {
+        let state = app.state::<RcloneState>();
+        let conn = state
+            .connection
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .ok_or_else(|| "rclone not started".to_string())?;
+        return crate::drive::drive_email(&conn, &account_id);
+    }
+
+    // Dropbox: `rclone config userinfo <remote>: --json`
+    let data_dir = app.path().app_data_dir().map_err(|e| format!("app_data_dir: {e}"))?;
+    let config_path = data_dir.join("rclone.conf").to_string_lossy().into_owned();
+    let args = vec![
+        "config".into(),
+        "userinfo".into(),
+        format!("{account_id}:"),
+        "--json".into(),
+        "--config".into(),
+        config_path,
+    ];
+    let out = run_rclone_capture(&app, args).await?;
+    let v: serde_json::Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
+    Ok(v.get("email").and_then(|e| e.as_str()).map(|s| s.to_string()))
+}
+
 /// Store an OAuth app credential in the OS keychain.
 #[tauri::command]
 pub fn set_secret(key: String, value: String) -> Result<(), String> {

@@ -123,3 +123,8 @@ export function loadIndex(accountId: string): Promise<string | null> {
 export function deleteIndex(accountId: string): Promise<void> {
   return invoke("delete_index", { accountId });
 }
+
+/** The signed-in account's email (Drive about / Dropbox userinfo); null if unavailable. */
+export function accountEmail(accountId: string): Promise<string | null> {
+  return invoke<string | null>("account_email", { accountId });
+}

@@ -5,6 +5,7 @@ import { providerName } from "./icons";
 import { useApp } from "../store/app";
 import { useToasts } from "../store/toast";
 import { useIndex } from "../store/index-store";
+import { useAccountMeta } from "../store/account-meta";
 import { Button, TextField, Card } from "./ui";
 
 interface Props {
@@ -32,6 +33,7 @@ export function AddAccountDialog({ provider, onClose }: Props) {
     setPhase("waiting");
     try {
       const account = await addAccount(provider, label.trim(), clientId, clientSecret);
+      useAccountMeta.getState().setLabel(account.id, label.trim()); // keep original casing
       await loadAccounts();
       toast(`Connected ${providerName(provider)} · ${label.trim()}`, "success");
       void useIndex.getState().ensure(account); // start crawling/indexing in the background

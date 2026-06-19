@@ -112,6 +112,34 @@ pub fn drive_uploader(
     Ok(name_from_drive_file(&v))
 }
 
+/// The Drive account's email via the native about endpoint (rclone doesn't
+/// expose it). Best-effort: Err/None when unavailable.
+pub fn drive_email(conn: &RcConnection, account_id: &str) -> Result<Option<String>, String> {
+    let dump = rc_post(conn, "config/dump", &serde_json::json!({}))?;
+    let (token_json, client_id, client_secret) =
+        remote_creds(&dump, account_id).ok_or_else(|| format!("no creds for {account_id}"))?;
+    let refresh = refresh_token_from(&token_json).ok_or_else(|| "no refresh token".to_string())?;
+    let access = refresh_access_token(&client_id, &client_secret, &refresh)?;
+
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .get("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName)")
+        .bearer_auth(&access)
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("drive about {status}: {body}"));
+    }
+    let text = resp.text().map_err(|e| e.to_string())?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(v.get("user")
+        .and_then(|u| u.get("emailAddress"))
+        .and_then(|e| e.as_str())
+        .map(|s| s.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
