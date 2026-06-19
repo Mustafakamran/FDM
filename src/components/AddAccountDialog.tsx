@@ -18,7 +18,7 @@ export function AddAccountDialog({ provider, onClose }: Props) {
   const [label, setLabel] = useState("");
   const [phase, setPhase] = useState<Phase>("form");
   const [error, setError] = useState("");
-  const { loadAccounts, openProfile, setView } = useApp();
+  const { loadAccounts, selectAccount, setView } = useApp();
   const toast = useToasts((s) => s.push);
 
   async function submit() {
@@ -35,7 +35,7 @@ export function AddAccountDialog({ provider, onClose }: Props) {
       await loadAccounts();
       toast(`Connected ${providerName(provider)} · ${label.trim()}`, "success");
       void useIndex.getState().ensure(account); // start crawling/indexing in the background
-      openProfile(account.id);
+      selectAccount(account.id);
       onClose();
     } catch (e) {
       setError(String(e));

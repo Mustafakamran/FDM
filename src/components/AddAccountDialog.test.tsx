@@ -9,7 +9,7 @@ import { useApp } from "../store/app";
 
 beforeEach(() => {
   invokeMock.mockReset();
-  useApp.setState({ accounts: [], openTabs: [], view: { kind: "accounts" }, accountsLoaded: true });
+  useApp.setState({ accounts: [], view: { kind: "accounts" }, accountsLoaded: true });
 });
 
 describe("AddAccountDialog", () => {

@@ -1,0 +1,212 @@
+import { useEffect, useState } from "react";
+import { Plus, FolderOpen, Clock, Star, Users, Download, Check, Pause, AlertCircle, Globe, Trash2 } from "lucide-react";
+import { useApp, type Section } from "../store/app";
+import { useTransfers } from "../store/transfers";
+import { useStorage } from "../store/storage";
+import { ProviderIcon, providerName } from "./icons";
+import { AddAccountDialog } from "./AddAccountDialog";
+import { formatBytes, formatSpeed } from "../lib/format";
+import type { Provider } from "../lib/tauri/commands";
+
+const SECTIONS: { key: Section; label: string; Icon: typeof FolderOpen }[] = [
+  { key: "all", label: "All Files", Icon: FolderOpen },
+  { key: "recent", label: "Recent", Icon: Clock },
+  { key: "starred", label: "Starred", Icon: Star },
+  { key: "shared", label: "Shared with me", Icon: Users },
+];
+
+export function Sidebar() {
+  const { view, accounts, selectAccount, setSection, removeAccount } = useApp();
+  const jobs = useTransfers((s) => s.jobs);
+  const storage = useStorage((s) => s.byAccount);
+  const fetchStorage = useStorage((s) => s.fetch);
+  const [addProvider, setAddProvider] = useState<Provider | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+
+  useEffect(() => {
+    for (const a of accounts) void fetchStorage(a);
+  }, [accounts, fetchStorage]);
+
+  const activeAccount = view.kind === "browse" ? view.accountId : null;
+  const activeSection = view.kind === "browse" ? view.section : null;
+
+  const active = jobs.filter((j) => !j.finished && !j.cancelled);
+  const counts = {
+    downloading: active.length,
+    completed: jobs.filter((j) => j.finished && j.success).length,
+    paused: 0,
+    failed: jobs.filter((j) => j.finished && !j.success && !j.cancelled).length,
+  };
+  const totalSpeed = active.reduce((s, j) => s + Math.max(0, j.speed), 0);
+
+  return (
+    <aside className="flex w-64 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface)]">
+      {/* Accounts */}
+      <div className="px-3 pt-4">
+        <div className="mb-2 flex items-center justify-between px-1">
+          <span className="text-[11px] font-semibold tracking-wide text-[var(--text-3)]">ACCOUNTS</span>
+          <div className="relative">
+            <button
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-label="Add account"
+              className="flex h-5 w-5 items-center justify-center rounded-[5px] text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+            >
+              <Plus size={15} />
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-6 z-20 w-40 overflow-hidden rounded-[8px] border border-[var(--border-strong)] bg-[var(--card)] py-1 shadow-[var(--shadow-lg)]">
+                {(["drive", "dropbox"] as Provider[]).map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => {
+                      setAddProvider(p);
+                      setMenuOpen(false);
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                  >
+                    <ProviderIcon provider={p} size={15} /> {providerName(p)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          {accounts.map((a) => {
+            const st = storage[a.id];
+            const isActive = activeAccount === a.id;
+            return (
+              <div
+                key={a.id}
+                className={`group relative cursor-pointer rounded-[10px] border px-3 py-2.5 ${
+                  isActive ? "border-[var(--border-strong)] bg-[var(--hover)]" : "border-transparent hover:bg-[var(--hover)]"
+                }`}
+                onClick={() => selectAccount(a.id)}
+              >
+                {isActive && <span className="absolute left-0 top-2 h-[calc(100%-16px)] w-0.5 rounded-full bg-[var(--accent)]" />}
+                <div className="flex items-center gap-2.5">
+                  <ProviderIcon provider={a.provider} size={20} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-[var(--text)]">{a.label}</div>
+                    <div className="truncate text-xs text-[var(--text-3)]">{providerName(a.provider)}</div>
+                  </div>
+                  <button
+                    aria-label={`Remove ${a.label}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmRemove(confirmRemove === a.id ? null : a.id);
+                    }}
+                    className="text-[var(--text-3)] opacity-0 hover:text-[var(--error)] group-hover:opacity-100"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                {st && st.total > 0 && (
+                  <div className="mt-2">
+                    <div className="tnum mb-1 text-[11px] text-[var(--text-3)]">
+                      {formatBytes(st.used)} of {formatBytes(st.total)}
+                    </div>
+                    <div className="h-1 overflow-hidden rounded-full bg-[var(--border)]">
+                      <div
+                        className="h-full rounded-full bg-[var(--accent)]"
+                        style={{ width: `${Math.min(100, Math.round((st.used / st.total) * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                {confirmRemove === a.id && (
+                  <div className="mt-2 flex items-center gap-2 text-xs">
+                    <span className="text-[var(--text-2)]">Remove?</span>
+                    <button
+                      className="text-[var(--error)]"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void removeAccount(a.id);
+                        setConfirmRemove(null);
+                      }}
+                    >
+                      Confirm
+                    </button>
+                    <button className="text-[var(--text-3)]" onClick={(e) => { e.stopPropagation(); setConfirmRemove(null); }}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Library */}
+      <div className="mt-5 px-3">
+        <div className="mb-1 px-1 text-[11px] font-semibold tracking-wide text-[var(--text-3)]">LIBRARY</div>
+        <div className="flex flex-col">
+          {SECTIONS.map(({ key, label, Icon }) => {
+            const on = activeAccount && activeSection === key;
+            return (
+              <button
+                key={key}
+                onClick={() => {
+                  if (!activeAccount && accounts[0]) selectAccount(accounts[0].id);
+                  setSection(key);
+                }}
+                className={`flex items-center gap-3 rounded-[8px] px-3 py-2 text-sm ${
+                  on ? "bg-[var(--hover)] text-[var(--text)]" : "text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                }`}
+              >
+                <Icon size={16} /> {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Downloads */}
+      <div className="mt-5 px-3">
+        <div className="mb-1 px-1 text-[11px] font-semibold tracking-wide text-[var(--text-3)]">DOWNLOADS</div>
+        <div className="flex flex-col">
+          <DownloadStat Icon={Download} label="Downloading" count={counts.downloading} accent />
+          <DownloadStat Icon={Check} label="Completed" count={counts.completed} />
+          <DownloadStat Icon={Pause} label="Paused" count={counts.paused} />
+          <DownloadStat Icon={AlertCircle} label="Failed" count={counts.failed} />
+        </div>
+      </div>
+
+      {/* Global speed */}
+      <div className="mt-auto flex items-center gap-2.5 border-t border-[var(--border)] px-4 py-3">
+        <Globe size={16} className="text-[var(--text-3)]" />
+        <div>
+          <div className="tnum text-sm text-[var(--text)]">{totalSpeed > 0 ? formatSpeed(totalSpeed) : "Idle"}</div>
+          <div className="text-[11px] text-[var(--text-3)]">Unlimited</div>
+        </div>
+      </div>
+
+      {addProvider && <AddAccountDialog provider={addProvider} onClose={() => setAddProvider(null)} />}
+    </aside>
+  );
+}
+
+function DownloadStat({
+  Icon,
+  label,
+  count,
+  accent,
+}: {
+  Icon: typeof Download;
+  label: string;
+  count: number;
+  accent?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-[8px] px-3 py-2 text-sm text-[var(--text-2)]">
+      <Icon size={16} className={accent && count > 0 ? "text-[var(--accent)]" : ""} />
+      <span className="flex-1">{label}</span>
+      {count > 0 && (
+        <span className="tnum rounded-full bg-[var(--hover)] px-2 py-0.5 text-[11px] text-[var(--text-2)]">{count}</span>
+      )}
+    </div>
+  );
+}

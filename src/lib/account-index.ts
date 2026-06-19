@@ -58,6 +58,21 @@ export function buildIndex(flat: RcItem[], crawledAt: number): AccountIndex {
   return { tree, agg, crawledAt };
 }
 
+/** All files across the whole index, newest first (for the Recent view). */
+export function recentFiles(index: AccountIndex, limit = 200): RcItem[] {
+  const files: RcItem[] = [];
+  for (const k in index.tree) for (const it of index.tree[k]) if (!it.IsDir) files.push(it);
+  files.sort((a, b) => (a.ModTime < b.ModTime ? 1 : a.ModTime > b.ModTime ? -1 : 0));
+  return files.slice(0, limit);
+}
+
+/** Resolve an entry by its full path (used to render starred items). */
+export function itemAt(index: AccountIndex, path: string): RcItem | undefined {
+  const slash = path.lastIndexOf("/");
+  const parent = slash === -1 ? "" : path.slice(0, slash);
+  return (index.tree[parent] ?? []).find((i) => i.Path === path);
+}
+
 async function listRecurse(account: Account, remote: string): Promise<RcItem[]> {
   const res = await new RcClient().call<{ list?: RcItem[] }>("operations/list", {
     fs: buildFs(account),
