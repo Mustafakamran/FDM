@@ -58,7 +58,9 @@ export function AddAccountDialog({ provider, onClose }: Props) {
           <div className="flex flex-col items-center gap-3 py-6 text-center">
             <Loader2 className="animate-spin text-[var(--accent)]" size={24} />
             <p className="text-sm text-[var(--text-2)]">
-              Waiting for browser sign-in… approve access in the window that opened.
+              Waiting for browser sign-in… approve access in the window that opened. To add a
+              different account than the one you're already signed into, choose
+              <span className="text-[var(--text)]"> “Use another account”</span>.
             </p>
           </div>
         ) : (

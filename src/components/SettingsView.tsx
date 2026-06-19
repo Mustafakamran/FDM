@@ -81,7 +81,9 @@ export function SettingsView() {
       <Card className="mb-4 p-5">
         <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Google Drive API</h2>
         <p className="mb-4 text-xs text-[var(--text-3)]">
-          Use your own OAuth Desktop client (Production). Scope: drive.readonly.
+          Your OAuth Desktop client (scope: drive.readonly). Entered once — reused for
+          <span className="text-[var(--text-2)]"> all </span>your Google accounts. Add the
+          individual accounts in the <span className="text-[var(--text-2)]">Accounts</span> tab.
         </p>
         <div className="flex flex-col gap-3">
           <TextField label="Client ID" value={googleId} onChange={(e) => setGoogleId(e.target.value)} />
@@ -102,7 +104,9 @@ export function SettingsView() {
       <Card className="mb-4 p-5">
         <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Dropbox API</h2>
         <p className="mb-4 text-xs text-[var(--text-3)]">
-          Use your own Dropbox app (Production). App key + secret.
+          Your Dropbox app key + secret. Entered once — reused for
+          <span className="text-[var(--text-2)]"> all </span>your Dropbox accounts. Add the
+          individual accounts in the <span className="text-[var(--text-2)]">Accounts</span> tab.
         </p>
         <div className="flex flex-col gap-3">
           <TextField label="App key" value={dropboxKey} onChange={(e) => setDropboxKey(e.target.value)} />
