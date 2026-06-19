@@ -136,7 +136,7 @@ export function ProfileView({ id }: { id: string }) {
         ) : (
           <table className="w-full border-collapse text-sm">
             <thead>
-              <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--text-3)]">
+              <tr className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--bg)] text-left text-xs text-[var(--text-3)]">
                 <th className="w-8 py-2">
                   <input
                     type="checkbox"

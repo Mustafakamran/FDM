@@ -26,7 +26,10 @@ export function AccountsView() {
       </div>
 
       {accounts.length === 0 ? (
-        <Card className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+        <Card className="flex flex-col items-center gap-4 px-6 py-16 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--accent-weak)] text-[var(--accent)] shadow-[0_0_44px_var(--accent-glow)]">
+            <HardDrive size={24} />
+          </div>
           <p className="text-sm font-medium text-[var(--text)]">No accounts connected</p>
           <p className="max-w-sm text-sm text-[var(--text-2)]">
             Connect a Google Drive or Dropbox account to browse and download footage shared with you.
@@ -35,8 +38,11 @@ export function AccountsView() {
       ) : (
         <div className="flex flex-col gap-2">
           {accounts.map((a) => (
-            <Card key={a.id} className="flex items-center gap-3 px-4 py-3">
-              <span className="text-[var(--text-2)]">
+            <Card
+              key={a.id}
+              className="flex items-center gap-3 px-4 py-3 transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--hover)]"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-[7px] bg-[var(--surface)] text-[var(--text-2)]">
                 <ProviderIcon provider={a.provider} size={18} />
               </span>
               <div className="min-w-0 flex-1">

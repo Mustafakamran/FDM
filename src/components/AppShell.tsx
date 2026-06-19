@@ -23,8 +23,12 @@ export function AppShell() {
     <div className="flex h-full flex-col bg-[var(--bg)]">
       {/* Top bar */}
       <header className="flex h-12 shrink-0 items-center gap-1 border-b border-[var(--border)] bg-[var(--surface)] px-3">
-        <span className="mr-3 select-none text-sm font-semibold tracking-tight text-[var(--text)]">
-          Footage Downloader
+        <span className="mr-3 flex select-none items-center gap-2">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="1.5" y="1.5" width="21" height="21" rx="6" fill="var(--accent-weak)" stroke="var(--accent)" strokeWidth="1.2" />
+            <path d="M12 6.5v8m0 0 3.2-3.2M12 14.5l-3.2-3.2M7.5 17.5h9" stroke="var(--accent)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span className="text-sm font-semibold tracking-tight text-[var(--text)]">Footage Downloader</span>
         </span>
         <button
           className="focus-accent flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-sm transition-colors"
@@ -80,9 +84,11 @@ export function AppShell() {
       {/* Content + transfers dock */}
       <div className="flex min-h-0 flex-1">
         <main className="min-h-0 flex-1 overflow-auto">
-          {view.kind === "accounts" && <AccountsView />}
-          {view.kind === "settings" && <SettingsView />}
-          {view.kind === "profile" && <ProfileView id={view.id} />}
+          <div key={view.kind === "profile" ? `profile:${view.id}` : view.kind} className="animate-rise h-full">
+            {view.kind === "accounts" && <AccountsView />}
+            {view.kind === "settings" && <SettingsView />}
+            {view.kind === "profile" && <ProfileView id={view.id} />}
+          </div>
         </main>
         <TransfersDock />
       </div>

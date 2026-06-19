@@ -39,8 +39,12 @@ export function AddAccountDialog({ provider, onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" role="dialog" aria-modal="true">
-      <Card className="w-[420px] p-5">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+    >
+      <Card className="animate-rise w-[420px] p-5 shadow-[var(--shadow-lg)]">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-[var(--text)]">
             Connect {providerName(provider)}
