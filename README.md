@@ -38,11 +38,30 @@ npm run fetch:rclone      # downloads the rclone binary for your OS into src-tau
 npm run tauri dev         # launches the app
 ```
 
-Build a distributable installer (run on the target OS — build Windows on the Windows PC):
+## Building installers (macOS + Windows)
+
+Tauri builds for the OS you run it on (you can't cross-compile Win↔Mac), so build each on its own machine — or use the included CI to build both at once.
+
+**On a Mac** (produces `.app` + `.dmg` in `src-tauri/target/release/bundle/`):
 
 ```bash
+npm install
+npm run fetch:rclone
+npm run tauri build            # add: -- --target aarch64-apple-darwin  (Apple Silicon)
+```
+
+**On the Windows PC** (produces an NSIS `.exe` + `.msi` installer under `src-tauri/target/release/bundle/`):
+
+```bash
+npm install
+npm run fetch:rclone           # downloads the Windows rclone sidecar
 npm run tauri build
 ```
+Windows prerequisites: the MSVC C++ Build Tools (for Rust) and WebView2 (preinstalled on Win 10/11).
+
+**Both at once via CI (recommended for Windows):** push to GitHub and run the `build` workflow (`.github/workflows/build.yml`) — it builds macOS + Windows installers on GitHub's runners and attaches them to a draft release. Trigger it manually (Actions → build → Run) or by pushing a `vX.Y.Z` tag.
+
+> Notes: the rclone binary is fetched per-OS (not committed), so run `npm run fetch:rclone` before building on each machine. The window uses transparency/rounded corners (macOS private API) — fine for local/self distribution; for the Mac App Store you'd disable `macOSPrivateApi`.
 
 ---
 
