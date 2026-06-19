@@ -25,7 +25,8 @@ describe("browse store", () => {
     });
 
     await useBrowse.getState().ensure(account, "");
-    await new Promise((r) => setTimeout(r, 30)); // let the fired computeSize settle
+    // Sizes are computed on demand now, not eagerly during ensure.
+    await useBrowse.getState().computeSize(account, "Sub");
 
     const st = useBrowse.getState();
     expect(st.errors[browseKey("drive_x", "")]).toBeUndefined();

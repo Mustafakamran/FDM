@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
@@ -45,24 +45,25 @@ describe("ProfileView", () => {
   it("renders items with sizes and computes the selection total", async () => {
     render(<ProfileView id="drive_x" />);
 
-    await waitFor(() => expect(screen.queryByText("FolderA")).not.toBeNull());
-    expect(screen.queryByText("a.mxf")).not.toBeNull();
-    expect(screen.queryByText("1000 B")).not.toBeNull();
-    expect(screen.queryByText("2.0 KB")).not.toBeNull(); // 2000 B, KB uses 1 decimal
+    const list = await screen.findByTestId("file-list");
+    await waitFor(() => expect(within(list).queryByText("a.mxf")).not.toBeNull());
+    expect(within(list).queryByText("1000 B")).not.toBeNull();
+    expect(within(list).queryByText("2.0 KB")).not.toBeNull(); // 2000 B, KB uses 1 decimal
 
     fireEvent.click(screen.getByLabelText("Select a.mxf"));
     fireEvent.click(screen.getByLabelText("Select b.mxf"));
 
-    // 1000 + 2000 = 3000 bytes -> 2.9 KB (KB = 1 decimal)
+    // 1000 + 2000 = 3000 bytes -> 2.9 KB (KB = 1 decimal), shown in the selection bar
     expect(screen.queryByText(/2\.9 KB/)).not.toBeNull();
     expect(screen.queryByText(/Selected:/)).not.toBeNull();
   });
 
   it("navigates into a directory (lists with the dir path)", async () => {
     render(<ProfileView id="drive_x" />);
-    await waitFor(() => expect(screen.queryByText("FolderA")).not.toBeNull());
+    const list = await screen.findByTestId("file-list");
+    await waitFor(() => expect(within(list).queryByText("FolderA")).not.toBeNull());
 
-    fireEvent.click(screen.getByText("FolderA"));
+    fireEvent.click(within(list).getByText("FolderA"));
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith(
