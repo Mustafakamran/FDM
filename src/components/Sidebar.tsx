@@ -18,7 +18,8 @@ const SECTIONS: { key: Section; label: string; Icon: typeof FolderOpen }[] = [
 ];
 
 export function Sidebar() {
-  const { view, accounts, selectAccount, setSection, removeAccount } = useApp();
+  const { view, accounts, selectAccount, setSection, removeAccount, showDownloads } = useApp();
+  const dlFilter = view.kind === "downloads" ? view.filter : null;
   const jobs = useTransfers((s) => s.jobs);
   const storage = useStorage((s) => s.byAccount);
   const fetchStorage = useStorage((s) => s.fetch);
@@ -215,10 +216,10 @@ export function Sidebar() {
       <div className="mt-5 px-3">
         <div className="mb-1 px-1 text-[11px] font-semibold tracking-wide text-[var(--text-3)]">DOWNLOADS</div>
         <div className="flex flex-col">
-          <DownloadStat Icon={Download} label="Downloading" count={counts.downloading} accent />
-          <DownloadStat Icon={Check} label="Completed" count={counts.completed} />
-          <DownloadStat Icon={Pause} label="Paused" count={counts.paused} />
-          <DownloadStat Icon={AlertCircle} label="Failed" count={counts.failed} />
+          <DownloadStat Icon={Download} label="Downloading" count={counts.downloading} accent onClick={() => showDownloads("active")} active={dlFilter === "active"} />
+          <DownloadStat Icon={Check} label="Completed" count={counts.completed} onClick={() => showDownloads("completed")} active={dlFilter === "completed"} />
+          <DownloadStat Icon={Pause} label="Paused" count={counts.paused} onClick={() => showDownloads("active")} active={false} />
+          <DownloadStat Icon={AlertCircle} label="Failed" count={counts.failed} onClick={() => showDownloads("failed")} active={dlFilter === "failed"} />
         </div>
       </div>
 
@@ -241,19 +242,28 @@ function DownloadStat({
   label,
   count,
   accent,
+  onClick,
+  active,
 }: {
   Icon: typeof Download;
   label: string;
   count: number;
   accent?: boolean;
+  onClick?: () => void;
+  active?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-[8px] px-3 py-2 text-sm text-[var(--text-2)]">
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-3 rounded-[8px] px-3 py-2 text-sm ${
+        active ? "bg-[var(--hover)] text-[var(--text)]" : "text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+      }`}
+    >
       <Icon size={16} className={accent && count > 0 ? "text-[var(--accent)]" : ""} />
-      <span className="flex-1">{label}</span>
+      <span className="flex-1 text-left">{label}</span>
       {count > 0 && (
         <span className="tnum rounded-full bg-[var(--hover)] px-2 py-0.5 text-[11px] text-[var(--text-2)]">{count}</span>
       )}
-    </div>
+    </button>
   );
 }

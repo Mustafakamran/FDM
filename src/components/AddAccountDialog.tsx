@@ -6,6 +6,7 @@ import { useApp } from "../store/app";
 import { useToasts } from "../store/toast";
 import { useIndex } from "../store/index-store";
 import { useAccountMeta } from "../store/account-meta";
+import { useUI } from "../store/ui";
 import { Button, TextField, Card } from "./ui";
 
 interface Props {
@@ -19,7 +20,8 @@ export function AddAccountDialog({ provider, onClose }: Props) {
   const [label, setLabel] = useState("");
   const [phase, setPhase] = useState<Phase>("form");
   const [error, setError] = useState("");
-  const { loadAccounts, selectAccount, setView } = useApp();
+  const { loadAccounts, selectAccount } = useApp();
+  const openSettings = useUI((s) => s.openSettings);
   const toast = useToasts((s) => s.push);
 
   async function submit() {
@@ -87,7 +89,7 @@ export function AddAccountDialog({ provider, onClose }: Props) {
                 <button
                   className="underline"
                   onClick={() => {
-                    setView({ kind: "settings" });
+                    openSettings();
                     onClose();
                   }}
                 >

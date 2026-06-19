@@ -1,26 +1,26 @@
 @import "tailwindcss";
 @config "../tailwind.config.js";
 
-/* ── Design tokens: professional dark theme (Linear/Raycast register) ──── */
+/* ── Design tokens: black base, white accent (dark default) ───────────── */
 :root {
   color-scheme: dark;
 
-  --bg: #0a0a0b;
-  --surface: #141416;
-  --card: #1c1c1f;
-  --hover: #242427;
-  --border: #2a2a2e;
-  --border-strong: #3a3a40;
+  --bg: #000000;
+  --surface: #0e0e10;
+  --card: #161618;
+  --hover: #1f1f22;
+  --border: #262629;
+  --border-strong: #38383c;
 
-  --text: #f2f3f5;
-  --text-2: #a3a6ad;
-  --text-3: #6a6d75;
+  --text: #f4f4f6;
+  --text-2: #a0a0a6;
+  --text-3: #66666d;
 
-  --accent: #4c8dff;
-  --accent-hover: #6aa1ff;
-  --accent-ink: #ffffff;
-  --accent-weak: rgba(76, 141, 255, 0.14);
-  --accent-glow: rgba(76, 141, 255, 0.26);
+  --accent: #ffffff;
+  --accent-hover: #e8e8ea;
+  --accent-ink: #000000;
+  --accent-weak: rgba(255, 255, 255, 0.1);
+  --accent-glow: rgba(255, 255, 255, 0.14);
 
   --window-radius: 14px;
 
@@ -34,6 +34,32 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+
+/* Light theme (white base, black accent) */
+html.light {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --surface: #f6f6f7;
+  --card: #ffffff;
+  --hover: #ededee;
+  --border: #e4e4e7;
+  --border-strong: #d2d2d6;
+
+  --text: #16161a;
+  --text-2: #5c5f66;
+  --text-3: #8a8d94;
+
+  --accent: #16161a;
+  --accent-hover: #2c2c33;
+  --accent-ink: #ffffff;
+  --accent-weak: rgba(0, 0, 0, 0.06);
+  --accent-glow: rgba(0, 0, 0, 0.1);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow: 0 6px 22px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.16);
 }
 
 html,

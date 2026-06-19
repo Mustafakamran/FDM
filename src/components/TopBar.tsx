@@ -1,14 +1,19 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Search, Settings as SettingsIcon, Bell, Minus, Square, X } from "lucide-react";
+import { Search, Settings as SettingsIcon, Bell, Minus, Square, X, Sun, Moon } from "lucide-react";
 import { useApp } from "../store/app";
 import { useSearch } from "../store/search";
 import { useNotifications, unreadCount } from "../store/notifications";
+import { useTheme } from "../store/theme";
+import { useUI } from "../store/ui";
 
 const appWindow = getCurrentWindow();
 
 export function TopBar() {
   const setView = useApp((s) => s.setView);
+  const theme = useTheme((s) => s.theme);
+  const toggleTheme = useTheme((s) => s.toggle);
+  const openSettings = useUI((s) => s.openSettings);
   const q = useSearch((s) => s.q);
   const setQ = useSearch((s) => s.set);
   const notifications = useNotifications((s) => s.items);
@@ -76,7 +81,14 @@ export function TopBar() {
           )}
         </button>
         <button
-          onClick={() => setView({ kind: "settings" })}
+          onClick={toggleTheme}
+          aria-label="Toggle theme"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+        >
+          {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+        </button>
+        <button
+          onClick={openSettings}
           aria-label="Settings"
           className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
         >

@@ -6,8 +6,10 @@ export type Section = "all" | "recent" | "starred" | "shared";
 
 export type View =
   | { kind: "browse"; accountId: string; section: Section; path: string }
-  | { kind: "settings" }
+  | { kind: "downloads"; filter: DownloadFilter }
   | { kind: "accounts" };
+
+export type DownloadFilter = "all" | "active" | "completed" | "failed";
 
 interface AppState {
   view: View;
@@ -16,6 +18,7 @@ interface AppState {
 
   setView: (view: View) => void;
   selectAccount: (accountId: string) => void;
+  showDownloads: (filter: DownloadFilter) => void;
   setSection: (section: Section) => void;
   setPath: (path: string) => void;
   loadAccounts: () => Promise<void>;
@@ -30,6 +33,8 @@ export const useApp = create<AppState>((set, get) => ({
   setView: (view) => set({ view }),
 
   selectAccount: (accountId) => set({ view: { kind: "browse", accountId, section: "all", path: "" } }),
+
+  showDownloads: (filter) => set({ view: { kind: "downloads", filter } }),
 
   setSection: (section) =>
     set((s) =>

@@ -8,6 +8,7 @@ import {
   type JobStatus,
 } from "../lib/tauri/commands";
 import { loadPerf, toRcConfig } from "../lib/perf";
+import { useHistory } from "./history";
 
 const CONCURRENCY_KEY = "download_concurrency";
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -98,6 +99,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
   refresh: async () => {
     const jobs = await listJobs();
     set({ jobs });
+    for (const j of jobs) if (j.finished || j.cancelled) useHistory.getState().record(j);
     await get().pump();
     const active = get().jobs.some((j) => !j.finished && !j.cancelled);
     if (!active && get().queue.length === 0) get().stopPolling();
