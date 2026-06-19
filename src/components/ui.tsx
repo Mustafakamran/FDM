@@ -1,0 +1,49 @@
+import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
+
+type Variant = "primary" | "ghost" | "danger";
+
+const variants: Record<Variant, string> = {
+  primary: "bg-[var(--accent)] text-white hover:brightness-110",
+  ghost: "bg-transparent text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]",
+  danger: "bg-transparent text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--error)]",
+};
+
+export function Button({
+  variant = "ghost",
+  className = "",
+  children,
+  ...rest
+}: { variant?: Variant; children: ReactNode } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      className={`focus-accent inline-flex items-center gap-2 rounded-[6px] px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`}
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function TextField({
+  label,
+  className = "",
+  ...rest
+}: { label: string } & InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-[var(--text-2)]">{label}</span>
+      <input
+        className={`focus-accent rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-3)] ${className}`}
+        {...rest}
+      />
+    </label>
+  );
+}
+
+export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={`rounded-[var(--radius)] border border-[var(--border)] bg-[var(--card)] ${className}`}>
+      {children}
+    </div>
+  );
+}

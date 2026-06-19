@@ -25,6 +25,7 @@ tauri-plugin-shell = "2.3.5"
 rand = "0.10.1"
 reqwest = { version = "0.13", default-features = false, features = ["blocking"] }
 tokio = { version = "1", features = ["time"] }
+tauri-plugin-dialog = "2.7.1"
 
 # keyring is per-target: each OS needs its own native credential-store backend.
 # Without a native feature, keyring v3 silently falls back to an in-memory MOCK
