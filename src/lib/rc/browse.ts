@@ -8,6 +8,8 @@ export interface RcItem {
   IsDir: boolean;
   ModTime: string;
   MimeType: string;
+  /** Backend file id (Drive populates this); used for uploader lookup. */
+  ID?: string;
 }
 
 /**

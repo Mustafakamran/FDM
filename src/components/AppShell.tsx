@@ -8,6 +8,7 @@ import { SettingsView } from "./SettingsView";
 import { ProfileView } from "./ProfileView";
 import { TransfersDock } from "./TransfersDock";
 import { ToastHost } from "./ToastHost";
+import { NotificationsPanel } from "./NotificationsPanel";
 import { formatSpeed } from "../lib/format";
 
 export function AppShell() {
@@ -20,6 +21,7 @@ export function AppShell() {
     <div className="flex h-full flex-col bg-[var(--bg)]">
       <TitleBar />
       <ToastHost />
+      <NotificationsPanel />
 
       {/* Profile tabs */}
       {openTabs.length > 0 && (

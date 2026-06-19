@@ -103,3 +103,8 @@ export function cancelJob(jobId: number): Promise<void> {
 export function clearFinishedJobs(): Promise<void> {
   return invoke("clear_finished_jobs");
 }
+
+/** Resolve a Drive file/folder's uploader (owner / last modifier) display name. */
+export function driveUploader(accountId: string, fileId: string): Promise<string | null> {
+  return invoke<string | null>("drive_uploader", { accountId, fileId });
+}

@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod download;
+pub mod drive;
 pub mod rclone;
 pub mod secrets;
 
@@ -27,6 +28,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(RcloneState::default())
         .manage(JobsState::default())
         .manage(accounts::OAuthState::default())
@@ -42,6 +44,7 @@ pub fn run() {
             download::list_jobs,
             download::cancel_job,
             download::clear_finished_jobs,
+            drive::drive_uploader,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Users, Settings as SettingsIcon, Minus, Square, X } from "lucide-react";
+import { Users, Settings as SettingsIcon, Minus, Square, X, Bell } from "lucide-react";
 import { useApp } from "../store/app";
+import { useNotifications, unreadCount } from "../store/notifications";
 
 const appWindow = getCurrentWindow();
 
 export function TitleBar() {
   const { view, setView } = useApp();
+  const notifications = useNotifications((s) => s.items);
+  const togglePanel = useNotifications((s) => s.togglePanel);
+  const unread = unreadCount(notifications);
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -57,6 +61,19 @@ export function TitleBar() {
       {navItem("settings", <SettingsIcon size={15} />, "Settings")}
 
       <div data-tauri-drag-region className="h-full flex-1" />
+
+      <button
+        onClick={() => togglePanel()}
+        aria-label="Activity"
+        className="relative mr-1 flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+      >
+        <Bell size={15} />
+        {unread > 0 && (
+          <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold text-[var(--accent-ink)]">
+            {unread > 9 ? "9+" : unread}
+          </span>
+        )}
+      </button>
 
       <div className="flex items-center gap-0.5">
         <button
