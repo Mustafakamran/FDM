@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getSecret, setSecret, SECRET_KEYS } from "../lib/tauri/commands";
 import { Button, TextField, Card } from "./ui";
 import { loadPerf, savePerf, PRESETS, type PerfSettings } from "../lib/perf";
+import { useToasts } from "../store/toast";
 
 const FOLDER_KEY = "default_download_folder";
 
@@ -14,7 +15,8 @@ export function SettingsView() {
   const [dropboxSecret, setDropboxSecret] = useState("");
   const [folder, setFolder] = useState<string>(() => localStorage.getItem(FOLDER_KEY) ?? "");
   const [perf, setPerf] = useState<PerfSettings>(() => loadPerf());
-  const [savedFlash, setSavedFlash] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  const toast = useToasts((s) => s.push);
 
   useEffect(() => {
     (async () => {
@@ -31,9 +33,10 @@ export function SettingsView() {
     })();
   }, []);
 
-  function flash(msg: string) {
-    setSavedFlash(msg);
-    setTimeout(() => setSavedFlash(null), 2000);
+  function markSaved(key: string, msg: string) {
+    toast(msg, "success");
+    setSaved(key);
+    setTimeout(() => setSaved((s) => (s === key ? null : s)), 2200);
   }
 
   async function saveGoogle() {
@@ -41,7 +44,7 @@ export function SettingsView() {
       setSecret(SECRET_KEYS.drive.id, googleId),
       setSecret(SECRET_KEYS.drive.secret, googleSecret),
     ]);
-    flash("Google credentials saved");
+    markSaved("google", "Google credentials saved");
   }
 
   async function saveDropbox() {
@@ -49,7 +52,7 @@ export function SettingsView() {
       setSecret(SECRET_KEYS.dropbox.id, dropboxKey),
       setSecret(SECRET_KEYS.dropbox.secret, dropboxSecret),
     ]);
-    flash("Dropbox credentials saved");
+    markSaved("dropbox", "Dropbox credentials saved");
   }
 
   async function chooseFolder() {
@@ -57,7 +60,7 @@ export function SettingsView() {
     if (typeof picked === "string") {
       setFolder(picked);
       localStorage.setItem(FOLDER_KEY, picked);
-      flash("Default folder set");
+      markSaved("folder", "Default folder set");
     }
   }
 
@@ -71,8 +74,15 @@ export function SettingsView() {
     const next = PRESETS[name];
     setPerf(next);
     savePerf(next);
-    flash(`${name} preset applied`);
+    toast(`${name} preset applied`, "success");
   }
+
+  const tick = (key: string) =>
+    saved === key ? (
+      <span className="flex items-center gap-1 text-sm text-[var(--success)]">
+        <Check size={15} /> Saved
+      </span>
+    ) : null;
 
   return (
     <div className="mx-auto w-full max-w-2xl p-8">
@@ -93,7 +103,8 @@ export function SettingsView() {
             value={googleSecret}
             onChange={(e) => setGoogleSecret(e.target.value)}
           />
-          <div className="flex justify-end">
+          <div className="flex items-center justify-end gap-3">
+            {tick("google")}
             <Button variant="primary" onClick={saveGoogle}>
               Save Google credentials
             </Button>
@@ -116,7 +127,8 @@ export function SettingsView() {
             value={dropboxSecret}
             onChange={(e) => setDropboxSecret(e.target.value)}
           />
-          <div className="flex justify-end">
+          <div className="flex items-center justify-end gap-3">
+            {tick("dropbox")}
             <Button variant="primary" onClick={saveDropbox}>
               Save Dropbox credentials
             </Button>
@@ -131,6 +143,7 @@ export function SettingsView() {
           <div className="tnum min-w-0 flex-1 truncate rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text-2)]">
             {folder || "Not set"}
           </div>
+          {tick("folder")}
           <Button variant="primary" onClick={chooseFolder}>
             <FolderOpen size={16} /> Choose…
           </Button>
@@ -178,12 +191,6 @@ export function SettingsView() {
           />
         </div>
       </Card>
-
-      {savedFlash && (
-        <div className="mt-4 flex items-center gap-2 text-sm text-[var(--success)]">
-          <Check size={16} /> {savedFlash}
-        </div>
-      )}
     </div>
   );
 }

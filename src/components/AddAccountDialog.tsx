@@ -3,6 +3,7 @@ import { Loader2, X } from "lucide-react";
 import { addAccount, getSecret, SECRET_KEYS, type Provider } from "../lib/tauri/commands";
 import { providerName } from "./icons";
 import { useApp } from "../store/app";
+import { useToasts } from "../store/toast";
 import { Button, TextField, Card } from "./ui";
 
 interface Props {
@@ -17,6 +18,7 @@ export function AddAccountDialog({ provider, onClose }: Props) {
   const [phase, setPhase] = useState<Phase>("form");
   const [error, setError] = useState("");
   const { loadAccounts, openProfile, setView } = useApp();
+  const toast = useToasts((s) => s.push);
 
   async function submit() {
     if (!label.trim()) return;
@@ -30,6 +32,7 @@ export function AddAccountDialog({ provider, onClose }: Props) {
     try {
       const account = await addAccount(provider, label.trim(), clientId, clientSecret);
       await loadAccounts();
+      toast(`Connected ${providerName(provider)} · ${label.trim()}`, "success");
       openProfile(account.id);
       onClose();
     } catch (e) {
