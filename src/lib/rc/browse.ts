@@ -21,6 +21,20 @@ export function buildFs(account: Account): string {
     : `${account.id}:`;
 }
 
+export interface SizeResult {
+  bytes: number;
+  count: number;
+}
+
+/** Recursively compute a folder's total size via rclone (Drive/Dropbox don't expose it). */
+export async function folderSize(account: Account, path: string): Promise<SizeResult> {
+  const res = await new RcClient().call<{ bytes?: number; count?: number }>("operations/size", {
+    fs: buildFs(account),
+    remote: path,
+  });
+  return { bytes: res?.bytes ?? 0, count: res?.count ?? 0 };
+}
+
 /** List a folder (path "" = root), sorted dirs-first then alphabetical. */
 export async function listFolder(account: Account, path: string): Promise<RcItem[]> {
   const res = await new RcClient().call<{ list?: RcItem[] }>("operations/list", {

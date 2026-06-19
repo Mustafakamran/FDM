@@ -45,7 +45,12 @@ export function TitleBar() {
           <rect x="1.5" y="1.5" width="21" height="21" rx="6" fill="var(--accent-weak)" stroke="var(--accent)" strokeWidth="1.2" />
           <path d="M12 6.5v8m0 0 3.2-3.2M12 14.5l-3.2-3.2M7.5 17.5h9" stroke="var(--accent)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        <span className="text-sm font-semibold tracking-tight text-[var(--text)]">Footage Downloader</span>
+        <span className="text-sm font-semibold tracking-tight text-[var(--text)]">
+          Footage Download Manager
+        </span>
+        <span className="rounded-[5px] bg-[var(--hover)] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-[var(--text-3)]">
+          FDM
+        </span>
       </span>
 
       {navItem("accounts", <Users size={15} />, "Accounts")}

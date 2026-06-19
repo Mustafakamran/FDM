@@ -8,6 +8,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 import { ProfileView } from "./ProfileView";
 import { useApp } from "../store/app";
 import { useTransfers } from "../store/transfers";
+import { useBrowse } from "../store/browse";
 import type { Account } from "../lib/tauri/commands";
 
 const account: Account = { id: "drive_x", provider: "drive", label: "x" };
@@ -23,6 +24,7 @@ beforeEach(() => {
   localStorage.clear();
   useApp.setState({ accounts: [account], openTabs: ["drive_x"], view: { kind: "profile", id: "drive_x" } });
   useTransfers.setState({ jobs: [], dockOpen: true });
+  useBrowse.setState({ listings: {}, loading: {}, errors: {}, sizes: {} });
   invokeMock.mockImplementation((cmd: string, args?: { params?: { remote?: string } }) => {
     if (cmd === "rc_call") {
       const remote = args?.params?.remote ?? "";

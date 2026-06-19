@@ -1,4 +1,4 @@
-# Footage Downloader
+# Footage Download Manager (FDM)
 
 A desktop app for downloading large RAW video assets (SLOG/CLOG, 300–500 GB+)
 that clients share with you on **Google Drive** ("Shared with me") and **Dropbox**,
