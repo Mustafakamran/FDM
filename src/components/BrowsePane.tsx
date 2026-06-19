@@ -149,7 +149,8 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           ) : (
             <>
               <span className="whitespace-nowrap">
-                Indexing · <span className="tnum">{entry?.progress.done ?? 0}/{entry?.progress.total ?? 0}</span> folders
+                Indexing · <span className="tnum">{entry?.progress.done ?? 0}/{entry?.progress.total ?? 0}</span> folders ·{" "}
+                <span className="tnum">{(entry?.progress.files ?? 0).toLocaleString()}</span> files
               </span>
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--hover)]">
                 <div className="h-full rounded-full bg-[var(--accent)] transition-[width]" style={{ width: entry?.progress.total ? `${Math.round((entry.progress.done / entry.progress.total) * 100)}%` : "8%" }} />

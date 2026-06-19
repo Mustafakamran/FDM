@@ -153,30 +153,38 @@ fn save_to_disk(app: &AppHandle, account_id: &str, entries: &[Entry]) {
     }
 }
 
-/// Recursive crawl across all top-level folders, run by a pool of worker threads.
-fn do_crawl(app: &AppHandle, account_id: &str) -> Result<Vec<Entry>, String> {
-    let state = app.state::<RcloneState>();
-    let conn = lock(&state.connection).clone().ok_or_else(|| "rclone not started".to_string())?;
-    let fs = account_fs(account_id)?;
-
-    let root = list_op(&conn, &fs, "", false)?;
-    let root_dirs: Vec<Entry> = root.iter().filter(|e| e.is_dir).cloned().collect();
-    let total = root_dirs.len();
+/// Recursively crawl the given top-level dirs with a worker pool, returning the
+/// collected subtree entries (root-relative paths). Emits folders done/total and
+/// a running files-indexed count. `base_files` seeds the files counter.
+fn crawl_dirs(
+    app: &AppHandle,
+    account_id: &str,
+    conn: &RcConnection,
+    fs: &str,
+    dirs: Vec<Entry>,
+    base_files: usize,
+) -> Vec<Entry> {
+    let total = dirs.len();
     set_status(app, account_id, "crawling", 0, total, "");
-    let _ = app.emit("index-progress", json!({ "accountId": account_id, "done": 0, "total": total }));
+    let _ = app.emit("index-progress", json!({ "accountId": account_id, "done": 0, "total": total, "files": base_files }));
+    if total == 0 {
+        return Vec::new();
+    }
 
-    let entries = Arc::new(Mutex::new(root));
-    let queue = Arc::new(Mutex::new(root_dirs.into_iter().collect::<VecDeque<Entry>>()));
+    let out = Arc::new(Mutex::new(Vec::<Entry>::new()));
+    let queue = Arc::new(Mutex::new(dirs.into_iter().collect::<VecDeque<Entry>>()));
     let done = Arc::new(AtomicUsize::new(0));
+    let files = Arc::new(AtomicUsize::new(0));
 
-    let workers = std::cmp::min(8, std::cmp::max(1, total));
+    let workers = std::cmp::min(8, total);
     let mut handles = Vec::new();
     for _ in 0..workers {
         let conn = conn.clone();
-        let fs = fs.clone();
-        let entries = entries.clone();
+        let fs = fs.to_string();
+        let out = out.clone();
         let queue = queue.clone();
         let done = done.clone();
+        let files = files.clone();
         let app = app.clone();
         let account_id = account_id.to_string();
         handles.push(std::thread::spawn(move || loop {
@@ -198,26 +206,82 @@ fn do_crawl(app: &AppHandle, account_id: &str) -> Result<Vec<Entry>, String> {
                     Err(_) => break,
                 }
             }
+            let mut fcount = 0usize;
             {
-                let mut acc = lock(&entries);
+                let mut acc = lock(&out);
                 for mut it in sub {
                     if it.path != dir.path && !it.path.starts_with(&prefix) {
                         it.path = format!("{}{}", prefix, it.path);
                     }
+                    if !it.is_dir {
+                        fcount += 1;
+                    }
                     acc.push(it);
                 }
             }
+            files.fetch_add(fcount, Ordering::SeqCst);
             let d = done.fetch_add(1, Ordering::SeqCst) + 1;
+            let f = base_files + files.load(Ordering::SeqCst);
             set_status(&app, &account_id, "crawling", d, total, "");
-            let _ = app.emit("index-progress", json!({ "accountId": account_id, "done": d, "total": total }));
+            let _ = app.emit("index-progress", json!({ "accountId": account_id, "done": d, "total": total, "files": f }));
         }));
     }
     for h in handles {
         let _ = h.join();
     }
+    Arc::try_unwrap(out)
+        .map(|m| m.into_inner().unwrap_or_else(|e| e.into_inner()))
+        .unwrap_or_else(|arc| lock(&arc).clone())
+}
 
-    let collected = lock(&entries).clone();
-    Ok(collected)
+/// Full crawl of an account.
+fn do_crawl(app: &AppHandle, account_id: &str) -> Result<Vec<Entry>, String> {
+    let conn = lock(&app.state::<RcloneState>().connection).clone().ok_or_else(|| "rclone not started".to_string())?;
+    let fs = account_fs(account_id)?;
+    let root = list_op(&conn, &fs, "", false)?;
+    let root_dirs: Vec<Entry> = root.iter().filter(|e| e.is_dir).cloned().collect();
+    let base_files = root.iter().filter(|e| !e.is_dir).count();
+    let sub = crawl_dirs(app, account_id, &conn, &fs, root_dirs, base_files);
+    let mut merged = root;
+    merged.extend(sub);
+    Ok(merged)
+}
+
+/// Incremental refresh: keep already-indexed top-level folders, only crawl ones
+/// missing from the index (failed earlier or newly added); drop deleted folders.
+fn do_refresh(app: &AppHandle, account_id: &str) -> Result<Vec<Entry>, String> {
+    let existing = match load_from_disk(app, account_id) {
+        Some(e) if !e.is_empty() => e,
+        _ => return do_crawl(app, account_id),
+    };
+    let conn = lock(&app.state::<RcloneState>().connection).clone().ok_or_else(|| "rclone not started".to_string())?;
+    let fs = account_fs(account_id)?;
+    let root = list_op(&conn, &fs, "", false)?;
+
+    // Top-level folder names still present, and which already have indexed contents.
+    let current_tops: std::collections::HashSet<String> = root.iter().map(|e| e.path.clone()).collect();
+    let indexed: std::collections::HashSet<String> = existing
+        .iter()
+        .filter(|e| e.path.contains('/'))
+        .filter_map(|e| e.path.split('/').next().map(|s| s.to_string()))
+        .collect();
+
+    let to_crawl: Vec<Entry> = root.iter().filter(|e| e.is_dir && !indexed.contains(&e.path)).cloned().collect();
+
+    // Keep nested entries under top folders that still exist (drop deleted ones
+    // and all old root-level entries — the fresh root list replaces those).
+    let kept: Vec<Entry> = existing
+        .into_iter()
+        .filter(|e| e.path.contains('/') && current_tops.contains(e.path.split('/').next().unwrap_or("")))
+        .collect();
+
+    let base_files = root.iter().filter(|e| !e.is_dir).count() + kept.iter().filter(|e| !e.is_dir).count();
+    let sub = crawl_dirs(app, account_id, &conn, &fs, to_crawl, base_files);
+
+    let mut merged = root;
+    merged.extend(kept);
+    merged.extend(sub);
+    Ok(merged)
 }
 
 /// Ensure an account's index exists: serve from memory, else load from disk, else
@@ -236,7 +300,7 @@ pub fn index_start(app: AppHandle, account_id: String) {
         }
         st.insert(account_id.clone(), IndexStatus { status: "loading".into(), done: 0, total: 0, error: String::new() });
     }
-    let _ = app.emit("index-progress", json!({ "accountId": account_id, "done": 0, "total": 0 }));
+    let _ = app.emit("index-progress", json!({ "accountId": account_id, "done": 0, "total": 0, "files": 0 }));
 
     std::thread::spawn(move || {
         let entries = match load_from_disk(&app, &account_id) {
@@ -260,17 +324,31 @@ pub fn index_start(app: AppHandle, account_id: String) {
     });
 }
 
-/// Force a fresh crawl (clears cache + disk).
+/// Incremental refresh: keep already-indexed folders, only crawl missing/new ones.
 #[tauri::command]
 pub fn index_recrawl(app: AppHandle, account_id: String) {
     {
         let state = app.state::<IndexState>();
-        lock(&state.indexes).remove(&account_id);
+        let mut st = lock(&state.status);
+        if matches!(st.get(&account_id).map(|s| s.status.as_str()), Some("crawling") | Some("loading")) {
+            return;
+        }
+        st.insert(account_id.clone(), IndexStatus { status: "loading".into(), done: 0, total: 0, error: String::new() });
     }
-    if let Ok(path) = index_path(&app, &account_id) {
-        let _ = std::fs::remove_file(path);
-    }
-    index_start(app, account_id);
+    let _ = app.emit("index-progress", json!({ "accountId": account_id, "done": 0, "total": 0, "files": 0 }));
+    std::thread::spawn(move || match do_refresh(&app, &account_id) {
+        Ok(entries) => {
+            save_to_disk(&app, &account_id, &entries);
+            let index = build_index(&entries);
+            lock(&app.state::<IndexState>().indexes).insert(account_id.clone(), index);
+            set_status(&app, &account_id, "ready", 0, 0, "");
+            let _ = app.emit("index-ready", json!({ "accountId": account_id }));
+        }
+        Err(err) => {
+            set_status(&app, &account_id, "error", 0, 0, &err);
+            let _ = app.emit("index-error", json!({ "accountId": account_id, "error": err }));
+        }
+    });
 }
 
 /// Return the built index ({tree, agg}) once ready, else None.

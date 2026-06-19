@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Plus, FolderOpen, Clock, Star, Users, Download, Check, Pause, AlertCircle, Globe, Trash2 } from "lucide-react";
+import { Plus, FolderOpen, Clock, Star, Users, Download, Check, Pause, AlertCircle, Globe, Trash2, Loader2 } from "lucide-react";
 import { useApp, type Section } from "../store/app";
 import { useTransfers } from "../store/transfers";
 import { useStorage } from "../store/storage";
 import { useAccountMeta, prettyLabel } from "../store/account-meta";
+import { useIndex } from "../store/index-store";
 import { ProviderIcon, providerName } from "./icons";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { formatBytes, formatSpeed } from "../lib/format";
@@ -22,6 +23,7 @@ export function Sidebar() {
   const storage = useStorage((s) => s.byAccount);
   const fetchStorage = useStorage((s) => s.fetch);
   const meta = useAccountMeta((s) => s.byId);
+  const indexEntries = useIndex((s) => s.byAccount);
   const emailErrors = useAccountMeta((s) => s.errors);
   const fetchEmail = useAccountMeta((s) => s.fetchEmail);
   const [addProvider, setAddProvider] = useState<Provider | null>(null);
@@ -142,6 +144,25 @@ export function Sidebar() {
                     </div>
                   </div>
                 )}
+                {(() => {
+                  const ie = indexEntries[a.id];
+                  if (!ie || (ie.status !== "crawling" && ie.status !== "loading")) return null;
+                  const { done, total, files } = ie.progress;
+                  return (
+                    <div className="mt-2">
+                      <div className="tnum mb-1 flex items-center gap-1.5 text-[11px] text-[var(--accent)]">
+                        <Loader2 size={11} className="animate-spin" />
+                        Indexing {total > 0 ? `${done}/${total} folders` : "…"} · {files.toLocaleString()} files
+                      </div>
+                      <div className="h-1 overflow-hidden rounded-full bg-[var(--border)]">
+                        <div
+                          className="h-full rounded-full bg-[var(--accent)]"
+                          style={{ width: total > 0 ? `${Math.round((done / total) * 100)}%` : "8%" }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
                 {confirmRemove === a.id && (
                   <div className="mt-2 flex items-center gap-2 text-xs">
                     <span className="text-[var(--text-2)]">Remove?</span>

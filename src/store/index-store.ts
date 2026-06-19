@@ -7,7 +7,7 @@ export type IndexStatus = "idle" | "loading" | "crawling" | "ready" | "error";
 
 export interface IndexEntry {
   status: IndexStatus;
-  progress: { done: number; total: number };
+  progress: { done: number; total: number; files: number };
   index: AccountIndex | null;
   error?: string;
 }
@@ -19,7 +19,7 @@ interface IndexState {
   remove: (accountId: string) => Promise<void>;
 }
 
-const blank = (): IndexEntry => ({ status: "idle", progress: { done: 0, total: 0 }, index: null });
+const blank = (): IndexEntry => ({ status: "idle", progress: { done: 0, total: 0, files: 0 }, index: null });
 
 export const useIndex = create<IndexState>((set, get) => {
   // Register the Rust → JS index events exactly once.
@@ -31,13 +31,13 @@ export const useIndex = create<IndexState>((set, get) => {
     if (listeners) return listeners;
     listeners = (async () => {
       try {
-        await listen<{ accountId: string; done: number; total: number }>("index-progress", (ev) => {
-          const { accountId, done, total } = ev.payload;
-          patch(accountId, { status: total > 0 ? "crawling" : "loading", progress: { done, total } });
+        await listen<{ accountId: string; done: number; total: number; files: number }>("index-progress", (ev) => {
+          const { accountId, done, total, files } = ev.payload;
+          patch(accountId, { status: total > 0 ? "crawling" : "loading", progress: { done, total, files: files ?? 0 } });
         });
         await listen<{ accountId: string }>("index-ready", async (ev) => {
           const idx = await indexGet(ev.payload.accountId);
-          patch(ev.payload.accountId, { status: "ready", progress: { done: 0, total: 0 }, index: idx, error: undefined });
+          patch(ev.payload.accountId, { status: "ready", progress: { done: 0, total: 0, files: 0 }, index: idx, error: undefined });
         });
         await listen<{ accountId: string; error: string }>("index-error", (ev) => {
           patch(ev.payload.accountId, { status: "error", error: ev.payload.error });
