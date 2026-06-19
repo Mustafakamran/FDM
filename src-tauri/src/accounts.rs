@@ -91,6 +91,10 @@ pub fn config_create_args(
     client_secret: &str,
 ) -> Vec<String> {
     match provider {
+        // NOTE: do NOT set config_is_local=false. That tells rclone it's on a
+        // headless/remote machine and to skip the local browser OAuth flow,
+        // which saves the remote with an EMPTY token. This app runs on the
+        // user's desktop with a browser, so we use the default (local) flow.
         "drive" => vec![
             "config".into(),
             "create".into(),
@@ -102,8 +106,6 @@ pub fn config_create_args(
             client_secret.into(),
             "scope".into(),
             "drive.readonly".into(),
-            "config_is_local".into(),
-            "false".into(),
             "--config".into(),
             config_path.into(),
         ],
@@ -326,8 +328,6 @@ mod tests {
                 "csecret",
                 "scope",
                 "drive.readonly",
-                "config_is_local",
-                "false",
                 "--config",
                 "/data/rclone.conf",
             ]
