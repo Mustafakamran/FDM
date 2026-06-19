@@ -49,8 +49,8 @@ fn enc(s: &str) -> String {
     out
 }
 
-/// Exchange a refresh token for a fresh access token.
-fn refresh_access_token(client_id: &str, client_secret: &str, refresh_token: &str) -> Result<String, String> {
+/// Exchange a refresh token for a fresh access token at the given OAuth endpoint.
+fn refresh_at(endpoint: &str, client_id: &str, client_secret: &str, refresh_token: &str) -> Result<String, String> {
     let client = reqwest::blocking::Client::new();
     let body = format!(
         "client_id={}&client_secret={}&refresh_token={}&grant_type=refresh_token",
@@ -59,7 +59,7 @@ fn refresh_access_token(client_id: &str, client_secret: &str, refresh_token: &st
         enc(refresh_token),
     );
     let resp = client
-        .post("https://oauth2.googleapis.com/token")
+        .post(endpoint)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(body)
         .send()
@@ -91,7 +91,7 @@ pub fn drive_uploader(
     let (token_json, client_id, client_secret) =
         remote_creds(&dump, &account_id).ok_or_else(|| format!("no creds for {account_id}"))?;
     let refresh = refresh_token_from(&token_json).ok_or_else(|| "no refresh token".to_string())?;
-    let access = refresh_access_token(&client_id, &client_secret, &refresh)?;
+    let access = refresh_at("https://oauth2.googleapis.com/token", &client_id, &client_secret, &refresh)?;
 
     let client = reqwest::blocking::Client::new();
     let url = format!(
@@ -119,7 +119,7 @@ pub fn drive_email(conn: &RcConnection, account_id: &str) -> Result<Option<Strin
     let (token_json, client_id, client_secret) =
         remote_creds(&dump, account_id).ok_or_else(|| format!("no creds for {account_id}"))?;
     let refresh = refresh_token_from(&token_json).ok_or_else(|| "no refresh token".to_string())?;
-    let access = refresh_access_token(&client_id, &client_secret, &refresh)?;
+    let access = refresh_at("https://oauth2.googleapis.com/token", &client_id, &client_secret, &refresh)?;
 
     let client = reqwest::blocking::Client::new();
     let resp = client
@@ -138,6 +138,31 @@ pub fn drive_email(conn: &RcConnection, account_id: &str) -> Result<Option<Strin
         .and_then(|u| u.get("emailAddress"))
         .and_then(|e| e.as_str())
         .map(|s| s.to_string()))
+}
+
+/// The Dropbox account's email via the native users/get_current_account endpoint
+/// (rclone's `config userinfo` reports "doesn't support UserInfo" for some remotes).
+pub fn dropbox_email(conn: &RcConnection, account_id: &str) -> Result<Option<String>, String> {
+    let dump = rc_post(conn, "config/dump", &serde_json::json!({}))?;
+    let (token_json, client_id, client_secret) =
+        remote_creds(&dump, account_id).ok_or_else(|| format!("no creds for {account_id}"))?;
+    let refresh = refresh_token_from(&token_json).ok_or_else(|| "no refresh token".to_string())?;
+    let access = refresh_at("https://api.dropboxapi.com/oauth2/token", &client_id, &client_secret, &refresh)?;
+
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .post("https://api.dropboxapi.com/2/users/get_current_account")
+        .bearer_auth(&access)
+        .send()
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("dropbox get_current_account {status}: {body}"));
+    }
+    let text = resp.text().map_err(|e| e.to_string())?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(v.get("email").and_then(|e| e.as_str()).map(|s| s.to_string()))
 }
 
 #[cfg(test)]
