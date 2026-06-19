@@ -29,4 +29,16 @@ describe("RcClient", () => {
     const client = new RcClient(conn);
     await expect(client.coreVersion()).rejects.toThrow(/500/);
   });
+
+  it("serializes params into the JSON body with the json content-type", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new RcClient(conn).call("operations/list", { fs: "drive:", remote: "" });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://127.0.0.1:5572/operations/list");
+    expect(init.headers["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(init.body)).toEqual({ fs: "drive:", remote: "" });
+  });
 });
