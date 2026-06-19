@@ -7,6 +7,7 @@ import {
   type DownloadItem,
   type JobStatus,
 } from "../lib/tauri/commands";
+import { loadPerf, toRcConfig } from "../lib/perf";
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -30,7 +31,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
   setDockOpen: (dockOpen) => set({ dockOpen }),
 
   start: async (accountId, items, dest) => {
-    const created = await startDownload(accountId, items, dest);
+    const created = await startDownload(accountId, items, dest, toRcConfig(loadPerf()));
     set((s) => {
       const known = new Set(s.jobs.map((j) => j.jobId));
       return { jobs: [...s.jobs, ...created.filter((j) => !known.has(j.jobId))], dockOpen: true };

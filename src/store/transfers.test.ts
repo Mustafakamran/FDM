@@ -46,11 +46,15 @@ describe("transfers store", () => {
     const jobs = useTransfers.getState().jobs;
     expect(jobs).toHaveLength(1);
     expect(jobs[0].jobId).toBe(7);
-    expect(invokeMock).toHaveBeenCalledWith("start_download", {
-      accountId: "drive_x",
-      items: [{ path: "a.mxf", name: "a.mxf", isDir: false, size: 1000 }],
-      dest: "/dest",
-    });
+    expect(invokeMock).toHaveBeenCalledWith(
+      "start_download",
+      expect.objectContaining({
+        accountId: "drive_x",
+        items: [{ path: "a.mxf", name: "a.mxf", isDir: false, size: 1000 }],
+        dest: "/dest",
+        config: expect.objectContaining({ Transfers: expect.any(Number) }),
+      }),
+    );
   });
 
   it("cancel() calls cancel_job then refreshes", async () => {

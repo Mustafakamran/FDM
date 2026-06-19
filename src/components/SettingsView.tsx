@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, Check } from "lucide-react";
+import { FolderOpen, Check, Zap } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getSecret, setSecret, SECRET_KEYS } from "../lib/tauri/commands";
 import { Button, TextField, Card } from "./ui";
+import { loadPerf, savePerf, PRESETS, type PerfSettings } from "../lib/perf";
 
 const FOLDER_KEY = "default_download_folder";
 
@@ -12,6 +13,7 @@ export function SettingsView() {
   const [dropboxKey, setDropboxKey] = useState("");
   const [dropboxSecret, setDropboxSecret] = useState("");
   const [folder, setFolder] = useState<string>(() => localStorage.getItem(FOLDER_KEY) ?? "");
+  const [perf, setPerf] = useState<PerfSettings>(() => loadPerf());
   const [savedFlash, setSavedFlash] = useState<string | null>(null);
 
   useEffect(() => {
@@ -57,6 +59,19 @@ export function SettingsView() {
       localStorage.setItem(FOLDER_KEY, picked);
       flash("Default folder set");
     }
+  }
+
+  function setPerfField(k: keyof PerfSettings, v: number) {
+    const next = { ...perf, [k]: Number.isFinite(v) && v >= 0 ? v : 0 };
+    setPerf(next);
+    savePerf(next);
+  }
+
+  function applyPreset(name: string) {
+    const next = PRESETS[name];
+    setPerf(next);
+    savePerf(next);
+    flash(`${name} preset applied`);
   }
 
   return (
@@ -115,6 +130,48 @@ export function SettingsView() {
           <Button variant="primary" onClick={chooseFolder}>
             <FolderOpen size={16} /> Choose…
           </Button>
+        </div>
+      </Card>
+
+      <Card className="mt-4 p-5">
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
+          <Zap size={16} /> Performance
+        </h2>
+        <p className="mb-4 text-xs text-[var(--text-3)]">
+          Tuning for large RAW files. Turbo for a fast line; Gentle to share the pipe.
+        </p>
+        <div className="mb-4 flex gap-2">
+          {Object.keys(PRESETS).map((name) => (
+            <Button key={name} variant="ghost" onClick={() => applyPreset(name)}>
+              {name}
+            </Button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <TextField
+            label="Parallel files"
+            type="number"
+            value={perf.transfers}
+            onChange={(e) => setPerfField("transfers", Number(e.target.value))}
+          />
+          <TextField
+            label="Streams per file"
+            type="number"
+            value={perf.multiThreadStreams}
+            onChange={(e) => setPerfField("multiThreadStreams", Number(e.target.value))}
+          />
+          <TextField
+            label="Stream cutoff (MiB)"
+            type="number"
+            value={perf.multiThreadCutoffMB}
+            onChange={(e) => setPerfField("multiThreadCutoffMB", Number(e.target.value))}
+          />
+          <TextField
+            label="Bandwidth cap (MB/s, 0 = off)"
+            type="number"
+            value={perf.bwLimitMB}
+            onChange={(e) => setPerfField("bwLimitMB", Number(e.target.value))}
+          />
         </div>
       </Card>
 

@@ -111,13 +111,21 @@ pub fn start_download(
     account_id: String,
     items: Vec<DownloadItem>,
     dest: String,
+    config: Option<Value>,
 ) -> Result<Vec<JobStatus>, String> {
     let conn = connection(&rclone)?;
     let fs = account_fs(&account_id)?;
     let mut created = Vec::new();
 
     for item in &items {
-        let (endpoint, params) = build_copy(&fs, item, &dest);
+        let (endpoint, mut params) = build_copy(&fs, item, &dest);
+        // Apply per-download tuning (Transfers, MultiThreadStreams, BwLimit, …)
+        // as an rclone rc `_config` override.
+        if let Some(cfg) = &config {
+            if let Some(obj) = params.as_object_mut() {
+                obj.insert("_config".to_string(), cfg.clone());
+            }
+        }
         let resp = rc_post(&conn, endpoint, &params)?;
         let job_id = resp
             .get("jobid")

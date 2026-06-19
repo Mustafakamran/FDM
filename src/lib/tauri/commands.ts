@@ -84,8 +84,9 @@ export function startDownload(
   accountId: string,
   items: DownloadItem[],
   dest: string,
+  config?: Record<string, unknown>,
 ): Promise<JobStatus[]> {
-  return invoke<JobStatus[]>("start_download", { accountId, items, dest });
+  return invoke<JobStatus[]>("start_download", { accountId, items, dest, config });
 }
 
 /** Poll live status of all tracked jobs. */
