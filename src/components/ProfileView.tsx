@@ -152,7 +152,12 @@ export function ProfileView({ id }: { id: string }) {
             </thead>
             <tbody>
               {items.map((item) => (
-                <tr key={item.Path} className="border-b border-[var(--border)]/50 hover:bg-[var(--hover)]">
+                <tr
+                  key={item.Path}
+                  className={`border-b border-[var(--border)]/50 hover:bg-[var(--hover)] ${
+                    selected.has(item.Path) ? "bg-[var(--card)]" : ""
+                  }`}
+                >
                   <td className="py-2">
                     <input
                       type="checkbox"
