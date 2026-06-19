@@ -22,6 +22,9 @@ pub fn build_rcd_args(cfg: &RcConfig) -> Vec<String> {
 }
 
 /// Ask the OS for a free loopback port by binding to :0 then releasing it.
+// NOTE: There is an intentional, acceptable TOCTOU window here: the listener is
+// dropped (freeing the port) before rclone re-binds it. A collision is vanishingly
+// unlikely on loopback for a short-lived helper; do not "fix" this with a held socket.
 pub fn pick_free_port() -> std::io::Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();

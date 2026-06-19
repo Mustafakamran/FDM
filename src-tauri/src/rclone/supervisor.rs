@@ -45,8 +45,8 @@ pub fn start_rclone(app: &AppHandle) -> Result<RcConnection, String> {
     wait_until_ready(&connection)?;
 
     let state = app.state::<RcloneState>();
-    *state.child.lock().unwrap() = Some(child);
-    *state.connection.lock().unwrap() = Some(connection.clone());
+    *state.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+    *state.connection.lock().unwrap_or_else(|e| e.into_inner()) = Some(connection.clone());
     Ok(connection)
 }
 
@@ -71,7 +71,8 @@ pub fn wait_until_ready(conn: &RcConnection) -> Result<(), String> {
 
 /// Kill the daemon on shutdown.
 pub fn stop_rclone(state: &RcloneState) {
-    if let Some(child) = state.child.lock().unwrap().take() {
+    // Recover from a poisoned lock so shutdown still kills the child.
+    if let Some(child) = state.child.lock().unwrap_or_else(|e| e.into_inner()).take() {
         let _ = child.kill();
     }
 }

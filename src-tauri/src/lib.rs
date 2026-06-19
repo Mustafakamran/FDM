@@ -8,7 +8,7 @@ fn get_rc_connection(state: tauri::State<RcloneState>) -> Result<RcConnection, S
     state
         .connection
         .lock()
-        .unwrap()
+        .map_err(|e| e.to_string())?
         .clone()
         .ok_or_else(|| "rclone not started".to_string())
 }
