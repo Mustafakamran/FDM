@@ -4,6 +4,7 @@ pub mod download;
 pub mod drive;
 pub mod dropbox;
 pub mod index;
+pub mod locate;
 pub mod provider;
 pub mod rclone;
 pub mod secrets;

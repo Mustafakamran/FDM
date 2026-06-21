@@ -317,6 +317,36 @@ fn download_project(
     Ok(())
 }
 
+// ─── locate one project ──────────────────────────────────────────────────────
+
+/// Handle a `locate` command: read-only search of FDM's *own* connected accounts
+/// for where this project already lives, then POST the hits to
+/// `/api/project-locations` (bare array; empty = found nowhere). client/couple
+/// come from the command payload, falling back to the project record.
+fn locate_project(
+    app: &AppHandle,
+    conn: &RcConnection,
+    cfg: &BdmConfig,
+    key: &str,
+    c: &reqwest::blocking::Client,
+    cmd: &Value,
+    project_id: &str,
+) -> Result<(), String> {
+    let mut client_name = cmd.get("client_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut couple = cmd.get("couple_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if client_name.is_empty() && couple.is_empty() {
+        if let Ok(proj) = get_json(c, &cfg.portal_url, &format!("/api/download-projects?id={project_id}"), key) {
+            client_name = proj.get("client_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            couple = proj.get("couple_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        }
+    }
+    let records = crate::locate::find_locations(conn, c, project_id, &client_name, &couple)?;
+    let n = records.len();
+    send_json(c, reqwest::Method::POST, &cfg.portal_url, "/api/project-locations", key, &Value::Array(records))?;
+    set_status(app, format!("located project {project_id}: {n} match(es)"));
+    Ok(())
+}
+
 // ─── poll loop ──────────────────────────────────────────────────────────────
 
 fn poll_once(app: &AppHandle, c: &reqwest::blocking::Client) {
@@ -369,20 +399,31 @@ fn poll_once(app: &AppHandle, c: &reqwest::blocking::Client) {
         if id.is_empty() {
             continue;
         }
+        // `download` (default) runs the engine; `locate` is a read-only name search.
+        let command = cmd.get("command").and_then(|v| v.as_str()).unwrap_or("download").to_string();
         // Mark processing.
         let _ = send_json(c, reqwest::Method::PATCH, &cfg.portal_url, "/api/download-commands", &key, &json!({ "id": id, "status": "processing" }));
         if project_id.is_empty() {
             let _ = send_json(c, reqwest::Method::PATCH, &cfg.portal_url, "/api/download-commands", &key, &json!({ "id": id, "status": "completed" }));
             continue;
         }
-        set_status(app, format!("downloading project {project_id}"));
-        match download_project(app, &conn, &cfg, &key, c, &project_id) {
+        let result = if command == "locate" {
+            set_status(app, format!("locating project {project_id}"));
+            locate_project(app, &conn, &cfg, &key, c, &cmd, &project_id)
+        } else {
+            set_status(app, format!("downloading project {project_id}"));
+            download_project(app, &conn, &cfg, &key, c, &project_id)
+        };
+        match result {
             Ok(()) => {
                 let _ = send_json(c, reqwest::Method::PATCH, &cfg.portal_url, "/api/download-commands", &key, &json!({ "id": id, "status": "completed" }));
             }
             Err(e) => {
                 let _ = send_json(c, reqwest::Method::PATCH, &cfg.portal_url, "/api/download-commands", &key, &json!({ "id": id, "status": "failed", "error_message": e }));
-                let _ = send_json(c, reqwest::Method::POST, &cfg.portal_url, "/api/download-progress", &key, &json!({ "project_id": project_id, "status": "failed", "error_message": e }));
+                // Only a download failure mirrors to download-progress; locate isn't a download.
+                if command != "locate" {
+                    let _ = send_json(c, reqwest::Method::POST, &cfg.portal_url, "/api/download-progress", &key, &json!({ "project_id": project_id, "status": "failed", "error_message": e }));
+                }
                 set_status(app, format!("job failed: {e}"));
             }
         }
