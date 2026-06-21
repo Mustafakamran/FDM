@@ -186,6 +186,51 @@ pub fn remove_account(app: AppHandle, state: tauri::State<RcloneState>, id: Stri
 /// because the user must consent in a browser.
 const OAUTH_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Kill any process still holding the rclone OAuth loopback port (53682). That
+/// port is FIXED — it must match the OAuth app's redirect URL — so an orphaned
+/// sign-in (abandoned browser, or left over from a previous app run/crash) blocks
+/// the next connect with "address already in use" / "Only one usage…". Best-effort.
+fn free_oauth_port() {
+    const PORT: &str = "53682";
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let needle = format!(":{PORT}");
+        if let Ok(out) = std::process::Command::new("netstat")
+            .args(["-ano", "-p", "tcp"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let mut pids = std::collections::HashSet::new();
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 5 && parts[1].ends_with(&needle) {
+                    let pid = parts[parts.len() - 1];
+                    if pid != "0" && pid.chars().all(|c| c.is_ascii_digit()) {
+                        pids.insert(pid.to_string());
+                    }
+                }
+            }
+            for pid in pids {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/PID", &pid])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+            }
+        }
+    }
+    #[cfg(unix)]
+    {
+        if let Ok(out) = std::process::Command::new("lsof").args(["-ti", &format!("tcp:{PORT}")]).output() {
+            for pid in String::from_utf8_lossy(&out.stdout).split_whitespace() {
+                let _ = std::process::Command::new("kill").args(["-9", pid]).output();
+            }
+        }
+    }
+}
+
 /// Add a new account: configure the rclone remote via the interactive OAuth
 /// flow (`rclone config create`) and return the resulting `Account`.
 ///
@@ -217,75 +262,85 @@ pub async fn add_account(
 
     let args = config_create_args(&config_path, &remote, &provider, &client_id, &client_secret);
 
-    // Kill any previous in-flight OAuth attempt still holding the loopback auth
-    // port (53682), then give the OS a moment to release it. Without this, a
-    // second connect fails with "address already in use". Scope the lock so the
-    // MutexGuard is dropped before the await (keeps the future Send).
-    let prev = oauth.0.lock().unwrap_or_else(|e| e.into_inner()).take();
-    if let Some(prev) = prev {
-        let _ = prev.kill();
-        tokio::time::sleep(Duration::from_millis(400)).await;
-    }
-
-    // Spawn the sidecar as a ONE-SHOT (not the daemon) and wait for it to exit.
-    let (mut rx, child) = app
-        .shell()
-        .sidecar("rclone")
-        .map_err(|e| format!("sidecar: {e}"))?
-        .args(args)
-        .spawn()
-        .map_err(|e| format!("spawn: {e}"))?;
-
-    // Track the live child so a later connect (or timeout) can kill it.
-    // tauri-plugin-shell's CommandChild does NOT kill on drop.
-    *oauth.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
-
-    // Drain events until Terminated, accumulating stderr for error reporting.
-    let mut stderr = String::new();
-    let collect = async {
-        while let Some(event) = rx.recv().await {
-            match event {
-                CommandEvent::Stderr(bytes) => {
-                    stderr.push_str(&String::from_utf8_lossy(&bytes));
-                    stderr.push('\n');
-                }
-                CommandEvent::Error(e) => {
-                    stderr.push_str(&e);
-                    stderr.push('\n');
-                }
-                CommandEvent::Terminated(payload) => {
-                    return payload.code;
-                }
-                CommandEvent::Stdout(_) => {}
-                _ => {}
-            }
+    // The OAuth flow binds the FIXED loopback port 53682. Free it before starting:
+    // kill the tracked prior attempt (same-session retries) AND whatever else holds
+    // the port (orphans), then give the OS a moment to release it. Scope the lock so
+    // the MutexGuard is dropped before the await (keeps the future Send).
+    {
+        let prev = oauth.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(prev) = prev {
+            let _ = prev.kill();
         }
-        // Channel closed without an explicit Terminated event.
-        None
-    };
-
-    let code = match tokio::time::timeout(OAUTH_TIMEOUT, collect).await {
-        Ok(code) => code,
-        Err(_) => {
-            // Timed out: kill the tracked child (kill consumes it).
-            if let Some(c) = oauth.0.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                let _ = c.kill();
-            }
-            return Err(format!(
-                "rclone config create timed out after {OAUTH_TIMEOUT:?}"
-            ));
-        }
-    };
-
-    // Process exited on its own; drop the now-dead handle.
-    let _ = oauth.0.lock().unwrap_or_else(|e| e.into_inner()).take();
-
-    match code {
-        Some(0) => parse_remote(&remote).ok_or_else(|| format!("invalid remote name: {remote}")),
-        other => Err(format!(
-            "rclone config create failed (exit {other:?}): {stderr}"
-        )),
     }
+    free_oauth_port();
+    tokio::time::sleep(Duration::from_millis(700)).await;
+
+    let mut last_err = String::new();
+    for attempt in 0..2 {
+        // Spawn the sidecar as a ONE-SHOT (not the daemon) and wait for it to exit.
+        let (mut rx, child) = app
+            .shell()
+            .sidecar("rclone")
+            .map_err(|e| format!("sidecar: {e}"))?
+            .args(args.clone())
+            .spawn()
+            .map_err(|e| format!("spawn: {e}"))?;
+
+        // Track the live child so a later connect (or timeout) can kill it.
+        // tauri-plugin-shell's CommandChild does NOT kill on drop.
+        *oauth.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+
+        // Drain events until Terminated, accumulating stderr for error reporting.
+        let mut stderr = String::new();
+        let collect = async {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    CommandEvent::Stderr(bytes) => {
+                        stderr.push_str(&String::from_utf8_lossy(&bytes));
+                        stderr.push('\n');
+                    }
+                    CommandEvent::Error(e) => {
+                        stderr.push_str(&e);
+                        stderr.push('\n');
+                    }
+                    CommandEvent::Terminated(payload) => return payload.code,
+                    CommandEvent::Stdout(_) => {}
+                    _ => {}
+                }
+            }
+            None // channel closed without an explicit Terminated event
+        };
+
+        let code = match tokio::time::timeout(OAUTH_TIMEOUT, collect).await {
+            Ok(code) => code,
+            Err(_) => {
+                if let Some(c) = oauth.0.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                    let _ = c.kill();
+                }
+                return Err(format!("rclone config create timed out after {OAUTH_TIMEOUT:?}"));
+            }
+        };
+        // Process exited on its own; drop the now-dead handle.
+        let _ = oauth.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+
+        if code == Some(0) {
+            return parse_remote(&remote).ok_or_else(|| format!("invalid remote name: {remote}"));
+        }
+
+        last_err = format!("rclone config create failed (exit {code:?}): {stderr}");
+        // Retry once if the failure was the loopback port still being busy.
+        let port_busy = stderr.contains("bind")
+            || stderr.contains("socket address")
+            || stderr.contains("address already in use")
+            || stderr.contains("Only one usage");
+        if attempt == 0 && port_busy {
+            free_oauth_port();
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            continue;
+        }
+        return Err(last_err);
+    }
+    Err(last_err)
 }
 
 /// The signed-in account's email — via the provider's native API (Drive about /
