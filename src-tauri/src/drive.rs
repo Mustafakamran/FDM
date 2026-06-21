@@ -72,6 +72,17 @@ fn refresh_at(endpoint: &str, client_id: &str, client_secret: &str, refresh_toke
         .ok_or_else(|| format!("no access_token in refresh response: {text}"))
 }
 
+/// Exchange a Google Drive account's stored refresh token for a fresh access
+/// token. Works for `drive_*` and `drivelink_*` (both have rclone config creds).
+/// Reused by the streaming proxy.
+pub(crate) fn drive_access_token(conn: &RcConnection, account_id: &str) -> Result<String, String> {
+    let dump = rc_post(conn, "config/dump", &serde_json::json!({}))?;
+    let (token_json, client_id, client_secret) =
+        remote_creds(&dump, account_id).ok_or_else(|| format!("no creds for {account_id}"))?;
+    let refresh = refresh_token_from(&token_json).ok_or_else(|| "no refresh token".to_string())?;
+    refresh_at("https://oauth2.googleapis.com/token", &client_id, &client_secret, &refresh)
+}
+
 /// Query Drive for a file's uploader/owner display name. Returns Ok(None) when
 /// unavailable (e.g. no name on the record); Err only on hard failures.
 #[tauri::command]

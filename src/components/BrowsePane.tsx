@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check } from "lucide-react";
+import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useApp, type Section } from "../store/app";
+import { useApp, type Section, type ReviewTarget } from "../store/app";
+import { isVideo, extOf } from "../lib/review";
 import { useIndex } from "../store/index-store";
 import { useBrowse, browseKey } from "../store/browse";
 import { useTransfers } from "../store/transfers";
@@ -32,6 +33,7 @@ const SECTION_TITLE: Record<Section, string> = {
 
 export function BrowsePane({ account, section, path }: { account: Account; section: Section; path: string }) {
   const setView = useApp((s) => s.setView);
+  const openReview = useApp((s) => s.openReview);
   const entry = useIndex((s) => s.byAccount[account.id]);
   const enqueue = useTransfers((s) => s.enqueue);
   const toast = useToasts((s) => s.push);
@@ -55,6 +57,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const aggOf = (p: string) => index?.agg[p];
   const sizeOf = (i: RcItem) => (i.IsDir ? aggOf(i.Path)?.size ?? 0 : Math.max(0, i.Size));
   const dateOf = (i: RcItem) => (i.IsDir ? aggOf(i.Path)?.latest ?? "" : i.ModTime);
+  const reviewTarget = (i: RcItem): ReviewTarget => ({ path: i.Path, name: i.Name, fileId: i.ID ?? "", size: sizeOf(i), ext: extOf(i.Name) });
 
   // Live fallback for folder views the crawl didn't capture.
   const folderView = section === "all" || section === "shared";
@@ -231,7 +234,14 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
               return (
                 <div key={item.Path} className={`relative flex flex-col items-center gap-3 rounded-[11px] border p-5 ${selected.has(item.Path) ? "border-[var(--accent)] bg-[var(--card)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}>
                   <input type="checkbox" aria-label={`Select ${item.Name}`} checked={selected.has(item.Path)} onChange={() => toggle(item.Path)} className="absolute left-3 top-3" />
-                  <button className="flex flex-col items-center gap-2 text-center" onClick={() => item.IsDir && setView({ kind: "browse", accountId: account.id, section: "all", path: item.Path })}>
+                  <button
+                    className="flex flex-col items-center gap-2 text-center"
+                    onClick={() =>
+                      item.IsDir
+                        ? setView({ kind: "browse", accountId: account.id, section: "all", path: item.Path })
+                        : isVideo(item.Name) && openReview(account.id, reviewTarget(item))
+                    }
+                  >
                     <ft.Icon size={30} style={{ color: ft.color }} />
                     <span className="line-clamp-2 text-sm text-[var(--text)]">{item.Name}</span>
                   </button>
@@ -264,6 +274,16 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                           <button className="flex min-w-0 items-center gap-3 text-left text-[var(--text)] hover:text-[var(--accent)]" onClick={() => setView({ kind: "browse", accountId: account.id, section: "all", path: item.Path })}>
                             <ft.Icon size={18} style={{ color: ft.color }} className="shrink-0" />
                             <span className="truncate">{item.Name}</span>
+                          </button>
+                        ) : isVideo(item.Name) ? (
+                          <button
+                            className="flex min-w-0 items-center gap-3 text-left text-[var(--text)] hover:text-[var(--accent)]"
+                            onClick={() => openReview(account.id, reviewTarget(item))}
+                            title="Open in review"
+                          >
+                            <ft.Icon size={18} style={{ color: ft.color }} className="shrink-0" />
+                            <span className="truncate">{item.Name}</span>
+                            <Play size={12} className="shrink-0 text-[var(--text-3)] opacity-0 group-hover:opacity-100" />
                           </button>
                         ) : (
                           <span className="flex min-w-0 items-center gap-3 text-[var(--text)]">

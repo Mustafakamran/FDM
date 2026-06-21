@@ -31,6 +31,9 @@ tauri-plugin-dialog = "2.7.1"
 tauri-plugin-notification = "2.3.3"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
+# Local loopback streaming proxy (review player) + PDF byte decoding.
+tiny_http = "0.12"
+base64 = "0.22"
 
 # keyring is per-target: each OS needs its own native credential-store backend.
 # Without a native feature, keyring v3 silently falls back to an in-memory MOCK

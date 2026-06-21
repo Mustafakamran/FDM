@@ -2,6 +2,7 @@ import { useApp } from "../store/app";
 import { TopBar } from "./TopBar";
 import { Sidebar } from "./Sidebar";
 import { BrowsePane } from "./BrowsePane";
+import { ReviewView } from "./ReviewView";
 import { DownloadsView } from "./DownloadsView";
 import { ConnectView } from "./ConnectView";
 import { DownloadsDock } from "./DownloadsDock";
@@ -28,6 +29,7 @@ export function AppShell() {
           <div className="min-h-0 flex-1 overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)]">
             {view.kind === "accounts" && <ConnectView />}
             {view.kind === "downloads" && <DownloadsView filter={view.filter} />}
+            {view.kind === "review" && <ReviewView accountId={view.accountId} target={view.target} />}
             {view.kind === "browse" &&
               (browseAccount ? (
                 <BrowsePane account={browseAccount} section={view.section} path={view.path} />

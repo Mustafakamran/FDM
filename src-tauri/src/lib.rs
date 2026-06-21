@@ -5,7 +5,9 @@ pub mod dropbox;
 pub mod index;
 pub mod rclone;
 pub mod secrets;
+pub mod stream;
 
+use base64::Engine;
 use download::{JobsState, NativeJobsState};
 use rclone::supervisor::{start_rclone, stop_rclone, RcloneState};
 use tauri::Manager;
@@ -25,6 +27,16 @@ fn rc_call(
     rclone::supervisor::rc_post(&conn, &endpoint, &params)
 }
 
+/// Write base64-encoded bytes to a path on disk (used to save an exported review
+/// PDF the frontend generates in-memory).
+#[tauri::command]
+fn write_binary_file(path: String, base64: String) -> Result<(), String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64.as_bytes())
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&path, bytes).map_err(|e| format!("write {path}: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -38,8 +50,11 @@ pub fn run() {
         .manage(NativeJobsState::default())
         .manage(accounts::OAuthState::default())
         .manage(index::IndexState::default())
+        .manage(stream::StreamState::default())
         .invoke_handler(tauri::generate_handler![
             rc_call,
+            write_binary_file,
+            stream::stream_base,
             accounts::list_accounts,
             accounts::remove_account,
             accounts::add_account,
@@ -63,6 +78,10 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             start_rclone(&handle).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            // Loopback streaming proxy for the review player (best-effort).
+            if let Err(e) = stream::start_stream_server(&handle) {
+                eprintln!("stream server failed to start: {e}");
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

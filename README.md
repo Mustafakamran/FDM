@@ -122,6 +122,23 @@ exactly like a normal account.
   borrowing a connected Dropbox login's token to list + stream the files. Requires a
   connected Dropbox account.
 
+### Reviewing deliverables (timestamped comments → PDF)
+
+When editors upload review cuts, open one straight from the browser — **no download**.
+Click a **video file** to open the review player:
+
+- It **streams** from Drive/Dropbox (incl. share-links) through a local loopback proxy,
+  so you can scrub without pulling the whole file.
+- Type a note and the **timestamp is captured automatically** (the moment you start
+  typing); ⌘/Ctrl+Enter adds it. Comments show on a timeline; click one to jump there.
+- **Mark as reviewed** when done, then **Export PDF** — each comment is rendered with the
+  **exact frame** it was made on, its timecode, and your note, so editors see precisely
+  what to fix and where.
+
+Playable in-app: **MP4 / MOV / WebM (H.264 / HEVC)**. Pro/RAW codecs (ProRes, DNxHR, MXF,
+R3D, BRAW) can't be decoded by the webview — those are flagged "download to review in your
+NLE" (comments still export to PDF).
+
 ---
 
 ## Auto-update (OTA)

@@ -127,3 +127,13 @@ export function addDriveLink(baseAccountId: string, label: string, folderId: str
 export function addDropboxLink(baseAccountId: string, label: string, url: string): Promise<Account> {
   return invoke<Account>("add_dropbox_link", { baseAccountId, label, url });
 }
+
+/** Base URL of the loopback streaming proxy (review player). Append `/media?…`. */
+export function streamBase(): Promise<string> {
+  return invoke<string>("stream_base");
+}
+
+/** Write base64-encoded bytes to a path on disk (used to save an exported PDF). */
+export function writeBinaryFile(path: string, base64: string): Promise<void> {
+  return invoke("write_binary_file", { path, base64 });
+}
