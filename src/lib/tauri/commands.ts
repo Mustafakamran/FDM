@@ -118,3 +118,12 @@ export function accountEmail(accountId: string): Promise<string | null> {
 export function addDriveLink(baseAccountId: string, label: string, folderId: string): Promise<Account> {
   return invoke<Account>("add_drive_link", { baseAccountId, label, folderId });
 }
+
+/**
+ * Add a Dropbox shared-folder link as a browseable account. No rclone remote —
+ * it lists/downloads via the native Dropbox API, borrowing a connected Dropbox
+ * account's token. Nothing is copied into your own Dropbox.
+ */
+export function addDropboxLink(baseAccountId: string, label: string, url: string): Promise<Account> {
+  return invoke<Account>("add_dropbox_link", { baseAccountId, label, url });
+}

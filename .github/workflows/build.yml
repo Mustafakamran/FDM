@@ -41,8 +41,17 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater (OTA) signing — add these as GitHub Actions repo secrets.
+          # TAURI_SIGNING_PRIVATE_KEY is the contents of .tauri/signing.key
+          # (never committed); the password is empty (key generated without one).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: "FDM ${{ github.ref_name }}"
-          releaseDraft: true
+          # Must be published (not a draft) so the updater endpoint
+          # /releases/latest/download/latest.json resolves.
+          releaseDraft: false
+          # Emit + attach latest.json so installed apps can self-update.
+          includeUpdaterJson: true
           args: ${{ matrix.args }}

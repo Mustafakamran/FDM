@@ -1,11 +1,12 @@
 pub mod accounts;
 pub mod download;
 pub mod drive;
+pub mod dropbox;
 pub mod index;
 pub mod rclone;
 pub mod secrets;
 
-use download::JobsState;
+use download::{JobsState, NativeJobsState};
 use rclone::supervisor::{start_rclone, stop_rclone, RcloneState};
 use tauri::Manager;
 
@@ -30,8 +31,11 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(RcloneState::default())
         .manage(JobsState::default())
+        .manage(NativeJobsState::default())
         .manage(accounts::OAuthState::default())
         .manage(index::IndexState::default())
         .invoke_handler(tauri::generate_handler![
@@ -44,6 +48,7 @@ pub fn run() {
             accounts::delete_secret,
             accounts::account_email,
             accounts::add_drive_link,
+            dropbox::add_dropbox_link,
             download::start_download,
             download::list_jobs,
             download::cancel_job,

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { AppShell } from "./components/AppShell";
 import { useApp } from "./store/app";
+import { useUpdater } from "./store/updater";
 import { startWatching, stopWatching } from "./lib/watcher";
 
 export default function App() {
@@ -11,7 +12,12 @@ export default function App() {
       /* daemon may not be ready on first paint; AccountsView shows empty state */
     });
     startWatching();
-    return () => stopWatching();
+    // Check for an OTA update shortly after launch (silent if none / no runtime).
+    const t = setTimeout(() => void useUpdater.getState().check(), 3000);
+    return () => {
+      clearTimeout(t);
+      stopWatching();
+    };
   }, [loadAccounts]);
 
   return <AppShell />;

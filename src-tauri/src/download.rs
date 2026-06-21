@@ -10,7 +10,10 @@ use crate::accounts::parse_remote;
 use crate::rclone::supervisor::{rc_post, RcConnection, RcloneState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+use tauri::AppHandle;
 
 /// An item the user selected to download.
 #[derive(Deserialize, Clone, Debug)]
@@ -40,6 +43,66 @@ pub struct Job {
 #[derive(Default)]
 pub struct JobsState {
     pub jobs: Mutex<Vec<Job>>,
+}
+
+/// Shared progress/control handles for a native (non-rclone) download job, used
+/// by the Dropbox shared-link engine. Cloned into the worker thread so the poll
+/// command can read live bytes and request cancellation.
+#[derive(Clone)]
+pub struct NativeHandles {
+    pub job_id: i64,
+    pub transferred: Arc<AtomicI64>,
+    pub finished: Arc<AtomicBool>,
+    pub success: Arc<AtomicBool>,
+    pub cancelled: Arc<AtomicBool>,
+    pub error: Arc<Mutex<String>>,
+}
+
+/// A tracked native download job (Dropbox links stream over the native API
+/// rather than rclone, so they need their own progress accounting).
+pub struct NativeJob {
+    pub account_id: String,
+    pub name: String,
+    pub dest: String,
+    pub total_bytes: i64,
+    pub started: Instant,
+    pub handles: NativeHandles,
+}
+
+/// Managed state for native jobs. `next_id` allocates NEGATIVE ids so they never
+/// collide with rclone's positive job ids (both flow through `list_jobs`).
+#[derive(Default)]
+pub struct NativeJobsState {
+    pub jobs: Mutex<Vec<NativeJob>>,
+    pub next_id: AtomicI64,
+}
+
+impl NativeJobsState {
+    /// Register a new native job and return its control handles. The caller
+    /// spawns the worker thread that drives `handles`.
+    pub fn create(&self, account_id: &str, name: &str, dest: &str, total: i64) -> NativeHandles {
+        let job_id = -(self.next_id.fetch_add(1, Ordering::SeqCst) + 1);
+        let handles = NativeHandles {
+            job_id,
+            transferred: Arc::new(AtomicI64::new(0)),
+            finished: Arc::new(AtomicBool::new(false)),
+            success: Arc::new(AtomicBool::new(false)),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            error: Arc::new(Mutex::new(String::new())),
+        };
+        self.jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(NativeJob {
+                account_id: account_id.to_string(),
+                name: name.to_string(),
+                dest: dest.to_string(),
+                total_bytes: total,
+                started: Instant::now(),
+                handles: handles.clone(),
+            });
+        handles
+    }
 }
 
 /// Live job status reported to the UI.
@@ -109,15 +172,25 @@ fn connection(state: &RcloneState) -> Result<RcConnection, String> {
 }
 
 /// Launch downloads for the selected items; returns the created job statuses.
+///
+/// Dropbox shared-links have no rclone remote, so they stream over the native
+/// Dropbox API on a background thread instead of an rclone async job.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri commands take their state as params.
 pub fn start_download(
+    app: AppHandle,
     rclone: tauri::State<RcloneState>,
     jobs_state: tauri::State<JobsState>,
+    native: tauri::State<NativeJobsState>,
     account_id: String,
     items: Vec<DownloadItem>,
     dest: String,
     config: Option<Value>,
 ) -> Result<Vec<JobStatus>, String> {
+    if account_id.starts_with("dropboxlink_") {
+        let conn = connection(&rclone)?;
+        return crate::dropbox::start_link_download(app, conn, &native, account_id, items, dest);
+    }
     let conn = connection(&rclone)?;
     let fs = account_fs(&account_id)?;
     let mut created = Vec::new();
@@ -174,11 +247,43 @@ fn status_for(job_id: i64, account_id: &str, name: &str, dest: &str, total: i64)
     }
 }
 
-/// Poll live status for all tracked jobs (stats group + job status).
+/// Live status for a native job, computed from its atomic counters. Speed is the
+/// running average (bytes / elapsed); good enough for an ETA display.
+fn native_status(job: &NativeJob) -> JobStatus {
+    let h = &job.handles;
+    let bytes = h.transferred.load(Ordering::SeqCst);
+    let finished = h.finished.load(Ordering::SeqCst);
+    let cancelled = h.cancelled.load(Ordering::SeqCst);
+    let elapsed = job.started.elapsed().as_secs_f64().max(0.001);
+    let speed = if finished { 0.0 } else { bytes as f64 / elapsed };
+    let eta = if speed > 0.0 && job.total_bytes > bytes {
+        Some((job.total_bytes - bytes) as f64 / speed)
+    } else {
+        None
+    };
+    JobStatus {
+        job_id: h.job_id,
+        account_id: job.account_id.clone(),
+        name: job.name.clone(),
+        dest: job.dest.clone(),
+        total_bytes: job.total_bytes,
+        bytes,
+        speed,
+        eta,
+        finished,
+        success: h.success.load(Ordering::SeqCst),
+        cancelled,
+        error: h.error.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+    }
+}
+
+/// Poll live status for all tracked jobs (stats group + job status), including
+/// native Dropbox-link jobs.
 #[tauri::command]
 pub fn list_jobs(
     rclone: tauri::State<RcloneState>,
     jobs_state: tauri::State<JobsState>,
+    native: tauri::State<NativeJobsState>,
 ) -> Result<Vec<JobStatus>, String> {
     let conn = connection(&rclone)?;
     let jobs = jobs_state.jobs.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -212,16 +317,31 @@ pub fn list_jobs(
         }
         out.push(s);
     }
+
+    // Native (Dropbox-link) jobs.
+    for job in native.jobs.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        out.push(native_status(job));
+    }
     Ok(out)
 }
 
-/// Stop a running job and mark it cancelled.
+/// Stop a running job and mark it cancelled. Negative ids are native jobs (a
+/// cancel flag the worker thread observes); positive ids go to rclone.
 #[tauri::command]
 pub fn cancel_job(
     rclone: tauri::State<RcloneState>,
     jobs_state: tauri::State<JobsState>,
+    native: tauri::State<NativeJobsState>,
     job_id: i64,
 ) -> Result<(), String> {
+    if job_id < 0 {
+        for j in native.jobs.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+            if j.handles.job_id == job_id {
+                j.handles.cancelled.store(true, Ordering::SeqCst);
+            }
+        }
+        return Ok(());
+    }
     let conn = connection(&rclone)?;
     let _ = rc_post(&conn, "job/stop", &json!({ "jobid": job_id }));
     let mut jobs = jobs_state.jobs.lock().unwrap_or_else(|e| e.into_inner());
@@ -236,6 +356,7 @@ pub fn cancel_job(
 pub fn clear_finished_jobs(
     rclone: tauri::State<RcloneState>,
     jobs_state: tauri::State<JobsState>,
+    native: tauri::State<NativeJobsState>,
 ) -> Result<(), String> {
     // Best-effort: ask rclone the finished state; keep only unfinished, non-cancelled.
     let conn = connection(&rclone)?;
@@ -249,6 +370,14 @@ pub fn clear_finished_jobs(
             Err(_) => true,
         }
     });
+    // Drop finished/cancelled native jobs too.
+    native
+        .jobs
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|j| {
+            !j.handles.finished.load(Ordering::SeqCst) && !j.handles.cancelled.load(Ordering::SeqCst)
+        });
     Ok(())
 }
 

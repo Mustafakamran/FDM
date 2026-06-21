@@ -8,6 +8,7 @@ import { DownloadsDock } from "./DownloadsDock";
 import { ToastHost } from "./ToastHost";
 import { NotificationsPanel } from "./NotificationsPanel";
 import { SettingsDialog } from "./SettingsDialog";
+import { UpdateBanner } from "./UpdateBanner";
 
 export function AppShell() {
   const { view, accounts } = useApp();
@@ -16,6 +17,7 @@ export function AppShell() {
   return (
     <div className="flex h-screen flex-col overflow-hidden rounded-[var(--window-radius)] border border-[var(--border)] bg-[var(--bg)]">
       <TopBar />
+      <UpdateBanner />
       <ToastHost />
       <NotificationsPanel />
       <SettingsDialog />

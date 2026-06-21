@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, Check, Zap } from "lucide-react";
+import { FolderOpen, Check, Zap, RefreshCw, Download, Loader2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { getVersion } from "@tauri-apps/api/app";
 import { getSecret, setSecret, SECRET_KEYS } from "../lib/tauri/commands";
 import { Button, TextField, Card } from "./ui";
 import { loadPerf, savePerf, PRESETS, type PerfSettings } from "../lib/perf";
 import { useToasts } from "../store/toast";
 import { useTransfers } from "../store/transfers";
+import { useUpdater } from "../store/updater";
 
 const FOLDER_KEY = "default_download_folder";
 
@@ -20,6 +22,12 @@ export function SettingsView() {
   const toast = useToasts((s) => s.push);
   const concurrency = useTransfers((s) => s.concurrency);
   const setConcurrency = useTransfers((s) => s.setConcurrency);
+  const updater = useUpdater();
+  const [appVersion, setAppVersion] = useState("");
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -205,6 +213,56 @@ export function SettingsView() {
             onChange={(e) => setConcurrency(Number(e.target.value))}
             className="focus-accent w-20 rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]"
           />
+        </div>
+      </Card>
+
+      <Card className="mt-4 p-5">
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
+          <RefreshCw size={16} /> Updates
+        </h2>
+        <p className="mb-4 text-xs text-[var(--text-3)]">
+          {appVersion ? (
+            <>
+              You're on version <span className="text-[var(--text-2)]">{appVersion}</span>. The app also checks
+              automatically on launch.
+            </>
+          ) : (
+            "The app checks for updates automatically on launch."
+          )}
+        </p>
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1 text-sm">
+            {updater.phase === "checking" && (
+              <span className="flex items-center gap-1.5 text-[var(--text-2)]">
+                <Loader2 size={14} className="animate-spin" /> Checking…
+              </span>
+            )}
+            {updater.phase === "uptodate" && (
+              <span className="flex items-center gap-1.5 text-[var(--success)]">
+                <Check size={15} /> You're on the latest version.
+              </span>
+            )}
+            {updater.phase === "available" && (
+              <span className="text-[var(--text)]">
+                Version <span className="font-semibold">{updater.version}</span> is available.
+              </span>
+            )}
+            {updater.phase === "downloading" && <span className="text-[var(--text-2)]">Downloading update…</span>}
+            {updater.phase === "error" && <span className="text-[var(--error)]">{updater.error}</span>}
+          </div>
+          {updater.phase === "available" ? (
+            <Button variant="primary" onClick={() => void updater.install()}>
+              <Download size={16} /> Install &amp; restart
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              onClick={() => void updater.check(true)}
+              disabled={updater.phase === "checking" || updater.phase === "downloading"}
+            >
+              <RefreshCw size={16} /> Check for updates
+            </Button>
+          )}
         </div>
       </Card>
     </div>

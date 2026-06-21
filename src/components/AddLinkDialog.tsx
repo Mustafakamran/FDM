@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Loader2, X, Link as LinkIcon } from "lucide-react";
-import { addDriveLink } from "../lib/tauri/commands";
+import { addDriveLink, addDropboxLink } from "../lib/tauri/commands";
 import { useApp } from "../store/app";
 import { useIndex } from "../store/index-store";
 import { useAccountMeta } from "../store/account-meta";
 import { useToasts } from "../store/toast";
+import { ProviderIcon, providerName } from "./icons";
 import { Button, TextField, Card } from "./ui";
 
 function driveFolderId(url: string): string | null {
@@ -23,42 +24,46 @@ function providerFromUrl(url: string): "drive" | "dropbox" | null {
 export function AddLinkDialog({ onClose }: { onClose: () => void }) {
   const { accounts, loadAccounts, selectAccount } = useApp();
   const toast = useToasts((s) => s.push);
+  // Only real (non-link) accounts of each provider can lend their login.
   const driveAccounts = accounts.filter((a) => a.provider === "drive" && !a.id.startsWith("drivelink_"));
+  const dropboxAccounts = accounts.filter((a) => a.provider === "dropbox" && !a.id.startsWith("dropboxlink_"));
 
   const [url, setUrl] = useState("");
   const [label, setLabel] = useState("");
-  const [baseId, setBaseId] = useState(driveAccounts[0]?.id ?? "");
+  const [driveBase, setDriveBase] = useState(driveAccounts[0]?.id ?? "");
+  const [dropboxBase, setDropboxBase] = useState(dropboxAccounts[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const provider = providerFromUrl(url);
+  const bases = provider === "dropbox" ? dropboxAccounts : driveAccounts;
+  const baseId = provider === "dropbox" ? dropboxBase : driveBase;
+  const setBaseId = provider === "dropbox" ? setDropboxBase : setDriveBase;
 
   async function submit() {
     setError("");
-    if (provider === "dropbox") {
-      setError("Dropbox links aren't supported yet (native downloader is in progress). Google Drive links work now.");
-      return;
-    }
-    if (provider !== "drive") {
-      setError("Paste a Google Drive folder share link.");
-      return;
-    }
-    const fid = driveFolderId(url);
-    if (!fid) {
-      setError("Couldn't find a folder id in that link.");
-      return;
-    }
-    if (!baseId) {
-      setError("Connect a Google Drive account first — its login is used to open the link.");
+    if (!provider) {
+      setError("Paste a Google Drive or Dropbox folder share link.");
       return;
     }
     if (!label.trim()) {
       setError("Give the link a name.");
       return;
     }
+    if (!baseId) {
+      setError(`Connect a ${providerName(provider)} account first — its login is used to open the link.`);
+      return;
+    }
     setBusy(true);
     try {
-      const acct = await addDriveLink(baseId, label.trim(), fid);
+      const acct =
+        provider === "drive"
+          ? await (async () => {
+              const fid = driveFolderId(url);
+              if (!fid) throw new Error("Couldn't find a folder id in that Drive link.");
+              return addDriveLink(baseId, label.trim(), fid);
+            })()
+          : await addDropboxLink(baseId, label.trim(), url.trim());
       useAccountMeta.getState().setLabel(acct.id, label.trim());
       await loadAccounts();
       void useIndex.getState().ensure(acct);
@@ -92,23 +97,25 @@ export function AddLinkDialog({ onClose }: { onClose: () => void }) {
         ) : (
           <div className="flex flex-col gap-4">
             <TextField
-              label="Share link (Google Drive folder)"
-              placeholder="https://drive.google.com/drive/folders/…"
+              label="Share link (Google Drive or Dropbox folder)"
+              placeholder="https://drive.google.com/… or https://www.dropbox.com/…"
               value={url}
               autoFocus
               onChange={(e) => setUrl(e.target.value)}
             />
             <TextField label="Name" placeholder="e.g. Client A — October" value={label} onChange={(e) => setLabel(e.target.value)} />
 
-            {driveAccounts.length > 1 && (
+            {provider && bases.length > 1 && (
               <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-[var(--text-2)]">Open with (your Drive login)</span>
+                <span className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-2)]">
+                  <ProviderIcon provider={provider} size={13} /> Open with (your {providerName(provider)} login)
+                </span>
                 <select
                   value={baseId}
                   onChange={(e) => setBaseId(e.target.value)}
                   className="focus-accent rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]"
                 >
-                  {driveAccounts.map((a) => (
+                  {bases.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.label}
                     </option>
@@ -119,8 +126,8 @@ export function AddLinkDialog({ onClose }: { onClose: () => void }) {
 
             <p className="text-xs text-[var(--text-3)]">
               Downloads come straight from the link to your disk — nothing is added to your own Drive/Dropbox.
-              {driveAccounts.length === 0 && (
-                <span className="text-[var(--warning)]"> Connect a Google Drive account first.</span>
+              {provider && bases.length === 0 && (
+                <span className="text-[var(--warning)]"> Connect a {providerName(provider)} account first.</span>
               )}
             </p>
 

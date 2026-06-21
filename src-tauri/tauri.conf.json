@@ -29,6 +29,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "externalBin": ["binaries/rclone"],
     "icon": [
       "icons/32x32.png",
@@ -37,5 +38,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU2NkY2QTQ3MUNGNjEwRjIKUldUeUVQWWNSMnB2Vm9XZC9XaVd5amFOSFh6MldpemZubTFtWjMxTW9TTks3NE5tclhFVGxoVnkK",
+      "endpoints": [
+        "https://github.com/Mustafakamran/footage-download-manager/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -234,8 +234,24 @@ fn crawl_dirs(
         .unwrap_or_else(|arc| lock(&arc).clone())
 }
 
+/// Crawl a Dropbox shared-link via the native API — one recursive `list_folder`
+/// returns the whole tree, so there's no worker-pool crawl.
+fn crawl_dropbox_link(app: &AppHandle, account_id: &str) -> Result<Vec<Entry>, String> {
+    let conn = lock(&app.state::<RcloneState>().connection).clone().ok_or_else(|| "rclone not started".to_string())?;
+    set_status(app, account_id, "crawling", 0, 1, "");
+    let _ = app.emit("index-progress", json!({ "accountId": account_id, "done": 0, "total": 1, "files": 0 }));
+    let raw = crate::dropbox::list_entries(app, &conn, account_id)?;
+    let entries: Vec<Entry> = raw.iter().filter_map(parse_entry).collect();
+    let files = entries.iter().filter(|e| !e.is_dir).count();
+    let _ = app.emit("index-progress", json!({ "accountId": account_id, "done": 1, "total": 1, "files": files }));
+    Ok(entries)
+}
+
 /// Full crawl of an account.
 fn do_crawl(app: &AppHandle, account_id: &str) -> Result<Vec<Entry>, String> {
+    if account_id.starts_with("dropboxlink_") {
+        return crawl_dropbox_link(app, account_id);
+    }
     let conn = lock(&app.state::<RcloneState>().connection).clone().ok_or_else(|| "rclone not started".to_string())?;
     let fs = account_fs(account_id)?;
     let root = list_op(&conn, &fs, "", false)?;
@@ -250,6 +266,11 @@ fn do_crawl(app: &AppHandle, account_id: &str) -> Result<Vec<Entry>, String> {
 /// Incremental refresh: keep already-indexed top-level folders, only crawl ones
 /// missing from the index (failed earlier or newly added); drop deleted folders.
 fn do_refresh(app: &AppHandle, account_id: &str) -> Result<Vec<Entry>, String> {
+    // Dropbox links list in a single recursive call — incremental folder-diffing
+    // doesn't apply, so just re-list.
+    if account_id.starts_with("dropboxlink_") {
+        return crawl_dropbox_link(app, account_id);
+    }
     let existing = match load_from_disk(app, account_id) {
         Some(e) if !e.is_empty() => e,
         _ => return do_crawl(app, account_id),

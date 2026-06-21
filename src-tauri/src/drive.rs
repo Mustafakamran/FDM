@@ -140,14 +140,21 @@ pub fn drive_email(conn: &RcConnection, account_id: &str) -> Result<Option<Strin
         .map(|s| s.to_string()))
 }
 
-/// The Dropbox account's email via the native users/get_current_account endpoint
-/// (rclone's `config userinfo` reports "doesn't support UserInfo" for some remotes).
-pub fn dropbox_email(conn: &RcConnection, account_id: &str) -> Result<Option<String>, String> {
+/// Exchange a Dropbox account's stored refresh token for a fresh access token.
+/// Reused by the native Dropbox shared-link engine (which has no rclone remote of
+/// its own and borrows a connected account's token).
+pub(crate) fn dropbox_access_token(conn: &RcConnection, account_id: &str) -> Result<String, String> {
     let dump = rc_post(conn, "config/dump", &serde_json::json!({}))?;
     let (token_json, client_id, client_secret) =
         remote_creds(&dump, account_id).ok_or_else(|| format!("no creds for {account_id}"))?;
     let refresh = refresh_token_from(&token_json).ok_or_else(|| "no refresh token".to_string())?;
-    let access = refresh_at("https://api.dropboxapi.com/oauth2/token", &client_id, &client_secret, &refresh)?;
+    refresh_at("https://api.dropboxapi.com/oauth2/token", &client_id, &client_secret, &refresh)
+}
+
+/// The Dropbox account's email via the native users/get_current_account endpoint
+/// (rclone's `config userinfo` reports "doesn't support UserInfo" for some remotes).
+pub fn dropbox_email(conn: &RcConnection, account_id: &str) -> Result<Option<String>, String> {
+    let access = dropbox_access_token(conn, account_id)?;
 
     let client = reqwest::blocking::Client::new();
     let resp = client

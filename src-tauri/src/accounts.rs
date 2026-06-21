@@ -75,10 +75,12 @@ pub fn remote_name(provider: &str, label: &str) -> String {
 pub fn parse_remote(remote: &str) -> Option<Account> {
     let (prefix, slug) = remote.split_once('_')?;
     // `drivelink_*` is a Google Drive shared-folder link (rooted at a folder id);
-    // it presents as a Drive account but its fs is built without shared_with_me.
+    // `dropboxlink_*` is a Dropbox shared link (no rclone remote — native engine).
+    // Both present as their provider but use a different fs/download path.
     let provider = match prefix {
         "drive" | "dropbox" => prefix,
         "drivelink" => "drive",
+        "dropboxlink" => "dropbox",
         _ => return None,
     };
     if slug.is_empty() {
@@ -138,9 +140,11 @@ pub fn config_create_args(
     }
 }
 
-/// List all configured accounts by reading rclone's remote list.
+/// List all configured accounts: rclone remotes (drive/dropbox/drivelink) plus
+/// Dropbox shared-links (which have no rclone remote, so they come from the
+/// native link store).
 #[tauri::command]
-pub fn list_accounts(state: tauri::State<RcloneState>) -> Result<Vec<Account>, String> {
+pub fn list_accounts(app: AppHandle, state: tauri::State<RcloneState>) -> Result<Vec<Account>, String> {
     // Recover from a poisoned lock (matches supervisor.rs) so a single panic
     // elsewhere doesn't permanently brick this command.
     let conn = state
@@ -150,20 +154,23 @@ pub fn list_accounts(state: tauri::State<RcloneState>) -> Result<Vec<Account>, S
         .clone()
         .ok_or_else(|| "rclone not started".to_string())?;
     let resp = rc_post(&conn, "config/listremotes", &serde_json::json!({}))?;
-    let remotes = match resp.get("remotes").and_then(|v| v.as_array()) {
-        Some(arr) => arr,
-        None => return Ok(vec![]),
-    };
-    Ok(remotes
-        .iter()
-        .filter_map(|v| v.as_str())
-        .filter_map(parse_remote)
-        .collect())
+    let mut accounts: Vec<Account> = resp
+        .get("remotes")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).filter_map(parse_remote).collect())
+        .unwrap_or_default();
+    accounts.extend(crate::dropbox::link_accounts(&app));
+    Ok(accounts)
 }
 
-/// Remove an account by deleting its rclone remote.
+/// Remove an account. rclone-backed accounts delete their remote; Dropbox links
+/// (no remote) just drop from the native link store.
 #[tauri::command]
-pub fn remove_account(state: tauri::State<RcloneState>, id: String) -> Result<(), String> {
+pub fn remove_account(app: AppHandle, state: tauri::State<RcloneState>, id: String) -> Result<(), String> {
+    if id.starts_with("dropboxlink_") {
+        crate::dropbox::remove_link(&app, &id);
+        return Ok(());
+    }
     // Recover from a poisoned lock (matches supervisor.rs).
     let conn = state
         .connection
@@ -288,6 +295,11 @@ pub fn account_email(
     rclone: tauri::State<RcloneState>,
     account_id: String,
 ) -> Result<Option<String>, String> {
+    // Dropbox links borrow another account's token and have no identity of their
+    // own — there's no email to show (the label is the client/project name).
+    if account_id.starts_with("dropboxlink_") {
+        return Ok(None);
+    }
     let provider = parse_remote(&account_id)
         .map(|a| a.provider)
         .ok_or_else(|| format!("bad account id: {account_id}"))?;

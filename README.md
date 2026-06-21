@@ -59,7 +59,7 @@ npm run tauri build
 ```
 Windows prerequisites: the MSVC C++ Build Tools (for Rust) and WebView2 (preinstalled on Win 10/11).
 
-**Both at once via CI (recommended for Windows):** push to GitHub and run the `build` workflow (`.github/workflows/build.yml`) — it builds macOS + Windows installers on GitHub's runners and attaches them to a draft release. Trigger it manually (Actions → build → Run) or by pushing a `vX.Y.Z` tag.
+**Both at once via CI (recommended for Windows):** push to GitHub and run the `build` workflow (`.github/workflows/build.yml`) — it builds macOS + Windows installers on GitHub's runners and **publishes** them to a release (with a signed `latest.json` so installed apps can self-update). Trigger it manually (Actions → build → Run) or by pushing a `vX.Y.Z` tag. See **Auto-update** below for the one-time signing-secret setup.
 
 > Notes: the rclone binary is fetched per-OS (not committed), so run `npm run fetch:rclone` before building on each machine. The window uses transparency/rounded corners (macOS private API) — fine for local/self distribution; for the Mac App Store you'd disable `macOSPrivateApi`.
 
@@ -106,6 +106,46 @@ speed, no shared-client rate limits). You enter them once in **Settings**.
    per file; multi-select files/folders; the bar shows the total selected size.
 4. **Download** → goes to your default folder (or pick one). Watch the **Transfers** dock;
    downloads keep running while you browse other profiles.
+
+### Downloading from a shared link (no storage of your own used)
+
+If a client sends a **share link** instead of sharing into your account — or your own
+Drive/Dropbox is full — add the link directly. **Nothing is copied into your cloud**;
+files stream straight from the link to your disk, and the link browses/queues/downloads
+exactly like a normal account.
+
+- **Accounts → `+` → Shared link →** paste the URL + a name.
+- **Google Drive** links use one of your connected Google logins to open the folder
+  (rooted at the folder id). Requires a connected Drive account; the folder must be
+  "anyone with the link" or shared to that account.
+- **Dropbox** links use the native Dropbox API (rclone can't browse a bare share link),
+  borrowing a connected Dropbox login's token to list + stream the files. Requires a
+  connected Dropbox account.
+
+---
+
+## Auto-update (OTA)
+
+The app checks for updates on launch (and via **Settings → Updates → Check for updates**).
+When a newer release is published, a banner offers **Install & restart** — it downloads the
+signed update and relaunches. Updates are verified against a bundled public key, so only
+releases signed with **your** private key are accepted.
+
+**One-time CI setup** (so the published `latest.json` is signed and the OTA endpoint works):
+
+1. The signing keypair was generated locally. The **public** key is committed in
+   `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`); the **private** key is in
+   `.tauri/signing.key` and is **git-ignored — never commit it**.
+2. In GitHub: **Settings → Secrets and variables → Actions → New repository secret**, add:
+   - `TAURI_SIGNING_PRIVATE_KEY` — the full contents of `.tauri/signing.key`.
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — leave empty (the key has no password).
+3. Push a `vX.Y.Z` tag (matching `version` in `tauri.conf.json`). CI builds, signs, and
+   publishes the release with installers + `latest.json`. Installed apps pick it up from
+   `releases/latest/download/latest.json`.
+
+> If you lose `.tauri/signing.key`, generate a new pair (`npx tauri signer generate -w
+> .tauri/signing.key`), replace the pubkey in `tauri.conf.json`, and ship one update built
+> with the new key before older installs can update again.
 
 ---
 
