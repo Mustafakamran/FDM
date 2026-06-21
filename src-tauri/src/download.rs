@@ -177,9 +177,10 @@ fn connection(state: &RcloneState) -> Result<RcConnection, String> {
 /// Launch downloads for the selected items; returns the created job statuses.
 ///
 /// Launch downloads. All transfers run on the native resumable engine
-/// (`transfer.rs`) so every file resumes byte-for-byte after a pause or crash;
-/// rclone is still used for listing/index, not for the byte transfer. `config`
-/// (rclone perf tuning) no longer applies — kept for API compatibility.
+/// (`transfer.rs`): each file is pulled by several parallel connections into a
+/// preallocated part file with a block bitmap, so it resumes byte-for-byte after
+/// a pause or crash. `config` carries `{connections, bwLimitBytes}`. rclone is
+/// still used for listing/index, not for the byte transfer.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri commands take their state as params.
 pub fn start_download(
@@ -192,7 +193,12 @@ pub fn start_download(
     dest: String,
     config: Option<Value>,
 ) -> Result<Vec<JobStatus>, String> {
-    let _ = (&jobs_state, &config); // retained for compatibility; unused now
+    let _ = &jobs_state; // retained for compatibility
+    let conf = config.unwrap_or_default();
+    let connections = conf.get("connections").and_then(|v| v.as_u64()).unwrap_or(4) as usize;
+    let bw_limit = conf.get("bwLimitBytes").and_then(|v| v.as_u64()).unwrap_or(0);
+    crate::transfer::set_bw_limit(bw_limit);
+
     let conn = connection(&rclone)?;
     let mut created = Vec::with_capacity(items.len());
     for item in items {
@@ -203,7 +209,9 @@ pub fn start_download(
         let conn = conn.clone();
         let account_id = account_id.clone();
         let dest = dest.clone();
-        std::thread::spawn(move || crate::transfer::download_item(app, conn, account_id, item, dest, handles));
+        std::thread::spawn(move || {
+            crate::transfer::download_item(app, conn, account_id, item, dest, connections, handles)
+        });
     }
     Ok(created)
 }

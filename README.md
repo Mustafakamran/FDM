@@ -169,13 +169,15 @@ releases signed with **your** private key are accepted.
 
 ## Performance notes
 
-- **Resumable transfers:** downloads run on a native engine that pulls each file in
-  HTTP byte-ranges into a `.fdmpart` file. **Pause** an active download (or survive a
-  crash / shutdown) and it **resumes from the exact byte** it stopped at — for Drive,
-  Dropbox, and both share-link types. Completed files in a folder are skipped on resume.
-- Parallel **files** are controlled by *Simultaneous downloads* (Settings). Each file
-  currently uses a single connection (multi-connection per file is a possible follow-up);
-  rclone is still used for listing/index, not the byte transfer.
+- **Multi-connection, resumable transfers:** each file is split into 8 MiB blocks and
+  pulled by several parallel connections into a preallocated `.fdmpart`, with a
+  `.fdmmeta` bitmap tracking completed blocks. **Pause** (or survive a crash / shutdown)
+  and it **resumes from the exact byte** — only missing blocks are re-fetched. Works for
+  Drive, Dropbox and both share-link types; completed files in a folder are skipped.
+- **Settings → General → Download speed:** *Connections per file* (1–16, default 4) is the
+  main lever on a fast line; *Bandwidth limit* (MB/s, 0 = off) caps total throughput.
+  *Simultaneous downloads* controls how many files run at once. rclone is still used for
+  listing/index, not the byte transfer.
 - True ceiling is the smallest of: your internet line, the provider's per-account
   throttle, and your **external-drive write speed**. The status bar shows live throughput.
 - Note: the native engine does not hash-verify after transfer (the old rclone path did);

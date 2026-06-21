@@ -7,7 +7,7 @@ import {
   type DownloadItem,
   type JobStatus,
 } from "../lib/tauri/commands";
-import { loadPerf, toRcConfig } from "../lib/perf";
+import { loadDlSettings, toDownloadConfig } from "../lib/dl-settings";
 import { useHistory } from "./history";
 
 const CONCURRENCY_KEY = "download_concurrency";
@@ -155,7 +155,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
         writeJson(QUEUE_KEY, remaining);
         set({ queue: remaining });
         try {
-          const created = await startDownload(next.accountId, [next.item], next.dest, toRcConfig(loadPerf()));
+          const created = await startDownload(next.accountId, [next.item], next.dest, toDownloadConfig(loadDlSettings()));
           const job = created[0];
           if (job) {
             const inf: InflightItem = { ...next, jobId: job.jobId, bytes: 0 };

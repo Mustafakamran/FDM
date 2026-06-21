@@ -7,6 +7,7 @@ import { Button, TextField, Card } from "./ui";
 import { useToasts } from "../store/toast";
 import { useTransfers } from "../store/transfers";
 import { useUpdater } from "../store/updater";
+import { loadDlSettings, saveDlSettings, type DlSettings } from "../lib/dl-settings";
 
 const FOLDER_KEY = "default_download_folder";
 
@@ -31,6 +32,13 @@ export function SettingsView() {
   const setConcurrency = useTransfers((s) => s.setConcurrency);
   const updater = useUpdater();
   const [appVersion, setAppVersion] = useState("");
+  const [dl, setDl] = useState<DlSettings>(() => loadDlSettings());
+
+  function setDlField(k: keyof DlSettings, v: number) {
+    const next = { ...dl, [k]: Number.isFinite(v) && v >= 0 ? v : 0 };
+    setDl(next);
+    saveDlSettings(next);
+  }
 
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => {});
@@ -129,6 +137,28 @@ export function SettingsView() {
               onChange={(e) => setConcurrency(Number(e.target.value))}
               className="focus-accent w-24 rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]"
             />
+          </Card>
+
+          <Card className="p-5">
+            <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Download speed</h2>
+            <p className="mb-4 text-xs text-[var(--text-3)]">
+              More connections per file = faster on a fast line. Set a cap to leave bandwidth for other work
+              (0 = unlimited). Resume is unaffected.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <TextField
+                label="Connections per file (1–16)"
+                type="number"
+                value={dl.connections}
+                onChange={(e) => setDlField("connections", Number(e.target.value))}
+              />
+              <TextField
+                label="Bandwidth limit (MB/s, 0 = off)"
+                type="number"
+                value={dl.bwLimitMbps}
+                onChange={(e) => setDlField("bwLimitMbps", Number(e.target.value))}
+              />
+            </div>
           </Card>
         </div>
       )}
