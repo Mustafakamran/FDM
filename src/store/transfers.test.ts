@@ -24,7 +24,7 @@ beforeEach(() => {
   localStorage.clear();
   nextJobId = 1;
   listReturns = [];
-  useTransfers.setState({ jobs: [], queue: [], concurrency: 1, dockOpen: true });
+  useTransfers.setState({ jobs: [], queue: [], inflight: [], concurrency: 1, dockOpen: true });
   invokeMock.mockImplementation((cmd: string) => {
     if (cmd === "start_download") return Promise.resolve([job({ jobId: nextJobId++ })]);
     if (cmd === "list_jobs") return Promise.resolve(listReturns);
@@ -50,6 +50,14 @@ describe("transfers queue", () => {
     await useTransfers.getState().refresh();
     await vi.waitFor(() => expect(useTransfers.getState().jobs.length).toBe(2));
     expect(useTransfers.getState().queue).toHaveLength(0);
+  });
+
+  it("persists queue + in-flight to localStorage so a restart can resume", async () => {
+    useTransfers.getState().enqueue("drive_x", [item("a"), item("b")], "/dest");
+    await vi.waitFor(() => expect(useTransfers.getState().jobs).toHaveLength(1));
+    // "a" is running (in-flight), "b" still queued — both on disk.
+    expect(JSON.parse(localStorage.getItem("download_inflight_v1")!)).toHaveLength(1);
+    expect(JSON.parse(localStorage.getItem("download_queue_v1")!)).toHaveLength(1);
   });
 
   it("removes a queued item before it starts", async () => {

@@ -98,7 +98,8 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
                       <div className="truncate text-xs text-[var(--text-3)]"><AccountLabel accountId={q.accountId} /></div>
                     </div>
                     <div className="flex flex-1 items-center gap-2 text-xs text-[var(--text-3)]">
-                      <Clock size={13} /> Queued · #{i + 1}
+                      <Clock size={13} />
+                      {q.resumedBytes ? `Resuming · ${formatBytes(q.resumedBytes)} done` : `Queued · #${i + 1}`}
                     </div>
                     <button onClick={() => removeQueued(q.id)} aria-label={`Remove ${q.item.name}`} className="text-[var(--text-3)] hover:text-[var(--error)]">
                       <X size={15} />

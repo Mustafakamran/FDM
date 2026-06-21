@@ -18,7 +18,8 @@ function QueueRow({ q, position }: { q: QueueItem; position: number }) {
         <div className="truncate text-xs text-[var(--text-3)]">{account?.label ?? q.accountId}</div>
       </div>
       <div className="flex flex-1 items-center gap-2 text-xs text-[var(--text-3)]">
-        <Clock size={13} /> Queued · #{position}
+        <Clock size={13} />
+        {q.resumedBytes ? `Resuming · ${formatBytes(q.resumedBytes)} done` : `Queued · #${position}`}
       </div>
       <span className="w-10" />
       <button onClick={() => removeQueued(q.id)} aria-label={`Remove ${q.item.name} from queue`} className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--error)]">

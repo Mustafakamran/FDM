@@ -163,7 +163,18 @@ pub fn list_entries(app: &AppHandle, conn: &RcConnection, account_id: &str) -> R
 
 /// Stream one file from the shared link to `dest_file`, updating `transferred`
 /// and honoring `cancelled`. Writes to a `.fdmpart` temp then renames on success.
-fn download_one(token: &str, url: &str, sub_path: &str, dest_file: &Path, h: &NativeHandles) -> Result<(), String> {
+/// If a fully-downloaded file already exists (size matches `expected`), it's
+/// skipped — this is what makes a resumed folder download continue where it left
+/// off instead of re-pulling completed files.
+fn download_one(token: &str, url: &str, sub_path: &str, dest_file: &Path, expected: i64, h: &NativeHandles) -> Result<(), String> {
+    if expected > 0 {
+        if let Ok(meta) = std::fs::metadata(dest_file) {
+            if meta.len() == expected as u64 {
+                h.transferred.fetch_add(expected, Ordering::SeqCst);
+                return Ok(());
+            }
+        }
+    }
     if let Some(parent) = dest_file.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -236,13 +247,14 @@ fn run_job(app: AppHandle, conn: RcConnection, account_id: String, item: Downloa
                 if p != item.path && !p.starts_with(&prefix) {
                     continue;
                 }
+                let esize = e.get("Size").and_then(|s| s.as_i64()).unwrap_or(0);
                 let rel = p.strip_prefix(&prefix).unwrap_or(p);
                 let dest_file = dest_root.join(&item.name).join(rel);
-                download_one(&token, &info.url, p, &dest_file, &h)?;
+                download_one(&token, &info.url, p, &dest_file, esize, &h)?;
             }
         } else {
             let dest_file = dest_root.join(&item.name);
-            download_one(&token, &info.url, &item.path, &dest_file, &h)?;
+            download_one(&token, &info.url, &item.path, &dest_file, item.size, &h)?;
         }
         Ok(())
     })();

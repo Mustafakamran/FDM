@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Plus, FolderOpen, Clock, Star, Users, Download, Check, Pause, AlertCircle, Globe, Trash2, Loader2, Link as LinkIcon } from "lucide-react";
 import { useApp, type Section } from "../store/app";
 import { useTransfers } from "../store/transfers";
+import { useHistory } from "../store/history";
 import { useStorage } from "../store/storage";
 import { useAccountMeta, prettyLabel } from "../store/account-meta";
 import { useIndex } from "../store/index-store";
@@ -22,6 +23,8 @@ export function Sidebar() {
   const { view, accounts, selectAccount, setSection, removeAccount, showDownloads } = useApp();
   const dlFilter = view.kind === "downloads" ? view.filter : null;
   const jobs = useTransfers((s) => s.jobs);
+  const queue = useTransfers((s) => s.queue);
+  const history = useHistory((s) => s.items);
   const storage = useStorage((s) => s.byAccount);
   const fetchStorage = useStorage((s) => s.fetch);
   const meta = useAccountMeta((s) => s.byId);
@@ -44,11 +47,13 @@ export function Sidebar() {
   const activeSection = view.kind === "browse" ? view.section : null;
 
   const active = jobs.filter((j) => !j.finished && !j.cancelled);
+  // Completed/failed come from persisted history so the counts survive restarts;
+  // "downloading" includes queued work waiting on a slot.
   const counts = {
-    downloading: active.length,
-    completed: jobs.filter((j) => j.finished && j.success).length,
+    downloading: active.length + queue.length,
+    completed: history.filter((h) => h.status === "success").length,
     paused: 0,
-    failed: jobs.filter((j) => j.finished && !j.success && !j.cancelled).length,
+    failed: history.filter((h) => h.status === "failed").length,
   };
   const totalSpeed = active.reduce((s, j) => s + Math.max(0, j.speed), 0);
 
