@@ -332,8 +332,18 @@ fn locate_project(
     cmd: &Value,
     project_id: &str,
 ) -> Result<(), String> {
-    let mut client_name = cmd.get("client_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let mut couple = cmd.get("couple_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // Names live under `payload` per BDM's contract; fall back to top-level, then
+    // to the project record.
+    let field = |k: &str| {
+        cmd.get("payload")
+            .and_then(|p| p.get(k))
+            .or_else(|| cmd.get(k))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut client_name = field("client_name");
+    let mut couple = field("couple_name");
     if client_name.is_empty() && couple.is_empty() {
         if let Ok(proj) = get_json(c, &cfg.portal_url, &format!("/api/download-projects?id={project_id}"), key) {
             client_name = proj.get("client_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
