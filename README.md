@@ -1,4 +1,4 @@
-# Footage Download Manager (FDM)
+# FDM
 
 A desktop app for downloading large RAW video assets (SLOG/CLOG, 300–500 GB+)
 that clients share with you on **Google Drive** ("Shared with me") and **Dropbox**,
@@ -136,9 +136,10 @@ releases signed with **your** private key are accepted.
 1. The signing keypair was generated locally. The **public** key is committed in
    `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`); the **private** key is in
    `.tauri/signing.key` and is **git-ignored — never commit it**.
-2. In GitHub: **Settings → Secrets and variables → Actions → New repository secret**, add:
-   - `TAURI_SIGNING_PRIVATE_KEY` — the full contents of `.tauri/signing.key`.
-   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — leave empty (the key has no password).
+2. In GitHub: **Settings → Secrets and variables → Actions → New repository secret**, add
+   **one** secret: `TAURI_SIGNING_PRIVATE_KEY` — the full contents of `.tauri/signing.key`.
+   Do **not** add `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (GitHub rejects empty secrets, and the
+   key has no password — the workflow treats the missing value as "no password").
 3. Push a `vX.Y.Z` tag (matching `version` in `tauri.conf.json`). CI builds, signs, and
    publishes the release with installers + `latest.json`. Installed apps pick it up from
    `releases/latest/download/latest.json`.

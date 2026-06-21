@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Footage Download Manager",
+  "productName": "FDM",
   "version": "0.1.0",
   "identifier": "com.zz.google-drive-downloader",
   "build": {
@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Footage Download Manager",
+        "title": "FDM",
         "width": 1320,
         "height": 860,
         "minWidth": 980,

@@ -6,6 +6,7 @@ import { useSearch } from "../store/search";
 import { useNotifications, unreadCount } from "../store/notifications";
 import { useTheme } from "../store/theme";
 import { useUI } from "../store/ui";
+import { FdmLogo } from "./FdmLogo";
 
 const appWindow = getCurrentWindow();
 
@@ -40,14 +41,9 @@ export function TopBar() {
         className="flex items-center gap-2.5"
       >
         <span className="flex h-9 w-9 items-center justify-center rounded-[9px] bg-[var(--accent)] text-[var(--accent-ink)]">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 4v9m0 0 3.5-3.5M12 13 8.5 9.5M6 17.5h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <FdmLogo size={19} />
         </span>
-        <span className="text-left leading-tight">
-          <span className="block text-sm font-semibold tracking-tight text-[var(--text)]">Footage Download Manager</span>
-          <span className="block text-[11px] text-[var(--text-3)]">FDM</span>
-        </span>
+        <span className="text-[17px] font-semibold tracking-tight text-[var(--text)]">FDM</span>
       </button>
 
       {/* Search */}
