@@ -12,6 +12,8 @@ export interface HistoryEntry {
   size: number;
   status: "success" | "failed" | "cancelled";
   at: number;
+  /** Failure reason (for failed entries). */
+  error?: string;
 }
 
 function load(): HistoryEntry[] {
@@ -54,6 +56,7 @@ export const useHistory = create<HistoryState>((set, get) => {
         size: job.totalBytes || job.bytes,
         status,
         at: Date.now(),
+        error: status === "failed" ? job.error : undefined,
       };
       const recorded = new Set(get().recorded);
       recorded.add(job.jobId);

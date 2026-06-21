@@ -75,13 +75,13 @@ function Row({ job }: { job: JobStatus }) {
           ) : job.finished && job.success ? (
             formatBytes(job.totalBytes || job.bytes)
           ) : (
-            <span className="text-[var(--error)]">Failed</span>
+            <span className="text-[var(--error)]" title={job.error}>Failed</span>
           )}
         </span>
       </div>
 
       <span className="tnum w-10 shrink-0 text-right text-sm text-[var(--text)]">
-        {job.cancelled ? <Ban size={15} className="ml-auto text-[var(--text-3)]" /> : job.finished && job.success ? <Check size={15} className="ml-auto text-[var(--success)]" /> : job.finished ? <AlertCircle size={15} className="ml-auto text-[var(--error)]" /> : `${p}%`}
+        {job.cancelled ? <Ban size={15} className="ml-auto text-[var(--text-3)]" /> : job.finished && job.success ? <Check size={15} className="ml-auto text-[var(--success)]" /> : job.finished ? <span title={job.error}><AlertCircle size={15} className="ml-auto text-[var(--error)]" /></span> : `${p}%`}
       </span>
       {active ? (
         <div className="flex items-center gap-0.5">

@@ -143,9 +143,15 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
                       <ft.Icon size={20} style={{ color: ft.color }} className="shrink-0" />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm text-[var(--text)]" title={h.name}>{h.name}</div>
-                        <div className="truncate text-xs text-[var(--text-3)]" title={h.dest}>
-                          <AccountLabel accountId={h.accountId} /> · {h.dest}
-                        </div>
+                        {h.status === "failed" && h.error ? (
+                          <div className="truncate text-xs text-[var(--error)]" title={h.error}>
+                            {h.error}
+                          </div>
+                        ) : (
+                          <div className="truncate text-xs text-[var(--text-3)]" title={h.dest}>
+                            <AccountLabel accountId={h.accountId} /> · {h.dest}
+                          </div>
+                        )}
                       </div>
                       <span className="tnum w-24 shrink-0 text-right text-sm text-[var(--text-2)]">{formatBytes(h.size)}</span>
                       <span className="tnum w-40 shrink-0 text-right text-xs text-[var(--text-3)]">{new Date(h.at).toLocaleString()}</span>

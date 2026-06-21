@@ -9,6 +9,7 @@ import {
 } from "../lib/tauri/commands";
 import { loadDlSettings, toDownloadConfig } from "../lib/dl-settings";
 import { useHistory } from "./history";
+import { useToasts } from "./toast";
 
 const CONCURRENCY_KEY = "download_concurrency";
 const QUEUE_KEY = "download_queue_v1";
@@ -21,6 +22,8 @@ const nextId = () => `q${Date.now()}_${++seq}`;
 // Job ids paused by the user — so refresh doesn't log them to history as
 // "cancelled" (their partial file is kept and they resume from it).
 const pausedJobIds = new Set<number>();
+// Job ids we've already surfaced a failure toast for (avoid repeats while polling).
+const failedToasted = new Set<number>();
 
 function loadConcurrency(): number {
   const n = parseInt(localStorage.getItem(CONCURRENCY_KEY) ?? "1", 10);
@@ -176,9 +179,14 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     const jobs = await listJobs();
     set({ jobs });
     // Record finished/cancelled jobs to history — except ones the user paused
-    // (those are kept for resume, not logged as cancelled).
+    // (those are kept for resume, not logged as cancelled). Surface real failure
+    // reasons as a toast so downloads never fail silently.
     for (const j of jobs) {
       if ((j.finished || j.cancelled) && !pausedJobIds.has(j.jobId)) useHistory.getState().record(j);
+      if (j.finished && !j.success && !j.cancelled && !failedToasted.has(j.jobId)) {
+        failedToasted.add(j.jobId);
+        useToasts.getState().push(`Download failed · ${j.name}: ${j.error || "unknown error"}`, "error");
+      }
     }
 
     // Reconcile persisted in-flight set against live jobs: drop finished/cancelled
