@@ -61,6 +61,8 @@ export interface DownloadItem {
   name: string;
   isDir: boolean;
   size: number;
+  /** Backend file id — needed to stream/resume a single Drive file. */
+  id?: string;
 }
 
 /** Live status of a download job. */

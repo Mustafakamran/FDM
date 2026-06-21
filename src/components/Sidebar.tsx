@@ -48,11 +48,11 @@ export function Sidebar() {
 
   const active = jobs.filter((j) => !j.finished && !j.cancelled);
   // Completed/failed come from persisted history so the counts survive restarts;
-  // "downloading" includes queued work waiting on a slot.
+  // "downloading" includes queued (non-paused) work waiting on a slot.
   const counts = {
-    downloading: active.length + queue.length,
+    downloading: active.length + queue.filter((q) => !q.paused).length,
     completed: history.filter((h) => h.status === "success").length,
-    paused: 0,
+    paused: queue.filter((q) => q.paused).length,
     failed: history.filter((h) => h.status === "failed").length,
   };
   const totalSpeed = active.reduce((s, j) => s + Math.max(0, j.speed), 0);

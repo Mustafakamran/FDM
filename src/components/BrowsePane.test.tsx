@@ -78,7 +78,7 @@ describe("BrowsePane", () => {
         expect.objectContaining({
           accountId: "drive_x",
           dest: "/Volumes/EXT",
-          items: [{ path: "a.mxf", name: "a.mxf", isDir: false, size: 1000 }],
+          items: [{ path: "a.mxf", name: "a.mxf", isDir: false, size: 1000, id: "" }],
         }),
       );
     });

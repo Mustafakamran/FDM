@@ -120,7 +120,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     }
     const chosen: DownloadItem[] = items
       .filter((i) => selected.has(i.Path))
-      .map((i) => ({ path: i.Path, name: i.Name, isDir: i.IsDir, size: sizeOf(i) }));
+      .map((i) => ({ path: i.Path, name: i.Name, isDir: i.IsDir, size: sizeOf(i), id: i.ID ?? "" }));
     enqueue(account.id, chosen, dest);
     toast(`Queued ${chosen.length} download${chosen.length === 1 ? "" : "s"}`, "success");
     setSelected(new Set());

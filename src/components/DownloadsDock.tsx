@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp, X, Check, AlertCircle, Ban, Clock } from "lucide-react";
+import { ChevronDown, ChevronUp, X, Check, AlertCircle, Ban, Clock, Pause, Play } from "lucide-react";
 import { useTransfers, type QueueItem } from "../store/transfers";
 import { useApp } from "../store/app";
 import { fileType } from "../lib/file-types";
@@ -8,6 +8,7 @@ import type { JobStatus } from "../lib/tauri/commands";
 
 function QueueRow({ q, position }: { q: QueueItem; position: number }) {
   const removeQueued = useTransfers((s) => s.removeQueued);
+  const resumePaused = useTransfers((s) => s.resumePaused);
   const account = useApp((s) => s.accounts.find((a) => a.id === q.accountId));
   const ft = fileType(q.item.name, q.item.isDir);
   return (
@@ -18,10 +19,18 @@ function QueueRow({ q, position }: { q: QueueItem; position: number }) {
         <div className="truncate text-xs text-[var(--text-3)]">{account?.label ?? q.accountId}</div>
       </div>
       <div className="flex flex-1 items-center gap-2 text-xs text-[var(--text-3)]">
-        <Clock size={13} />
-        {q.resumedBytes ? `Resuming · ${formatBytes(q.resumedBytes)} done` : `Queued · #${position}`}
+        {q.paused ? <Pause size={13} /> : <Clock size={13} />}
+        {q.paused
+          ? `Paused · ${formatBytes(q.resumedBytes ?? 0)} done`
+          : q.resumedBytes
+            ? `Resuming · ${formatBytes(q.resumedBytes)} done`
+            : `Queued · #${position}`}
       </div>
-      <span className="w-10" />
+      {q.paused && (
+        <button onClick={() => resumePaused(q.id)} aria-label={`Resume ${q.item.name}`} className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--accent)]">
+          <Play size={15} />
+        </button>
+      )}
       <button onClick={() => removeQueued(q.id)} aria-label={`Remove ${q.item.name} from queue`} className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--error)]">
         <X size={15} />
       </button>
@@ -37,6 +46,7 @@ function pct(j: JobStatus): number {
 
 function Row({ job }: { job: JobStatus }) {
   const cancel = useTransfers((s) => s.cancel);
+  const pause = useTransfers((s) => s.pause);
   const account = useApp((s) => s.accounts.find((a) => a.id === job.accountId));
   const ft = fileType(job.name, false);
   const p = pct(job);
@@ -74,7 +84,10 @@ function Row({ job }: { job: JobStatus }) {
         {job.cancelled ? <Ban size={15} className="ml-auto text-[var(--text-3)]" /> : job.finished && job.success ? <Check size={15} className="ml-auto text-[var(--success)]" /> : job.finished ? <AlertCircle size={15} className="ml-auto text-[var(--error)]" /> : `${p}%`}
       </span>
       {active ? (
-        <button onClick={() => cancel(job.jobId)} aria-label={`Cancel ${job.name}`} className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--error)]"><X size={15} /></button>
+        <div className="flex items-center gap-0.5">
+          <button onClick={() => pause(job.jobId)} aria-label={`Pause ${job.name}`} className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--accent)]"><Pause size={15} /></button>
+          <button onClick={() => cancel(job.jobId)} aria-label={`Cancel ${job.name}`} className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--error)]"><X size={15} /></button>
+        </div>
       ) : (
         <span className="w-7" />
       )}

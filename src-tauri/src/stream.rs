@@ -11,7 +11,7 @@
 //! pulls the file progressively as the user scrubs — nothing is fully downloaded.
 //! The URL carries a per-session secret so only this app's webview can use it.
 
-use crate::dropbox;
+use crate::provider;
 use crate::rclone::config::{pick_free_port, random_secret};
 use crate::rclone::supervisor::{RcConnection, RcloneState};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -97,40 +97,12 @@ fn fetch_range(
     start: u64,
     end: u64,
 ) -> Result<Vec<u8>, String> {
-    let range = format!("bytes={start}-{end}");
+    let kind = provider::kind_of(acct);
+    let (token_acct, link) = provider::token_account(app, acct);
+    let token = provider::fetch_token(conn, kind, &token_acct)?;
     let client = reqwest::blocking::Client::new();
-    let resp = if acct.starts_with("drive_") || acct.starts_with("drivelink_") {
-        let token = crate::drive::drive_access_token(conn, acct)?;
-        let url =
-            format!("https://www.googleapis.com/drive/v3/files/{fid}?alt=media&supportsAllDrives=true");
-        client.get(url).bearer_auth(token).header("Range", range).send()
-    } else if acct.starts_with("dropboxlink_") {
-        let info = dropbox::link_info(app, acct).ok_or_else(|| "no Dropbox link info".to_string())?;
-        let token = crate::drive::dropbox_access_token(conn, &info.base)?;
-        let arg = if path.is_empty() {
-            serde_json::json!({ "url": info.url })
-        } else {
-            serde_json::json!({ "url": info.url, "path": format!("/{}", path.trim_start_matches('/')) })
-        };
-        client
-            .post("https://content.dropboxapi.com/2/sharing/get_shared_link_file")
-            .bearer_auth(token)
-            .header("Dropbox-API-Arg", arg.to_string())
-            .header("Range", range)
-            .send()
-    } else {
-        // Plain Dropbox account.
-        let token = crate::drive::dropbox_access_token(conn, acct)?;
-        let arg = serde_json::json!({ "path": format!("/{}", path.trim_start_matches('/')) });
-        client
-            .post("https://content.dropboxapi.com/2/files/download")
-            .bearer_auth(token)
-            .header("Dropbox-API-Arg", arg.to_string())
-            .header("Range", range)
-            .send()
-    }
-    .map_err(|e| e.to_string())?;
-
+    let resp = provider::send_range(&client, &token, kind, fid, path, &link, start, end, false)
+        .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         let s = resp.status();
         let b = resp.text().unwrap_or_default();

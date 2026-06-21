@@ -1,4 +1,4 @@
-import { X, Check, AlertCircle, Ban, Clock } from "lucide-react";
+import { X, Check, AlertCircle, Ban, Clock, Pause, Play } from "lucide-react";
 import { useApp, type DownloadFilter } from "../store/app";
 import { useTransfers } from "../store/transfers";
 import { useHistory } from "../store/history";
@@ -25,7 +25,7 @@ function AccountLabel({ accountId }: { accountId: string }) {
 
 export function DownloadsView({ filter }: { filter: DownloadFilter }) {
   const showDownloads = useApp((s) => s.showDownloads);
-  const { jobs, queue, cancel, removeQueued } = useTransfers();
+  const { jobs, queue, cancel, pause, resumePaused, removeQueued } = useTransfers();
   const { items: history, clear } = useHistory();
 
   const active = jobs.filter((j) => !j.finished && !j.cancelled);
@@ -82,6 +82,9 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
                         {formatBytes(j.bytes)} / {formatBytes(j.totalBytes || j.bytes)} · {formatSpeed(j.speed)} · {formatEta(j.eta)}
                       </span>
                     </div>
+                    <button onClick={() => pause(j.jobId)} aria-label={`Pause ${j.name}`} className="text-[var(--text-3)] hover:text-[var(--accent)]">
+                      <Pause size={15} />
+                    </button>
                     <button onClick={() => cancel(j.jobId)} aria-label={`Cancel ${j.name}`} className="text-[var(--text-3)] hover:text-[var(--error)]">
                       <X size={15} />
                     </button>
@@ -98,9 +101,18 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
                       <div className="truncate text-xs text-[var(--text-3)]"><AccountLabel accountId={q.accountId} /></div>
                     </div>
                     <div className="flex flex-1 items-center gap-2 text-xs text-[var(--text-3)]">
-                      <Clock size={13} />
-                      {q.resumedBytes ? `Resuming · ${formatBytes(q.resumedBytes)} done` : `Queued · #${i + 1}`}
+                      {q.paused ? <Pause size={13} /> : <Clock size={13} />}
+                      {q.paused
+                        ? `Paused · ${formatBytes(q.resumedBytes ?? 0)} done`
+                        : q.resumedBytes
+                          ? `Resuming · ${formatBytes(q.resumedBytes)} done`
+                          : `Queued · #${i + 1}`}
                     </div>
+                    {q.paused && (
+                      <button onClick={() => resumePaused(q.id)} aria-label={`Resume ${q.item.name}`} className="text-[var(--text-3)] hover:text-[var(--accent)]">
+                        <Play size={15} />
+                      </button>
+                    )}
                     <button onClick={() => removeQueued(q.id)} aria-label={`Remove ${q.item.name}`} className="text-[var(--text-3)] hover:text-[var(--error)]">
                       <X size={15} />
                     </button>

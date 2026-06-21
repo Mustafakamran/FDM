@@ -3,9 +3,11 @@ pub mod download;
 pub mod drive;
 pub mod dropbox;
 pub mod index;
+pub mod provider;
 pub mod rclone;
 pub mod secrets;
 pub mod stream;
+pub mod transfer;
 
 use base64::Engine;
 use download::{JobsState, NativeJobsState};

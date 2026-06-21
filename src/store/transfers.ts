@@ -18,6 +18,9 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let pumping = false;
 let seq = 0;
 const nextId = () => `q${Date.now()}_${++seq}`;
+// Job ids paused by the user — so refresh doesn't log them to history as
+// "cancelled" (their partial file is kept and they resume from it).
+const pausedJobIds = new Set<number>();
 
 function loadConcurrency(): number {
   const n = parseInt(localStorage.getItem(CONCURRENCY_KEY) ?? "1", 10);
@@ -32,6 +35,8 @@ export interface QueueItem {
   dest: string;
   /** Bytes already on disk from a prior, interrupted run (for "resuming" UI). */
   resumedBytes?: number;
+  /** User-paused: kept in the queue but not auto-started until resumed. */
+  paused?: boolean;
 }
 
 /** A started download we track so it survives an app restart and can resume. */
@@ -91,6 +96,10 @@ interface TransfersState {
   removeQueued: (id: string) => void;
   refresh: () => Promise<void>;
   cancel: (jobId: number) => Promise<void>;
+  /** Pause an active job: stop it but keep the partial file + requeue (paused). */
+  pause: (jobId: number) => Promise<void>;
+  /** Resume a paused queue item (it continues from its partial file). */
+  resumePaused: (id: string) => void;
   clearFinished: () => Promise<void>;
   pump: () => Promise<void>;
   /** Restart polling + resume persisted work (call once on app launch). */
@@ -134,13 +143,15 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     if (pumping) return;
     pumping = true;
     try {
-      // Start queued items until the in-flight count reaches the concurrency limit.
+      // Start queued items (skipping paused ones) until the in-flight count
+      // reaches the concurrency limit.
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const { queue, inflight, concurrency } = get();
-        if (inflight.length >= concurrency || queue.length === 0) break;
-        const next = queue[0];
-        const remaining = queue.slice(1);
+        const startable = queue.filter((q) => !q.paused);
+        if (inflight.length >= concurrency || startable.length === 0) break;
+        const next = startable[0];
+        const remaining = queue.filter((q) => q.id !== next.id);
         writeJson(QUEUE_KEY, remaining);
         set({ queue: remaining });
         try {
@@ -164,7 +175,11 @@ export const useTransfers = create<TransfersState>((set, get) => ({
   refresh: async () => {
     const jobs = await listJobs();
     set({ jobs });
-    for (const j of jobs) if (j.finished || j.cancelled) useHistory.getState().record(j);
+    // Record finished/cancelled jobs to history — except ones the user paused
+    // (those are kept for resume, not logged as cancelled).
+    for (const j of jobs) {
+      if ((j.finished || j.cancelled) && !pausedJobIds.has(j.jobId)) useHistory.getState().record(j);
+    }
 
     // Reconcile persisted in-flight set against live jobs: drop finished/cancelled
     // (and jobs that vanished), update live bytes for the rest.
@@ -179,7 +194,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     set({ inflight: stillInflight });
 
     await get().pump();
-    const busy = get().inflight.length > 0 || get().queue.length > 0;
+    const busy = get().inflight.length > 0 || get().queue.some((q) => !q.paused);
     if (!busy) get().stopPolling();
   },
 
@@ -188,13 +203,44 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     await get().refresh();
   },
 
+  pause: async (jobId) => {
+    const inf = get().inflight.find((i) => i.jobId === jobId);
+    if (!inf) return;
+    pausedJobIds.add(jobId);
+    await cancelJob(jobId); // worker sees the flag and stops, leaving the .fdmpart
+    const paused: QueueItem = {
+      id: inf.id,
+      accountId: inf.accountId,
+      item: inf.item,
+      dest: inf.dest,
+      paused: true,
+      resumedBytes: inf.bytes,
+    };
+    const queue = [paused, ...get().queue];
+    const inflight = get().inflight.filter((i) => i.jobId !== jobId);
+    writeJson(QUEUE_KEY, queue);
+    writeJson(INFLIGHT_KEY, inflight);
+    set({ queue, inflight });
+    // Drop the now-stopped job from backend tracking so it leaves the live list.
+    await clearFinishedJobs().catch(() => {});
+    void get().pump(); // a freed slot may let another queued item start
+  },
+
+  resumePaused: (id) => {
+    const queue = get().queue.map((q) => (q.id === id ? { ...q, paused: false } : q));
+    writeJson(QUEUE_KEY, queue);
+    set({ queue });
+    get().ensurePolling();
+    void get().pump();
+  },
+
   clearFinished: async () => {
     await clearFinishedJobs();
     await get().refresh();
   },
 
   resume: () => {
-    if (get().queue.length === 0) return;
+    if (!get().queue.some((q) => !q.paused)) return; // nothing startable
     get().ensurePolling();
     void get().pump();
   },

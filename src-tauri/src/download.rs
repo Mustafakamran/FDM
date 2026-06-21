@@ -26,6 +26,9 @@ pub struct DownloadItem {
     pub is_dir: bool,
     /// Known size in bytes (0 / -1 for dirs).
     pub size: i64,
+    /// Backend file id — required to stream a single Drive file (empty otherwise).
+    #[serde(default)]
+    pub id: String,
 }
 
 /// A tracked job (what we remember after launching).
@@ -173,8 +176,10 @@ fn connection(state: &RcloneState) -> Result<RcConnection, String> {
 
 /// Launch downloads for the selected items; returns the created job statuses.
 ///
-/// Dropbox shared-links have no rclone remote, so they stream over the native
-/// Dropbox API on a background thread instead of an rclone async job.
+/// Launch downloads. All transfers run on the native resumable engine
+/// (`transfer.rs`) so every file resumes byte-for-byte after a pause or crash;
+/// rclone is still used for listing/index, not for the byte transfer. `config`
+/// (rclone perf tuning) no longer applies — kept for API compatibility.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri commands take their state as params.
 pub fn start_download(
@@ -187,45 +192,18 @@ pub fn start_download(
     dest: String,
     config: Option<Value>,
 ) -> Result<Vec<JobStatus>, String> {
-    if account_id.starts_with("dropboxlink_") {
-        let conn = connection(&rclone)?;
-        return crate::dropbox::start_link_download(app, conn, &native, account_id, items, dest);
-    }
+    let _ = (&jobs_state, &config); // retained for compatibility; unused now
     let conn = connection(&rclone)?;
-    let fs = account_fs(&account_id)?;
-    let mut created = Vec::new();
-
-    for item in &items {
-        let (endpoint, mut params) = build_copy(&fs, item, &dest);
-        // Apply per-download tuning (Transfers, MultiThreadStreams, BwLimit, …)
-        // as an rclone rc `_config` override.
-        if let Some(cfg) = &config {
-            if let Some(obj) = params.as_object_mut() {
-                obj.insert("_config".to_string(), cfg.clone());
-            }
-        }
-        let resp = rc_post(&conn, endpoint, &params)?;
-        let job_id = resp
-            .get("jobid")
-            .and_then(|v| v.as_i64())
-            .ok_or_else(|| format!("no jobid in response: {resp}"))?;
-
-        let job = Job {
-            job_id,
-            account_id: account_id.clone(),
-            name: item.name.clone(),
-            dest: dest.clone(),
-            total_bytes: item.size.max(0),
-            cancelled: false,
-        };
-        jobs_state.jobs.lock().unwrap_or_else(|e| e.into_inner()).push(job);
-        created.push(status_for(
-            job_id,
-            &account_id,
-            &item.name,
-            &dest,
-            item.size.max(0),
-        ));
+    let mut created = Vec::with_capacity(items.len());
+    for item in items {
+        let total = item.size.max(0);
+        let handles = native.create(&account_id, &item.name, &dest, total);
+        created.push(status_for(handles.job_id, &account_id, &item.name, &dest, total));
+        let app = app.clone();
+        let conn = conn.clone();
+        let account_id = account_id.clone();
+        let dest = dest.clone();
+        std::thread::spawn(move || crate::transfer::download_item(app, conn, account_id, item, dest, handles));
     }
     Ok(created)
 }
@@ -386,7 +364,7 @@ mod tests {
     use super::*;
 
     fn item(path: &str, name: &str, is_dir: bool, size: i64) -> DownloadItem {
-        DownloadItem { path: path.into(), name: name.into(), is_dir, size }
+        DownloadItem { path: path.into(), name: name.into(), is_dir, size, id: String::new() }
     }
 
     #[test]
