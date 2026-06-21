@@ -342,7 +342,10 @@ fn locate_project(
     }
     let records = crate::locate::find_locations(conn, c, project_id, &client_name, &couple)?;
     let n = records.len();
-    send_json(c, reqwest::Method::POST, &cfg.portal_url, "/api/project-locations", key, &Value::Array(records))?;
+    // project_id also as a query param so BDM can attribute the `[]` (found-nothing)
+    // case, which carries no project_id in the body. (BDM: query param authoritative.)
+    let path = format!("/api/project-locations?project_id={}", urlencode(project_id));
+    send_json(c, reqwest::Method::POST, &cfg.portal_url, &path, key, &Value::Array(records))?;
     set_status(app, format!("located project {project_id}: {n} match(es)"));
     Ok(())
 }
