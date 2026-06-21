@@ -19,6 +19,7 @@ describe("SettingsView", () => {
   it("saves Google credentials to the keychain under the right keys", async () => {
     render(<SettingsView />);
 
+    fireEvent.click(screen.getByText("Google Drive")); // credentials live in their tab
     fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "my-id" } });
     fireEvent.change(screen.getByLabelText("Client Secret"), { target: { value: "my-secret" } });
     fireEvent.click(screen.getByText("Save Google credentials"));

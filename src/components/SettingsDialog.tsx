@@ -7,7 +7,7 @@ export function SettingsDialog() {
   if (!settingsOpen) return null;
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-start justify-center overflow-auto bg-black/60 p-8 backdrop-blur-sm"
+      className="fixed inset-0 z-[80] flex items-start justify-center overflow-auto bg-black/30 p-8 backdrop-blur-[2px]"
       onClick={closeSettings}
     >
       <div
