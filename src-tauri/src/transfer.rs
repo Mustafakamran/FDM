@@ -29,6 +29,13 @@ const BLOCK: u64 = 8 * 1024 * 1024;
 const TOKEN_TTL: Duration = Duration::from_secs(45 * 60);
 const DEFAULT_CONNECTIONS: usize = 4;
 const MAX_CONNECTIONS: usize = 16;
+/// Per-block fetch attempts before giving up (transient network/5xx/429 retry).
+/// A multi-hour 600GB download WILL hit dropped sockets and throttling; one blip
+/// must not fail the whole file.
+const MAX_BLOCK_ATTEMPTS: u32 = 8;
+/// Total deadline for a single 8 MiB block request (a stalled/half-open socket
+/// errors here instead of hanging forever, then the block is retried).
+const BLOCK_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 // ---- global bandwidth cap (token bucket) -----------------------------------
 
@@ -193,30 +200,84 @@ struct FileTask {
     dest: PathBuf,
 }
 
-/// Fetch one block [offset, offset+len-1] with token refresh + Drive abuse retry.
-fn fetch_block(auth: &Auth, client: &reqwest::blocking::Client, t: &FileTask, offset: u64, len: u64) -> Result<Vec<u8>, String> {
+/// Exponential backoff (0.5s, 1s, 2s, … capped 30s) for `attempt`, waking early
+/// if the job is paused/cancelled so a stuck retry doesn't ignore a pause.
+fn backoff(attempt: u32, h: &NativeHandles) {
+    let secs = (0.5_f64 * 2f64.powi(attempt.saturating_sub(1) as i32)).min(30.0);
+    let mut slept = 0.0;
+    while slept < secs {
+        if h.cancelled.load(Ordering::SeqCst) {
+            return;
+        }
+        let step = 0.2_f64.min(secs - slept);
+        std::thread::sleep(Duration::from_secs_f64(step));
+        slept += step;
+    }
+}
+
+/// Fetch one block [offset, offset+len-1]. Retries transient failures (dropped
+/// connection, body-read interruption, HTTP 429, HTTP 5xx) with backoff up to
+/// `MAX_BLOCK_ATTEMPTS`; handles 401 token refresh + Drive abuse-acknowledge.
+fn fetch_block(auth: &Auth, client: &reqwest::blocking::Client, t: &FileTask, offset: u64, len: u64, h: &NativeHandles) -> Result<Vec<u8>, String> {
     let end = offset + len - 1;
     let mut ack = false;
+    let mut attempt: u32 = 0;
     loop {
-        let token = auth.token()?;
-        let mut resp = provider::send_range(client, &token, auth.kind, &t.fid, &t.path, &auth.link_url, offset, end, ack)
-            .map_err(|e| e.to_string())?;
-        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-            let token = auth.refresh()?;
-            resp = provider::send_range(client, &token, auth.kind, &t.fid, &t.path, &auth.link_url, offset, end, ack)
-                .map_err(|e| e.to_string())?;
+        if h.cancelled.load(Ordering::SeqCst) {
+            return Err("paused".into());
         }
-        if auth.kind == Kind::Drive && resp.status() == reqwest::StatusCode::FORBIDDEN && !ack {
-            ack = true;
+        let token = auth.token()?;
+        let resp = match provider::send_range(client, &token, auth.kind, &t.fid, &t.path, &auth.link_url, offset, end, ack) {
+            Ok(r) => r,
+            // Transport error (connection reset/dropped/timeout) — retry with backoff.
+            Err(e) => {
+                attempt += 1;
+                if attempt >= MAX_BLOCK_ATTEMPTS {
+                    return Err(format!("network error after {attempt} attempts: {e}"));
+                }
+                backoff(attempt, h);
+                continue;
+            }
+        };
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            // Token expired mid-download — refresh and retry.
+            auth.refresh()?;
+            attempt += 1;
+            if attempt >= MAX_BLOCK_ATTEMPTS {
+                return Err("unauthorized after retries".into());
+            }
             continue;
         }
-        if !resp.status().is_success() {
-            let s = resp.status();
-            let b = resp.text().unwrap_or_default();
-            return Err(format!("download {s}: {}", b.chars().take(300).collect::<String>()));
+        if auth.kind == Kind::Drive && status == reqwest::StatusCode::FORBIDDEN && !ack {
+            ack = true; // abuse-acknowledge retry (not counted against attempts)
+            continue;
         }
-        let bytes = resp.bytes().map_err(|e| e.to_string())?;
-        return Ok(bytes.to_vec());
+        // Throttling / transient server errors — back off and retry.
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
+            attempt += 1;
+            if attempt >= MAX_BLOCK_ATTEMPTS {
+                return Err(format!("download {status} after {attempt} attempts"));
+            }
+            backoff(attempt, h);
+            continue;
+        }
+        if !status.is_success() {
+            let b = resp.text().unwrap_or_default();
+            return Err(format!("download {status}: {}", b.chars().take(300).collect::<String>()));
+        }
+        match resp.bytes() {
+            Ok(bytes) => return Ok(bytes.to_vec()),
+            // Body read interrupted (socket dropped mid-block) — retry the block.
+            Err(e) => {
+                attempt += 1;
+                if attempt >= MAX_BLOCK_ATTEMPTS {
+                    return Err(format!("read error after {attempt} attempts: {e}"));
+                }
+                backoff(attempt, h);
+                continue;
+            }
+        }
     }
 }
 
@@ -299,7 +360,7 @@ fn download_file(auth: &Arc<Auth>, client: &reqwest::blocking::Client, t: &FileT
                 };
                 let offset = idx as u64 * BLOCK;
                 let len = BLOCK.min(total - offset);
-                match fetch_block(&auth, &client, &task, offset, len) {
+                match fetch_block(&auth, &client, &task, offset, len, &h) {
                     Ok(bytes) => {
                         throttle(bytes.len() as u64);
                         if let Err(e) = write_at(&file, offset, &bytes) {
@@ -414,6 +475,9 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
         let auth = Arc::new(Auth::new(&app, conn.clone(), &account_id)?);
         let client = reqwest::blocking::Client::builder()
             .connect_timeout(Duration::from_secs(30))
+            // Per-request (one 8 MiB block) deadline so a stalled socket errors and
+            // retries instead of hanging the whole download forever.
+            .timeout(BLOCK_REQUEST_TIMEOUT)
             .build()
             .map_err(|e| e.to_string())?;
         let dest_root = Path::new(&dest);
