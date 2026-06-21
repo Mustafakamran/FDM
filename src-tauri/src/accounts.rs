@@ -5,7 +5,7 @@
 //! the command wrappers talk to the running rc daemon (`rc_post`) or spawn the
 //! rclone sidecar one-shot for the OAuth flow.
 
-use crate::rclone::supervisor::{rc_post, RcloneState};
+use crate::rclone::supervisor::{rc_post, RcConnection, RcloneState};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -370,33 +370,25 @@ pub fn account_email(
     }
 }
 
-/// Add a Google Drive shared-folder link as a browseable account, rooted at the
-/// folder id, reusing a connected Drive account's token (no extra sign-in, no
-/// "add to my Drive"). It then indexes/browses/downloads exactly like an account.
-#[tauri::command]
-pub fn add_drive_link(
-    rclone: tauri::State<RcloneState>,
-    base_account_id: String,
-    label: String,
-    folder_id: String,
+/// Core: create a `drivelink_*` remote rooted at a folder id, reusing a connected
+/// Drive account's token. Shared by the `add_drive_link` command and the BDM agent.
+pub fn create_drive_link(
+    conn: &RcConnection,
+    base_account_id: &str,
+    label: &str,
+    folder_id: &str,
 ) -> Result<Account, String> {
-    if parse_remote(&base_account_id).map(|a| a.provider) != Some("drive".to_string()) {
+    if parse_remote(base_account_id).map(|a| a.provider) != Some("drive".to_string()) {
         return Err("base account must be a Google Drive account".into());
     }
     if folder_id.trim().is_empty() {
         return Err("missing folder id".into());
     }
-    let conn = rclone
-        .connection
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-        .ok_or_else(|| "rclone not started".to_string())?;
-    let dump = rc_post(&conn, "config/dump", &serde_json::json!({}))?;
+    let dump = rc_post(conn, "config/dump", &serde_json::json!({}))?;
     let (token, client_id, client_secret) =
-        crate::drive::remote_creds(&dump, &base_account_id).ok_or_else(|| "no Drive credentials".to_string())?;
+        crate::drive::remote_creds(&dump, base_account_id).ok_or_else(|| "no Drive credentials".to_string())?;
 
-    let remote = remote_name("drivelink", &label);
+    let remote = remote_name("drivelink", label);
     let params = serde_json::json!({
         "name": remote,
         "type": "drive",
@@ -409,8 +401,33 @@ pub fn add_drive_link(
         },
         "opt": { "nonInteractive": true, "all": true }
     });
-    rc_post(&conn, "config/create", &params)?;
+    rc_post(conn, "config/create", &params)?;
     parse_remote(&remote).ok_or_else(|| format!("bad remote name: {remote}"))
+}
+
+/// Add a Google Drive shared-folder link as a browseable account, rooted at the
+/// folder id, reusing a connected Drive account's token (no extra sign-in, no
+/// "add to my Drive"). It then indexes/browses/downloads exactly like an account.
+#[tauri::command]
+pub fn add_drive_link(
+    rclone: tauri::State<RcloneState>,
+    base_account_id: String,
+    label: String,
+    folder_id: String,
+) -> Result<Account, String> {
+    let conn = rclone
+        .connection
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or_else(|| "rclone not started".to_string())?;
+    create_drive_link(&conn, &base_account_id, &label, &folder_id)
+}
+
+/// Delete a remote by name (used to clean up a transient `drivelink_*` after a
+/// BDM download completes).
+pub fn delete_remote(conn: &RcConnection, name: &str) {
+    let _ = rc_post(conn, "config/delete", &serde_json::json!({ "name": name }));
 }
 
 /// Store an OAuth app credential in the OS keychain.

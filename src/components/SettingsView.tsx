@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { FolderOpen, Check, RefreshCw, Download, Loader2, Layers } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
-import { getSecret, setSecret, SECRET_KEYS } from "../lib/tauri/commands";
+import { getSecret, setSecret, SECRET_KEYS, bdmGetConfig, bdmSetConfig } from "../lib/tauri/commands";
 import { Button, TextField, Card } from "./ui";
 import { useToasts } from "../store/toast";
 import { useTransfers } from "../store/transfers";
@@ -11,11 +11,12 @@ import { loadDlSettings, saveDlSettings, type DlSettings } from "../lib/dl-setti
 
 const FOLDER_KEY = "default_download_folder";
 
-type Tab = "general" | "google" | "dropbox" | "updates";
+type Tab = "general" | "google" | "dropbox" | "sync" | "updates";
 const TABS: { key: Tab; label: string }[] = [
   { key: "general", label: "General" },
   { key: "google", label: "Google Drive" },
   { key: "dropbox", label: "Dropbox" },
+  { key: "sync", label: "Sync (BDM)" },
   { key: "updates", label: "Updates" },
 ];
 
@@ -38,6 +39,30 @@ export function SettingsView() {
     const next = { ...dl, [k]: Number.isFinite(v) && v >= 0 ? v : 0 };
     setDl(next);
     saveDlSettings(next);
+  }
+
+  const [bdm, setBdm] = useState({
+    enabled: false,
+    portalUrl: "https://bilal-drive-man.vercel.app",
+    machine: "FDM-PC1",
+    destRoot: "",
+    hasKey: false,
+    status: "",
+  });
+  const [bdmKey, setBdmKey] = useState("");
+  useEffect(() => {
+    bdmGetConfig().then((c) => c && setBdm(c)).catch(() => {});
+  }, []);
+  async function saveBdm() {
+    await bdmSetConfig(bdm.enabled, bdm.portalUrl, bdm.machine, bdm.destRoot, bdmKey || undefined);
+    setBdmKey("");
+    const c = await bdmGetConfig().catch(() => null);
+    if (c) setBdm(c);
+    markSaved("bdm", "Sync settings saved");
+  }
+  async function pickDestRoot() {
+    const picked = await open({ directory: true, multiple: false });
+    if (typeof picked === "string") setBdm((b) => ({ ...b, destRoot: picked }));
   }
 
   useEffect(() => {
@@ -197,6 +222,50 @@ export function SettingsView() {
               {tick("dropbox")}
               <Button variant="primary" onClick={saveDropbox}>
                 Save Dropbox credentials
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {tab === "sync" && (
+        <Card className="p-5">
+          <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Bilal-Drive-Man sync</h2>
+          <p className="mb-4 text-xs text-[var(--text-3)]">
+            Make FDM a downloader machine for the BDM portal. When enabled, FDM registers as{" "}
+            <span className="text-[var(--text-2)]">{bdm.machine || "this machine"}</span>, picks up downloads you assign
+            to it, and reports status + a location note back. Downloads use your connected Drive/Dropbox accounts.
+          </p>
+          <div className="flex flex-col gap-3">
+            <label className="flex items-center gap-2 text-sm text-[var(--text)]">
+              <input type="checkbox" checked={bdm.enabled} onChange={(e) => setBdm((b) => ({ ...b, enabled: e.target.checked }))} />
+              Enable sync agent
+            </label>
+            <TextField label="Portal URL" value={bdm.portalUrl} onChange={(e) => setBdm((b) => ({ ...b, portalUrl: e.target.value }))} />
+            <TextField label="Machine name" value={bdm.machine} onChange={(e) => setBdm((b) => ({ ...b, machine: e.target.value }))} />
+            <TextField
+              label={bdm.hasKey ? "API key (saved — leave blank to keep)" : "API key (x-api-key)"}
+              type="password"
+              placeholder={bdm.hasKey ? "••••••••" : ""}
+              value={bdmKey}
+              onChange={(e) => setBdmKey(e.target.value)}
+            />
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-[var(--text-2)]">Download folder (downloads go to &lt;folder&gt;/client/couple)</span>
+              <div className="flex items-center gap-3">
+                <div className="tnum min-w-0 flex-1 truncate rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text-2)]">
+                  {bdm.destRoot || "Not set"}
+                </div>
+                <Button variant="ghost" onClick={pickDestRoot}>
+                  <FolderOpen size={16} /> Choose…
+                </Button>
+              </div>
+            </label>
+            {bdm.status && <p className="text-xs text-[var(--text-3)]">Status: {bdm.status}</p>}
+            <div className="flex items-center justify-end gap-3">
+              {tick("bdm")}
+              <Button variant="primary" onClick={saveBdm}>
+                Save sync settings
               </Button>
             </div>
           </div>

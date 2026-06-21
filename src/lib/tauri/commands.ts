@@ -139,3 +139,28 @@ export function streamBase(): Promise<string> {
 export function writeBinaryFile(path: string, base64: string): Promise<void> {
   return invoke("write_binary_file", { path, base64 });
 }
+
+/** Bilal-Drive-Man sync-agent config. */
+export interface BdmConfig {
+  enabled: boolean;
+  portalUrl: string;
+  machine: string;
+  destRoot: string;
+  hasKey: boolean;
+  status: string;
+}
+
+export function bdmGetConfig(): Promise<BdmConfig> {
+  return invoke<BdmConfig>("bdm_get_config");
+}
+
+/** Save BDM sync config; apiKey is stored in the OS keychain (omit to keep existing). */
+export function bdmSetConfig(
+  enabled: boolean,
+  portalUrl: string,
+  machine: string,
+  destRoot: string,
+  apiKey?: string,
+): Promise<void> {
+  return invoke("bdm_set_config", { enabled, portalUrl, machine, destRoot, apiKey });
+}

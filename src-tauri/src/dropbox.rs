@@ -174,6 +174,35 @@ pub fn list_entries(app: &AppHandle, conn: &RcConnection, account_id: &str) -> R
     Ok(out)
 }
 
+/// Core: register a Dropbox shared-link as a `dropboxlink_*` account (verify the
+/// borrowed token resolves it, then store {url, base}). Shared by the
+/// `add_dropbox_link` command and the BDM agent.
+pub fn create_dropbox_link(
+    app: &AppHandle,
+    conn: &RcConnection,
+    base_account_id: &str,
+    label: &str,
+    url: &str,
+) -> Result<Account, String> {
+    if parse_remote(base_account_id).map(|a| a.provider) != Some("dropbox".to_string()) {
+        return Err("base account must be a Dropbox account".into());
+    }
+    let url = url.trim().to_string();
+    if !url.contains("dropbox.com") {
+        return Err("not a Dropbox share link".into());
+    }
+    // Fail fast: verify the borrowed token can actually resolve the link.
+    let token = crate::drive::dropbox_access_token(conn, base_account_id)?;
+    api_post(&token, GET_METADATA, &json!({ "url": url }))
+        .map_err(|e| format!("couldn't open that link: {e}"))?;
+
+    let remote = remote_name("dropboxlink", label);
+    let mut store = load_store(app);
+    store.insert(remote.clone(), LinkInfo { url, base: base_account_id.to_string() });
+    save_store(app, &store)?;
+    parse_remote(&remote).ok_or_else(|| format!("bad remote name: {remote}"))
+}
+
 /// Add a Dropbox shared-folder link as a browseable account. Reuses a connected
 /// Dropbox account's token (no extra sign-in, nothing copied into your Dropbox).
 #[tauri::command]
@@ -184,30 +213,13 @@ pub fn add_dropbox_link(
     label: String,
     url: String,
 ) -> Result<Account, String> {
-    if parse_remote(&base_account_id).map(|a| a.provider) != Some("dropbox".to_string()) {
-        return Err("base account must be a Dropbox account".into());
-    }
-    let url = url.trim().to_string();
-    if !url.contains("dropbox.com") {
-        return Err("not a Dropbox share link".into());
-    }
     let conn = rclone
         .connection
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone()
         .ok_or_else(|| "rclone not started".to_string())?;
-
-    // Fail fast: verify the borrowed token can actually resolve the link.
-    let token = crate::drive::dropbox_access_token(&conn, &base_account_id)?;
-    api_post(&token, GET_METADATA, &json!({ "url": url }))
-        .map_err(|e| format!("couldn't open that link: {e}"))?;
-
-    let remote = remote_name("dropboxlink", &label);
-    let mut store = load_store(&app);
-    store.insert(remote.clone(), LinkInfo { url, base: base_account_id });
-    save_store(&app, &store)?;
-    parse_remote(&remote).ok_or_else(|| format!("bad remote name: {remote}"))
+    create_dropbox_link(&app, &conn, &base_account_id, &label, &url)
 }
 
 #[cfg(test)]

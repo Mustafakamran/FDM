@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod bdm;
 pub mod download;
 pub mod drive;
 pub mod dropbox;
@@ -53,10 +54,13 @@ pub fn run() {
         .manage(accounts::OAuthState::default())
         .manage(index::IndexState::default())
         .manage(stream::StreamState::default())
+        .manage(bdm::BdmState::default())
         .invoke_handler(tauri::generate_handler![
             rc_call,
             write_binary_file,
             stream::stream_base,
+            bdm::bdm_get_config,
+            bdm::bdm_set_config,
             accounts::list_accounts,
             accounts::remove_account,
             accounts::add_account,
@@ -84,6 +88,8 @@ pub fn run() {
             if let Err(e) = stream::start_stream_server(&handle) {
                 eprintln!("stream server failed to start: {e}");
             }
+            // BDM sync agent (no-op until enabled + configured in Settings → Sync).
+            bdm::start_agent(&handle);
             Ok(())
         })
         .on_window_event(|window, event| {
