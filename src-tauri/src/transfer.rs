@@ -374,23 +374,34 @@ fn enumerate_folder(app: &AppHandle, conn: &RcConnection, account_id: &str, item
     let fs = account_fs(account_id)?;
     let resp = rc_post(conn, "operations/list", &json!({ "fs": fs, "remote": item.path, "opt": { "recurse": true } }))?;
     let list = resp.get("list").and_then(|l| l.as_array()).cloned().unwrap_or_default();
+    let prefix = format!("{}/", item.path);
     for e in &list {
         if e.get("IsDir").and_then(|b| b.as_bool()).unwrap_or(false) {
             continue;
         }
-        let rel = e.get("Path").and_then(|p| p.as_str()).unwrap_or("");
-        if rel.is_empty() {
+        let raw = e.get("Path").and_then(|p| p.as_str()).unwrap_or("");
+        if raw.is_empty() {
             continue;
         }
         let size = parse_size(e);
         if size < 0 {
             continue; // skip non-downloadable (e.g. Google Docs)
         }
+        // rclone's operations/list returns Path relative to the fs root (already
+        // includes the listed folder); be defensive in case it's relative to the
+        // listed remote instead. `full` = account-root-relative path (for the
+        // Dropbox provider); `rel_under` = path beneath the selected folder (dest).
+        let full = if raw == item.path || raw.starts_with(&prefix) {
+            raw.to_string()
+        } else {
+            format!("{}/{}", item.path, raw)
+        };
+        let rel_under = full.strip_prefix(&prefix).unwrap_or(raw).to_string();
         tasks.push(FileTask {
             fid: e.get("ID").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-            path: format!("{}/{}", item.path, rel),
+            path: full,
             size,
-            dest: folder_dest.join(rel),
+            dest: folder_dest.join(&rel_under),
         });
     }
     Ok(tasks)
