@@ -1,9 +1,11 @@
-import { X, Check, AlertCircle, Ban, Clock, Pause, Play } from "lucide-react";
+import { X, Check, AlertCircle, Ban, Clock, Pause, Play, Globe } from "lucide-react";
 import { useApp, type DownloadFilter } from "../store/app";
-import { useTransfers } from "../store/transfers";
+import { useTransfers, type QueueItem } from "../store/transfers";
 import { useHistory } from "../store/history";
 import { fileType } from "../lib/file-types";
+import { laneOf } from "../lib/lane";
 import { formatBytes, formatSpeed, formatEta } from "../lib/format";
+import { UrlDownload } from "./UrlDownload";
 import type { JobStatus } from "../lib/tauri/commands";
 
 const TABS: { key: DownloadFilter; label: string }[] = [
@@ -21,6 +23,28 @@ function pct(j: JobStatus): number {
 function AccountLabel({ accountId }: { accountId: string }) {
   const account = useApp((s) => s.accounts.find((a) => a.id === accountId));
   return <>{account?.label ?? accountId}</>;
+}
+
+/** Small lane badge: "Web" for secondary, the account label for primary. */
+function LaneBadge({ accountId }: { accountId: string }) {
+  const account = useApp((s) => s.accounts.find((a) => a.id === accountId));
+  if (laneOf(accountId) === "secondary") {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--hover)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-2)]">
+        <Globe size={10} /> Web
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-full bg-[var(--hover)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-2)]">
+      {account?.label ?? accountId}
+    </span>
+  );
+}
+
+/** Gated secondary downloads show a distinct "waiting for primary" message. */
+function isGated(q: QueueItem): boolean {
+  return !!q.autoPaused && !q.paused;
 }
 
 export function DownloadsView({ filter }: { filter: DownloadFilter }) {
@@ -44,6 +68,10 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
             Clear history
           </button>
         )}
+      </div>
+
+      <div className="px-6 pt-4">
+        <UrlDownload />
       </div>
 
       <div className="flex gap-1 px-6 py-3">
@@ -71,7 +99,10 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
                   <div key={j.jobId} className="flex items-center gap-3 rounded-[9px] border border-[var(--border)] bg-[var(--card)] px-4 py-3">
                     <ft.Icon size={20} style={{ color: ft.color }} className="shrink-0" />
                     <div className="w-56 min-w-0 shrink-0">
-                      <div className="truncate text-sm text-[var(--text)]">{j.name}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm text-[var(--text)]">{j.name}</span>
+                        <LaneBadge accountId={j.accountId} />
+                      </div>
                       <div className="truncate text-xs text-[var(--text-3)]"><AccountLabel accountId={j.accountId} /></div>
                     </div>
                     <div className="flex flex-1 items-center gap-3">
@@ -97,16 +128,21 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
                   <div key={q.id} className="flex items-center gap-3 rounded-[9px] border border-[var(--border)] px-4 py-3">
                     <ft.Icon size={20} style={{ color: ft.color }} className="shrink-0 opacity-70" />
                     <div className="w-56 min-w-0 shrink-0">
-                      <div className="truncate text-sm text-[var(--text-2)]">{q.item.name}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm text-[var(--text-2)]">{q.item.name}</span>
+                        <LaneBadge accountId={q.accountId} />
+                      </div>
                       <div className="truncate text-xs text-[var(--text-3)]"><AccountLabel accountId={q.accountId} /></div>
                     </div>
                     <div className="flex flex-1 items-center gap-2 text-xs text-[var(--text-3)]">
-                      {q.paused ? <Pause size={13} /> : <Clock size={13} />}
-                      {q.paused
-                        ? `Paused · ${formatBytes(q.resumedBytes ?? 0)} done`
-                        : q.resumedBytes
-                          ? `Resuming · ${formatBytes(q.resumedBytes)} done`
-                          : `Queued · #${i + 1}`}
+                      {isGated(q) ? <Clock size={13} /> : q.paused ? <Pause size={13} /> : <Clock size={13} />}
+                      {isGated(q)
+                        ? "Waiting for Drive/Dropbox to finish"
+                        : q.paused
+                          ? `Paused · ${formatBytes(q.resumedBytes ?? 0)} done`
+                          : q.resumedBytes
+                            ? `Resuming · ${formatBytes(q.resumedBytes)} done`
+                            : `Queued · #${i + 1}`}
                     </div>
                     {q.paused && (
                       <button onClick={() => resumePaused(q.id)} aria-label={`Resume ${q.item.name}`} className="text-[var(--text-3)] hover:text-[var(--accent)]">

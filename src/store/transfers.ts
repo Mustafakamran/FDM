@@ -8,19 +8,25 @@ import {
   type JobStatus,
 } from "../lib/tauri/commands";
 import { loadDlSettings, toDownloadConfig } from "../lib/dl-settings";
+import { laneOf, type Lane } from "../lib/lane";
 import { useHistory } from "./history";
 import { useToasts } from "./toast";
 
 const CONCURRENCY_KEY = "download_concurrency";
+const SECONDARY_CONCURRENCY_KEY = "download_secondary_concurrency";
 const QUEUE_KEY = "download_queue_v1";
 const INFLIGHT_KEY = "download_inflight_v1";
+
+/** Account id for generic HTTP(S) URL downloads (the secondary lane). */
+export const HTTP_ACCOUNT_ID = "http";
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let pumping = false;
 let seq = 0;
 const nextId = () => `q${Date.now()}_${++seq}`;
-// Job ids paused by the user — so refresh doesn't log them to history as
-// "cancelled" (their partial file is kept and they resume from it).
+// Job ids paused by the user OR auto-paused by the lane gate — so refresh
+// doesn't log them to history as "cancelled" (their partial file is kept and
+// they resume from it).
 const pausedJobIds = new Set<number>();
 // Job ids we've already surfaced a failure toast for (avoid repeats while polling).
 const failedToasted = new Set<number>();
@@ -30,16 +36,52 @@ function loadConcurrency(): number {
   return Number.isFinite(n) && n >= 1 ? n : 1;
 }
 
+function loadSecondaryConcurrency(): number {
+  const n = parseInt(localStorage.getItem(SECONDARY_CONCURRENCY_KEY) ?? "3", 10);
+  return Number.isFinite(n) && n >= 1 ? n : 3;
+}
+
+/** Decoded last path segment of a URL; falls back to "download". */
+export function filenameFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const segments = u.pathname.split("/").filter(Boolean);
+    const last = segments[segments.length - 1];
+    if (last) return decodeURIComponent(last);
+  } catch {
+    // Not a parseable URL — fall through to a manual split.
+    const cleaned = url.split(/[?#]/)[0];
+    const segments = cleaned.split("/").filter(Boolean);
+    const last = segments[segments.length - 1];
+    if (last) {
+      try {
+        return decodeURIComponent(last);
+      } catch {
+        return last;
+      }
+    }
+  }
+  return "download";
+}
+
 /** A download waiting in the queue (no rclone job yet). */
 export interface QueueItem {
   id: string;
   accountId: string;
   item: DownloadItem;
   dest: string;
+  /** Derived scheduling lane (re-derivable from accountId; cached for the UI). */
+  lane: Lane;
   /** Bytes already on disk from a prior, interrupted run (for "resuming" UI). */
   resumedBytes?: number;
-  /** User-paused: kept in the queue but not auto-started until resumed. */
+  /** User-paused: kept in the queue but NEVER auto-started until resumed. */
   paused?: boolean;
+  /**
+   * Auto-paused by the lane gate (primary lane busy). Distinct from `paused`:
+   * an auto-paused item resumes automatically when the primary lane drains; a
+   * user-paused one never does.
+   */
+  autoPaused?: boolean;
 }
 
 /** A started download we track so it survives an app restart and can resume. */
@@ -64,25 +106,111 @@ function writeJson(key: string, value: unknown) {
   }
 }
 
+/** Ensure a (possibly persisted) queue item has its derived lane tagged. */
+function withLane<T extends { accountId: string; lane?: Lane }>(q: T): T & { lane: Lane } {
+  return { ...q, lane: laneOf(q.accountId) };
+}
+
 /**
  * Restore persisted work. Anything that was *in flight* when the app died is
  * brought back to the front of the queue (its rclone/native job is gone, but the
  * partially-downloaded files are on disk — re-running skips/continues them).
+ *
+ * `autoPaused` is preserved so a relaunch mid-gate restores the gated state and
+ * doesn't auto-start a secondary download while primary still has work.
  */
 function restoreQueue(): QueueItem[] {
   const inflight = readJson<InflightItem>(INFLIGHT_KEY);
   const queued = readJson<QueueItem>(QUEUE_KEY);
-  const resumed: QueueItem[] = inflight.map((f) => ({
-    id: f.id,
-    accountId: f.accountId,
-    item: f.item,
-    dest: f.dest,
-    resumedBytes: f.bytes,
-  }));
-  const merged = [...resumed, ...queued];
+  const resumed: QueueItem[] = inflight.map((f) =>
+    withLane({
+      id: f.id,
+      accountId: f.accountId,
+      item: f.item,
+      dest: f.dest,
+      resumedBytes: f.bytes,
+      paused: f.paused,
+      autoPaused: f.autoPaused,
+    }),
+  );
+  const merged = [...resumed, ...queued.map(withLane)];
   writeJson(INFLIGHT_KEY, []);
   writeJson(QUEUE_KEY, merged);
   return merged;
+}
+
+/** Active (in-flight) jobs for a lane, by their tracked items. */
+function activeOfLane(inflight: InflightItem[], lane: Lane): InflightItem[] {
+  return inflight.filter((i) => i.lane === lane);
+}
+
+/** Queued items that could start right now (not user-paused) for a lane. */
+function startableQueued(queue: QueueItem[], lane: Lane): QueueItem[] {
+  return queue.filter((q) => q.lane === lane && !q.paused);
+}
+
+/**
+ * Pure lane-scheduling decision. Given the current queue + in-flight set and
+ * the per-lane concurrency limits, decide what should happen on this pump tick:
+ *
+ *  - `startPrimary`    — primary queue items to start now (front of queue first).
+ *  - `autoPauseSecondary` — job ids of ACTIVE secondary downloads to preempt
+ *                           (primary lane is busy).
+ *  - `startSecondary`  — secondary queue items to start now (auto-paused first,
+ *                        then plain queued), only when primary has drained.
+ *
+ * Rules (see docs/.../download-lane-isolation-design.md):
+ *  1. Start startable primary up to primaryConcurrency.
+ *  2. primaryBusy = any active primary OR any startable-queued primary.
+ *  3. If primaryBusy: auto-pause every active secondary; start no secondary.
+ *  4. Else: start secondary up to secondaryConcurrency (auto-paused resume first).
+ */
+export interface LaneDecision {
+  startPrimary: QueueItem[];
+  autoPauseSecondary: number[];
+  startSecondary: QueueItem[];
+}
+
+export function decideLanes(
+  queue: QueueItem[],
+  inflight: InflightItem[],
+  primaryConcurrency: number,
+  secondaryConcurrency: number,
+): LaneDecision {
+  // (a) Start startable primary up to the primary limit.
+  const activePrimary = activeOfLane(inflight, "primary");
+  const primarySlots = Math.max(0, primaryConcurrency - activePrimary.length);
+  const startablePrimary = startableQueued(queue, "primary");
+  const startPrimary = startablePrimary.slice(0, primarySlots);
+
+  // (b) primaryBusy = anything active in primary OR anything startable-queued
+  //     in primary (including the items we're about to start).
+  const primaryBusy = activePrimary.length > 0 || startablePrimary.length > 0;
+
+  const activeSecondary = activeOfLane(inflight, "secondary");
+
+  if (primaryBusy) {
+    // (c) Preempt every active secondary; start no secondary.
+    return {
+      startPrimary,
+      autoPauseSecondary: activeSecondary.map((i) => i.jobId),
+      startSecondary: [],
+    };
+  }
+
+  // (d) Primary lane drained — resume auto-paused secondary first, then plain
+  //     queued, up to the secondary limit.
+  const secondarySlots = Math.max(0, secondaryConcurrency - activeSecondary.length);
+  const startableSecondary = startableQueued(queue, "secondary");
+  const autoPausedFirst = [
+    ...startableSecondary.filter((q) => q.autoPaused),
+    ...startableSecondary.filter((q) => !q.autoPaused),
+  ];
+  return {
+    startPrimary,
+    autoPauseSecondary: [],
+    startSecondary: autoPausedFirst.slice(0, secondarySlots),
+  };
 }
 
 interface TransfersState {
@@ -90,12 +218,16 @@ interface TransfersState {
   queue: QueueItem[];
   inflight: InflightItem[];
   concurrency: number;
+  secondaryConcurrency: number;
   dockOpen: boolean;
 
   setDockOpen: (open: boolean) => void;
   setConcurrency: (n: number) => void;
+  setSecondaryConcurrency: (n: number) => void;
   /** Add items to the back of the queue; they start as slots free up. */
   enqueue: (accountId: string, items: DownloadItem[], dest: string) => void;
+  /** Enqueue a generic HTTP(S) URL download (secondary lane). */
+  enqueueUrl: (url: string, dest: string) => void;
   removeQueued: (id: string) => void;
   refresh: () => Promise<void>;
   cancel: (jobId: number) => Promise<void>;
@@ -116,6 +248,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
   queue: restoreQueue(),
   inflight: [],
   concurrency: loadConcurrency(),
+  secondaryConcurrency: loadSecondaryConcurrency(),
   dockOpen: true,
 
   setDockOpen: (dockOpen) => set({ dockOpen }),
@@ -127,13 +260,31 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     void get().pump();
   },
 
+  setSecondaryConcurrency: (n) => {
+    const secondaryConcurrency = Math.max(1, Math.floor(n) || 1);
+    localStorage.setItem(SECONDARY_CONCURRENCY_KEY, String(secondaryConcurrency));
+    set({ secondaryConcurrency });
+    void get().pump();
+  },
+
   enqueue: (accountId, items, dest) => {
-    const q = items.map((item) => ({ id: nextId(), accountId, item, dest }));
+    const q = items.map((item) => withLane({ id: nextId(), accountId, item, dest }));
     const queue = [...get().queue, ...q];
     writeJson(QUEUE_KEY, queue);
     set({ queue, dockOpen: true });
     get().ensurePolling();
     void get().pump();
+  },
+
+  enqueueUrl: (url, dest) => {
+    const item: DownloadItem = {
+      path: "",
+      name: filenameFromUrl(url),
+      isDir: false,
+      size: 0,
+      id: url,
+    };
+    get().enqueue(HTTP_ACCOUNT_ID, [item], dest);
   },
 
   removeQueued: (id) => {
@@ -146,22 +297,46 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     if (pumping) return;
     pumping = true;
     try {
-      // Start queued items (skipping paused ones) until the in-flight count
-      // reaches the concurrency limit.
+      // Loop until a tick produces no further action. Each iteration: compute
+      // the lane decision, start startable primary, gate/preempt secondary, and
+      // (when primary has drained) start secondary.
       // eslint-disable-next-line no-constant-condition
       while (true) {
-        const { queue, inflight, concurrency } = get();
-        const startable = queue.filter((q) => !q.paused);
-        if (inflight.length >= concurrency || startable.length === 0) break;
-        const next = startable[0];
-        const remaining = queue.filter((q) => q.id !== next.id);
+        const { queue, inflight, concurrency, secondaryConcurrency } = get();
+        const decision = decideLanes(queue, inflight, concurrency, secondaryConcurrency);
+
+        // (c) Preempt active secondary — mirror the user pause() path so the
+        // partial is kept and refresh() doesn't log a cancellation.
+        if (decision.autoPauseSecondary.length > 0) {
+          for (const jobId of decision.autoPauseSecondary) {
+            await autoPauseSecondaryJob(get, set, jobId);
+          }
+          continue; // re-evaluate with the secondary lane now idle
+        }
+
+        const next = decision.startPrimary[0] ?? decision.startSecondary[0];
+        if (!next) break;
+
+        // Clear an auto-pause flag on a secondary we're about to resume so it no
+        // longer shows the gated state, and so refresh() reflects the change.
+        const remaining = get().queue.filter((q) => q.id !== next.id);
         writeJson(QUEUE_KEY, remaining);
         set({ queue: remaining });
         try {
-          const created = await startDownload(next.accountId, [next.item], next.dest, toDownloadConfig(loadDlSettings()));
+          const created = await startDownload(
+            next.accountId,
+            [next.item],
+            next.dest,
+            toDownloadConfig(loadDlSettings()),
+          );
           const job = created[0];
           if (job) {
-            const inf: InflightItem = { ...next, jobId: job.jobId, bytes: 0 };
+            const inf: InflightItem = {
+              ...next,
+              autoPaused: false,
+              jobId: job.jobId,
+              bytes: 0,
+            };
             const nextInflight = [...get().inflight, inf];
             writeJson(INFLIGHT_KEY, nextInflight);
             set((s) => ({ inflight: nextInflight, jobs: [...s.jobs, job] }));
@@ -179,11 +354,9 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     const jobs = await listJobs();
     set({ jobs });
     // Record finished/cancelled jobs to history — except ones the user paused
-    // (those are kept for resume, not logged as cancelled). Surface real failure
-    // reasons as a toast so downloads never fail silently.
+    // OR we auto-paused (those are kept for resume, not logged as cancelled).
+    // Surface real failure reasons as a toast so downloads never fail silently.
     for (const j of jobs) {
-      // Record finished/cancelled jobs to history (keep the source item on
-      // failures so they can be resumed from the Failed tab). Skip user-paused.
       if ((j.finished || j.cancelled) && !pausedJobIds.has(j.jobId)) {
         const inf = get().inflight.find((i) => i.jobId === j.jobId);
         useHistory.getState().record(j, inf?.item);
@@ -206,8 +379,11 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     writeJson(INFLIGHT_KEY, stillInflight);
     set({ inflight: stillInflight });
 
+    // pump() drives auto-resume: when the primary lane has drained it clears
+    // autoPaused on gated secondary and restarts them.
     await get().pump();
-    const busy = get().inflight.length > 0 || get().queue.some((q) => !q.paused);
+    const { inflight, queue } = get();
+    const busy = inflight.length > 0 || queue.some((q) => !q.paused);
     if (!busy) get().stopPolling();
   },
 
@@ -221,14 +397,14 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     if (!inf) return;
     pausedJobIds.add(jobId);
     await cancelJob(jobId); // worker sees the flag and stops, leaving the .fdmpart
-    const paused: QueueItem = {
+    const paused: QueueItem = withLane({
       id: inf.id,
       accountId: inf.accountId,
       item: inf.item,
       dest: inf.dest,
       paused: true,
       resumedBytes: inf.bytes,
-    };
+    });
     const queue = [paused, ...get().queue];
     const inflight = get().inflight.filter((i) => i.jobId !== jobId);
     writeJson(QUEUE_KEY, queue);
@@ -274,3 +450,35 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     }
   },
 }));
+
+/**
+ * Auto-pause a single ACTIVE secondary job. Mirrors the user `pause()` path so
+ * the engine keeps the `.fdmpart` and `refresh()` won't log a cancellation —
+ * but tags the requeued item `autoPaused: true` (not `paused`) so it resumes
+ * automatically once the primary lane drains.
+ */
+async function autoPauseSecondaryJob(
+  get: () => TransfersState,
+  set: (partial: Partial<TransfersState>) => void,
+  jobId: number,
+): Promise<void> {
+  const inf = get().inflight.find((i) => i.jobId === jobId);
+  if (!inf) return;
+  pausedJobIds.add(jobId);
+  await cancelJob(jobId); // worker sees the flag and stops, leaving the .fdmpart
+  const gated: QueueItem = withLane({
+    id: inf.id,
+    accountId: inf.accountId,
+    item: inf.item,
+    dest: inf.dest,
+    autoPaused: true,
+    resumedBytes: inf.bytes,
+  });
+  const queue = [gated, ...get().queue];
+  const inflight = get().inflight.filter((i) => i.jobId !== jobId);
+  writeJson(QUEUE_KEY, queue);
+  writeJson(INFLIGHT_KEY, inflight);
+  set({ queue, inflight });
+  // Drop the now-stopped job from backend tracking so it leaves the live list.
+  await clearFinishedJobs().catch(() => {});
+}

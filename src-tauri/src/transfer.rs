@@ -92,6 +92,10 @@ impl Auth {
         Ok(Auth { conn, kind, token_acct, link_url, cur: Mutex::new((token, Instant::now())) })
     }
     fn token(&self) -> Result<String, String> {
+        // Http carries no auth — never refresh (never touches rclone).
+        if self.kind == Kind::Http {
+            return Ok(String::new());
+        }
         let mut g = self.cur.lock().unwrap_or_else(|e| e.into_inner());
         if g.1.elapsed() > TOKEN_TTL {
             g.0 = provider::fetch_token(&self.conn, self.kind, &self.token_acct)?;
@@ -100,6 +104,10 @@ impl Auth {
         Ok(g.0.clone())
     }
     fn refresh(&self) -> Result<String, String> {
+        // Http has no token to refresh (a 401 branch is never taken for it).
+        if self.kind == Kind::Http {
+            return Ok(String::new());
+        }
         let mut g = self.cur.lock().unwrap_or_else(|e| e.into_inner());
         g.0 = provider::fetch_token(&self.conn, self.kind, &self.token_acct)?;
         g.1 = Instant::now();
@@ -483,6 +491,11 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
         let dest_root = Path::new(&dest);
 
         let tasks = if item.is_dir {
+            // A URL download is always a single file; reject folder selections so
+            // an http item never reaches enumerate_folder (which needs rclone).
+            if provider::kind_of(&account_id) == Kind::Http {
+                return Err("folders not supported for URL downloads".into());
+            }
             enumerate_folder(&app, &conn, &account_id, &item, dest_root)?
         } else {
             vec![FileTask { fid: item.id.clone(), path: item.path.clone(), size: item.size, dest: dest_root.join(&item.name) }]

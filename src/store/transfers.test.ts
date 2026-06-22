@@ -24,7 +24,7 @@ beforeEach(() => {
   localStorage.clear();
   nextJobId = 1;
   listReturns = [];
-  useTransfers.setState({ jobs: [], queue: [], inflight: [], concurrency: 1, dockOpen: true });
+  useTransfers.setState({ jobs: [], queue: [], inflight: [], concurrency: 1, secondaryConcurrency: 3, dockOpen: true });
   invokeMock.mockImplementation((cmd: string) => {
     if (cmd === "start_download") return Promise.resolve([job({ jobId: nextJobId++ })]);
     if (cmd === "list_jobs") return Promise.resolve(listReturns);

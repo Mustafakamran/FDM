@@ -13,11 +13,17 @@ pub enum Kind {
     Drive,
     Dropbox,
     DropboxLink,
+    /// Generic HTTP(S) URL — no provider, no auth; the `fid` carries the URL.
+    Http,
 }
 
 /// Which provider/transport an account id uses.
 pub fn kind_of(account_id: &str) -> Kind {
-    if account_id.starts_with("dropboxlink_") {
+    // The synthetic "http" account routes generic URL downloads through the
+    // engine — check it first so nothing else can claim it.
+    if account_id.starts_with("http") {
+        Kind::Http
+    } else if account_id.starts_with("dropboxlink_") {
         Kind::DropboxLink
     } else if account_id.starts_with("dropbox_") {
         Kind::Dropbox
@@ -30,6 +36,10 @@ pub fn kind_of(account_id: &str) -> Kind {
 /// The account whose OAuth token authorizes this account's fetches, plus the
 /// shared-link URL when relevant. Dropbox links borrow their base account's token.
 pub fn token_account(app: &AppHandle, account_id: &str) -> (String, String) {
+    // Http carries no token-owning account and no shared-link URL.
+    if account_id.starts_with("http") {
+        return (account_id.to_string(), String::new());
+    }
     if account_id.starts_with("dropboxlink_") {
         if let Some(info) = dropbox::link_info(app, account_id) {
             return (info.base, info.url);
@@ -41,6 +51,8 @@ pub fn token_account(app: &AppHandle, account_id: &str) -> (String, String) {
 /// Fetch a fresh access token for the given kind + token-owning account.
 pub fn fetch_token(conn: &RcConnection, kind: Kind, token_acct: &str) -> Result<String, String> {
     match kind {
+        // Http needs no auth — never touch rclone for a URL download.
+        Kind::Http => Ok(String::new()),
         Kind::Drive => crate::drive::drive_access_token(conn, token_acct),
         _ => crate::drive::dropbox_access_token(conn, token_acct),
     }
@@ -93,6 +105,8 @@ pub fn send_range(
                 .header("Range", range)
                 .send()
         }
+        // Generic URL: `fid` is the URL. Plain ranged GET, no bearer, no params.
+        Kind::Http => client.get(fid).header("Range", range).send(),
     }
 }
 
@@ -106,5 +120,6 @@ mod tests {
         assert_eq!(kind_of("drivelink_a"), Kind::Drive);
         assert_eq!(kind_of("dropbox_y"), Kind::Dropbox);
         assert_eq!(kind_of("dropboxlink_b"), Kind::DropboxLink);
+        assert_eq!(kind_of("http"), Kind::Http);
     }
 }

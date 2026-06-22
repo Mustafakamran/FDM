@@ -1,30 +1,54 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp, X, Check, AlertCircle, Ban, Clock, Pause, Play } from "lucide-react";
+import { ChevronDown, ChevronUp, X, Check, AlertCircle, Ban, Clock, Pause, Play, Globe } from "lucide-react";
 import { useTransfers, type QueueItem } from "../store/transfers";
 import { useApp } from "../store/app";
 import { fileType } from "../lib/file-types";
+import { laneOf } from "../lib/lane";
 import { formatBytes, formatSpeed, formatEta } from "../lib/format";
 import type { JobStatus } from "../lib/tauri/commands";
+
+/** Small lane badge: "Web" for secondary, the account label for primary. */
+function LaneBadge({ accountId }: { accountId: string }) {
+  const account = useApp((s) => s.accounts.find((a) => a.id === accountId));
+  if (laneOf(accountId) === "secondary") {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--hover)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-2)]">
+        <Globe size={10} /> Web
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-full bg-[var(--hover)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-2)]">
+      {account?.label ?? accountId}
+    </span>
+  );
+}
 
 function QueueRow({ q, position }: { q: QueueItem; position: number }) {
   const removeQueued = useTransfers((s) => s.removeQueued);
   const resumePaused = useTransfers((s) => s.resumePaused);
   const account = useApp((s) => s.accounts.find((a) => a.id === q.accountId));
   const ft = fileType(q.item.name, q.item.isDir);
+  const gated = !!q.autoPaused && !q.paused;
   return (
     <div className="flex items-center gap-3 px-6 py-2.5">
       <ft.Icon size={20} style={{ color: ft.color }} className="shrink-0 opacity-70" />
       <div className="w-56 min-w-0 shrink-0">
-        <div className="truncate text-sm text-[var(--text-2)]" title={q.item.name}>{q.item.name}</div>
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-sm text-[var(--text-2)]" title={q.item.name}>{q.item.name}</span>
+          <LaneBadge accountId={q.accountId} />
+        </div>
         <div className="truncate text-xs text-[var(--text-3)]">{account?.label ?? q.accountId}</div>
       </div>
       <div className="flex flex-1 items-center gap-2 text-xs text-[var(--text-3)]">
-        {q.paused ? <Pause size={13} /> : <Clock size={13} />}
-        {q.paused
-          ? `Paused · ${formatBytes(q.resumedBytes ?? 0)} done`
-          : q.resumedBytes
-            ? `Resuming · ${formatBytes(q.resumedBytes)} done`
-            : `Queued · #${position}`}
+        {gated ? <Clock size={13} /> : q.paused ? <Pause size={13} /> : <Clock size={13} />}
+        {gated
+          ? "Waiting for Drive/Dropbox to finish"
+          : q.paused
+            ? `Paused · ${formatBytes(q.resumedBytes ?? 0)} done`
+            : q.resumedBytes
+              ? `Resuming · ${formatBytes(q.resumedBytes)} done`
+              : `Queued · #${position}`}
       </div>
       {q.paused && (
         <button onClick={() => resumePaused(q.id)} aria-label={`Resume ${q.item.name}`} className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--accent)]">
@@ -56,7 +80,10 @@ function Row({ job }: { job: JobStatus }) {
     <div className="flex items-center gap-3 px-6 py-2.5">
       <ft.Icon size={20} style={{ color: ft.color }} className="shrink-0" />
       <div className="w-56 min-w-0 shrink-0">
-        <div className="truncate text-sm text-[var(--text)]" title={job.name}>{job.name}</div>
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-sm text-[var(--text)]" title={job.name}>{job.name}</span>
+          <LaneBadge accountId={job.accountId} />
+        </div>
         <div className="truncate text-xs text-[var(--text-3)]">{account?.label ?? job.accountId}</div>
       </div>
 
