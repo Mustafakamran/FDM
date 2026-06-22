@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, X, Check, AlertCircle, Ban, Clock, Pause, Play, Globe } from "lucide-react";
 import { useTransfers, type QueueItem } from "../store/transfers";
 import { useApp } from "../store/app";
@@ -7,9 +7,11 @@ import { laneOf } from "../lib/lane";
 import { formatBytes, formatSpeed, formatEta } from "../lib/format";
 import type { JobStatus } from "../lib/tauri/commands";
 
+/** id → display label, so rows look up account names without scanning `accounts`. */
+type LabelOf = (accountId: string) => string;
+
 /** Small lane badge: "Web" for secondary, the account label for primary. */
-function LaneBadge({ accountId }: { accountId: string }) {
-  const account = useApp((s) => s.accounts.find((a) => a.id === accountId));
+function LaneBadge({ accountId, labelOf }: { accountId: string; labelOf: LabelOf }) {
   if (laneOf(accountId) === "secondary") {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--hover)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-2)]">
@@ -19,15 +21,14 @@ function LaneBadge({ accountId }: { accountId: string }) {
   }
   return (
     <span className="inline-flex shrink-0 items-center rounded-full bg-[var(--hover)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-2)]">
-      {account?.label ?? accountId}
+      {labelOf(accountId)}
     </span>
   );
 }
 
-function QueueRow({ q, position }: { q: QueueItem; position: number }) {
+function QueueRow({ q, position, labelOf }: { q: QueueItem; position: number; labelOf: LabelOf }) {
   const removeQueued = useTransfers((s) => s.removeQueued);
   const resumePaused = useTransfers((s) => s.resumePaused);
-  const account = useApp((s) => s.accounts.find((a) => a.id === q.accountId));
   const ft = fileType(q.item.name, q.item.isDir);
   const gated = !!q.autoPaused && !q.paused;
   return (
@@ -36,9 +37,9 @@ function QueueRow({ q, position }: { q: QueueItem; position: number }) {
       <div className="w-56 min-w-0 shrink-0">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-sm text-[var(--text-2)]" title={q.item.name}>{q.item.name}</span>
-          <LaneBadge accountId={q.accountId} />
+          <LaneBadge accountId={q.accountId} labelOf={labelOf} />
         </div>
-        <div className="truncate text-xs text-[var(--text-3)]">{account?.label ?? q.accountId}</div>
+        <div className="truncate text-xs text-[var(--text-3)]">{labelOf(q.accountId)}</div>
       </div>
       <div className="flex flex-1 items-center gap-2 text-xs text-[var(--text-3)]">
         {gated ? <Clock size={13} /> : q.paused ? <Pause size={13} /> : <Clock size={13} />}
@@ -68,10 +69,9 @@ function pct(j: JobStatus): number {
   return 0;
 }
 
-function Row({ job }: { job: JobStatus }) {
+function Row({ job, labelOf }: { job: JobStatus; labelOf: LabelOf }) {
   const cancel = useTransfers((s) => s.cancel);
   const pause = useTransfers((s) => s.pause);
-  const account = useApp((s) => s.accounts.find((a) => a.id === job.accountId));
   const ft = fileType(job.name, false);
   const p = pct(job);
   const active = !job.finished && !job.cancelled;
@@ -82,9 +82,9 @@ function Row({ job }: { job: JobStatus }) {
       <div className="w-56 min-w-0 shrink-0">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-sm text-[var(--text)]" title={job.name}>{job.name}</span>
-          <LaneBadge accountId={job.accountId} />
+          <LaneBadge accountId={job.accountId} labelOf={labelOf} />
         </div>
-        <div className="truncate text-xs text-[var(--text-3)]">{account?.label ?? job.accountId}</div>
+        <div className="truncate text-xs text-[var(--text-3)]">{labelOf(job.accountId)}</div>
       </div>
 
       <div className="flex flex-1 items-center gap-3">
@@ -123,7 +123,17 @@ function Row({ job }: { job: JobStatus }) {
 }
 
 export function DownloadsDock() {
-  const { jobs, queue, clearFinished } = useTransfers();
+  // Narrow selectors: subscribe only to the slices this dock renders, not the
+  // whole transfers store (which mutates ~1Hz during active downloads).
+  const jobs = useTransfers((s) => s.jobs);
+  const queue = useTransfers((s) => s.queue);
+  const clearFinished = useTransfers((s) => s.clearFinished);
+  // One memoized id → label map instead of an accounts.find() scan per row.
+  const accounts = useApp((s) => s.accounts);
+  const labelOf = useMemo<LabelOf>(() => {
+    const byId = new Map(accounts.map((a) => [a.id, a.label]));
+    return (id: string) => byId.get(id) ?? id;
+  }, [accounts]);
   const [open, setOpen] = useState(true);
   if (jobs.length === 0 && queue.length === 0) return null;
 
@@ -145,8 +155,8 @@ export function DownloadsDock() {
 
       {open && (
         <div className="max-h-56 overflow-auto border-t border-[var(--border)]/60">
-          {jobs.map((j) => <Row key={j.jobId} job={j} />)}
-          {queue.map((q, i) => <QueueRow key={q.id} q={q} position={i + 1} />)}
+          {jobs.map((j) => <Row key={j.jobId} job={j} labelOf={labelOf} />)}
+          {queue.map((q, i) => <QueueRow key={q.id} q={q} position={i + 1} labelOf={labelOf} />)}
         </div>
       )}
 

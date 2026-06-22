@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { X, Check, AlertCircle, Ban, Clock, Pause, Play, Globe } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useApp, type DownloadFilter } from "../store/app";
 import { useTransfers, type QueueItem } from "../store/transfers";
 import { useHistory } from "../store/history";
@@ -7,6 +9,9 @@ import { laneOf } from "../lib/lane";
 import { formatBytes, formatSpeed, formatEta } from "../lib/format";
 import { UrlDownload } from "./UrlDownload";
 import type { JobStatus } from "../lib/tauri/commands";
+
+/** id → display label, so rows look up account names without scanning `accounts`. */
+type LabelOf = (accountId: string) => string;
 
 const TABS: { key: DownloadFilter; label: string }[] = [
   { key: "all", label: "All" },
@@ -20,14 +25,12 @@ function pct(j: JobStatus): number {
   return 0;
 }
 
-function AccountLabel({ accountId }: { accountId: string }) {
-  const account = useApp((s) => s.accounts.find((a) => a.id === accountId));
-  return <>{account?.label ?? accountId}</>;
+function AccountLabel({ accountId, labelOf }: { accountId: string; labelOf: LabelOf }) {
+  return <>{labelOf(accountId)}</>;
 }
 
 /** Small lane badge: "Web" for secondary, the account label for primary. */
-function LaneBadge({ accountId }: { accountId: string }) {
-  const account = useApp((s) => s.accounts.find((a) => a.id === accountId));
+function LaneBadge({ accountId, labelOf }: { accountId: string; labelOf: LabelOf }) {
   if (laneOf(accountId) === "secondary") {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--hover)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-2)]">
@@ -37,7 +40,7 @@ function LaneBadge({ accountId }: { accountId: string }) {
   }
   return (
     <span className="inline-flex shrink-0 items-center rounded-full bg-[var(--hover)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-2)]">
-      {account?.label ?? accountId}
+      {labelOf(accountId)}
     </span>
   );
 }
@@ -49,8 +52,29 @@ function isGated(q: QueueItem): boolean {
 
 export function DownloadsView({ filter }: { filter: DownloadFilter }) {
   const showDownloads = useApp((s) => s.showDownloads);
-  const { jobs, queue, cancel, pause, resumePaused, removeQueued, enqueue } = useTransfers();
-  const { items: history, clear, removeEntry } = useHistory();
+  // Narrow selectors: the data slices (jobs/queue) re-render this view as they
+  // change, while the action slice is shallow-compared so its stable refs never
+  // trigger a re-render on their own.
+  const jobs = useTransfers((s) => s.jobs);
+  const queue = useTransfers((s) => s.queue);
+  const { cancel, pause, resumePaused, removeQueued, enqueue } = useTransfers(
+    useShallow((s) => ({
+      cancel: s.cancel,
+      pause: s.pause,
+      resumePaused: s.resumePaused,
+      removeQueued: s.removeQueued,
+      enqueue: s.enqueue,
+    })),
+  );
+  const history = useHistory((s) => s.items);
+  const clear = useHistory((s) => s.clear);
+  const removeEntry = useHistory((s) => s.removeEntry);
+  // One memoized id → label map instead of an accounts.find() scan per row.
+  const accounts = useApp((s) => s.accounts);
+  const labelOf = useMemo<LabelOf>(() => {
+    const byId = new Map(accounts.map((a) => [a.id, a.label]));
+    return (id: string) => byId.get(id) ?? id;
+  }, [accounts]);
 
   const active = jobs.filter((j) => !j.finished && !j.cancelled);
   const showActive = filter === "all" || filter === "active";
@@ -101,9 +125,9 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
                     <div className="w-56 min-w-0 shrink-0">
                       <div className="flex items-center gap-1.5">
                         <span className="truncate text-sm text-[var(--text)]">{j.name}</span>
-                        <LaneBadge accountId={j.accountId} />
+                        <LaneBadge accountId={j.accountId} labelOf={labelOf} />
                       </div>
-                      <div className="truncate text-xs text-[var(--text-3)]"><AccountLabel accountId={j.accountId} /></div>
+                      <div className="truncate text-xs text-[var(--text-3)]"><AccountLabel accountId={j.accountId} labelOf={labelOf} /></div>
                     </div>
                     <div className="flex flex-1 items-center gap-3">
                       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--hover)]">
@@ -130,9 +154,9 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
                     <div className="w-56 min-w-0 shrink-0">
                       <div className="flex items-center gap-1.5">
                         <span className="truncate text-sm text-[var(--text-2)]">{q.item.name}</span>
-                        <LaneBadge accountId={q.accountId} />
+                        <LaneBadge accountId={q.accountId} labelOf={labelOf} />
                       </div>
-                      <div className="truncate text-xs text-[var(--text-3)]"><AccountLabel accountId={q.accountId} /></div>
+                      <div className="truncate text-xs text-[var(--text-3)]"><AccountLabel accountId={q.accountId} labelOf={labelOf} /></div>
                     </div>
                     <div className="flex flex-1 items-center gap-2 text-xs text-[var(--text-3)]">
                       {isGated(q) ? <Clock size={13} /> : q.paused ? <Pause size={13} /> : <Clock size={13} />}
@@ -185,7 +209,7 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
                           </div>
                         ) : (
                           <div className="truncate text-xs text-[var(--text-3)]" title={h.dest}>
-                            <AccountLabel accountId={h.accountId} /> · {h.dest}
+                            <AccountLabel accountId={h.accountId} labelOf={labelOf} /> · {h.dest}
                           </div>
                         )}
                       </div>

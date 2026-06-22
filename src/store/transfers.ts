@@ -139,6 +139,49 @@ function restoreQueue(): QueueItem[] {
   return merged;
 }
 
+/**
+ * Whether two job lists are UI-equivalent: same length and, pairwise, identical
+ * in the fields that actually drive the downloads UI. Used by refresh() to skip
+ * a redundant set()/localStorage write on idle ticks where listJobs() returns
+ * byte-for-byte the same data — the common case once everything has finished.
+ */
+export function jobsEqual(a: JobStatus[], b: JobStatus[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.jobId !== y.jobId ||
+      x.bytes !== y.bytes ||
+      x.totalBytes !== y.totalBytes ||
+      x.speed !== y.speed ||
+      x.finished !== y.finished ||
+      x.success !== y.success ||
+      x.cancelled !== y.cancelled ||
+      x.error !== y.error
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Whether two in-flight lists are equivalent for persistence purposes: same
+ * length and, pairwise, identical jobId + bytes (the only fields refresh()
+ * mutates on a tick). Lets refresh() skip the INFLIGHT_KEY write when nothing
+ * about the tracked set changed.
+ */
+export function inflightEqual(a: InflightItem[], b: InflightItem[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].jobId !== b[i].jobId || a[i].bytes !== b[i].bytes) return false;
+  }
+  return true;
+}
+
 /** Active (in-flight) jobs for a lane, by their tracked items. */
 function activeOfLane(inflight: InflightItem[], lane: Lane): InflightItem[] {
   return inflight.filter((i) => i.lane === lane);
@@ -147,6 +190,21 @@ function activeOfLane(inflight: InflightItem[], lane: Lane): InflightItem[] {
 /** Queued items that could start right now (not user-paused) for a lane. */
 function startableQueued(queue: QueueItem[], lane: Lane): QueueItem[] {
   return queue.filter((q) => q.lane === lane && !q.paused);
+}
+
+/**
+ * Whether there is real work that still needs the 1s poll loop running.
+ *
+ * An item counts as "needs polling" only if it is ACTIVE (in flight) or
+ * STARTABLE-AND-NOT-AUTO-PAUSED. A persisted *auto-paused* secondary on its own
+ * is NOT real work: it resumes automatically only once the primary lane drains,
+ * and pump() handles that resume — so leaving it out lets a truly-idle app stop
+ * polling instead of pinning the timer forever (autoPaused items have `paused`
+ * falsy, so the old `!q.paused` test treated them as live work).
+ */
+export function needsPolling(queue: QueueItem[], inflight: InflightItem[]): boolean {
+  if (inflight.length > 0) return true;
+  return queue.some((q) => !q.paused && !q.autoPaused);
 }
 
 /**
@@ -352,10 +410,11 @@ export const useTransfers = create<TransfersState>((set, get) => ({
 
   refresh: async () => {
     const jobs = await listJobs();
-    set({ jobs });
     // Record finished/cancelled jobs to history — except ones the user paused
     // OR we auto-paused (those are kept for resume, not logged as cancelled).
     // Surface real failure reasons as a toast so downloads never fail silently.
+    // These are idempotent (history.record + the failedToasted set guard against
+    // repeats), so they run every tick regardless of the no-op short-circuit.
     for (const j of jobs) {
       if ((j.finished || j.cancelled) && !pausedJobIds.has(j.jobId)) {
         const inf = get().inflight.find((i) => i.jobId === j.jobId);
@@ -367,6 +426,12 @@ export const useTransfers = create<TransfersState>((set, get) => ({
       }
     }
 
+    // No-op short-circuit: only push new job state when it actually differs from
+    // what the UI already has. On an idle tick listJobs() returns byte-for-byte
+    // the same data, so skipping the set() avoids a needless re-render of every
+    // subscriber, and skipping the localStorage write avoids a 1Hz sync write.
+    if (!jobsEqual(jobs, get().jobs)) set({ jobs });
+
     // Reconcile persisted in-flight set against live jobs: drop finished/cancelled
     // (and jobs that vanished), update live bytes for the rest.
     const stillInflight: InflightItem[] = [];
@@ -376,15 +441,19 @@ export const useTransfers = create<TransfersState>((set, get) => ({
       if (job.finished || job.cancelled) continue; // done — leaves the in-flight set
       stillInflight.push({ ...inf, bytes: job.bytes });
     }
-    writeJson(INFLIGHT_KEY, stillInflight);
-    set({ inflight: stillInflight });
+    // Same short-circuit for the in-flight set: only set()/writeJson when the
+    // tracked bytes (or membership) changed, so an idle tick touches neither
+    // state nor localStorage.
+    if (!inflightEqual(stillInflight, get().inflight)) {
+      writeJson(INFLIGHT_KEY, stillInflight);
+      set({ inflight: stillInflight });
+    }
 
     // pump() drives auto-resume: when the primary lane has drained it clears
     // autoPaused on gated secondary and restarts them.
     await get().pump();
-    const { inflight, queue } = get();
-    const busy = inflight.length > 0 || queue.some((q) => !q.paused);
-    if (!busy) get().stopPolling();
+    const { inflight: inflightAfter, queue: queueAfter } = get();
+    if (!needsPolling(queueAfter, inflightAfter)) get().stopPolling();
   },
 
   cancel: async (jobId) => {

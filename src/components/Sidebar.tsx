@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Plus, FolderOpen, Clock, Star, Users, Download, Check, Pause, AlertCircle, Globe, Trash2, Loader2, Link as LinkIcon } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useApp, type Section } from "../store/app";
 import { useTransfers } from "../store/transfers";
 import { useHistory } from "../store/history";
@@ -20,7 +21,18 @@ const SECTIONS: { key: Section; label: string; Icon: typeof FolderOpen }[] = [
 ];
 
 export function Sidebar() {
-  const { view, accounts, selectAccount, setSection, removeAccount, showDownloads } = useApp();
+  // Narrow + shallow-compared slice of the app store: `view` and `accounts` are
+  // the only reactive fields the sidebar renders; the rest are stable actions.
+  const { view, accounts, selectAccount, setSection, removeAccount, showDownloads } = useApp(
+    useShallow((s) => ({
+      view: s.view,
+      accounts: s.accounts,
+      selectAccount: s.selectAccount,
+      setSection: s.setSection,
+      removeAccount: s.removeAccount,
+      showDownloads: s.showDownloads,
+    })),
+  );
   const dlFilter = view.kind === "downloads" ? view.filter : null;
   const jobs = useTransfers((s) => s.jobs);
   const queue = useTransfers((s) => s.queue);

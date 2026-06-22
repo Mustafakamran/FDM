@@ -40,6 +40,39 @@ export interface QualityOption {
 /** The Auto sentinel for `hls.currentLevel` (lets ABR choose). */
 export const AUTO_LEVEL = -1;
 
+/** Renditions at/below this height count as a "cheap" first-paint start level. */
+const CHEAP_START_MAX_HEIGHT = 720;
+
+/**
+ * Pick a CONSERVATIVE start level (hls.js level index) for first paint behind a
+ * just-in-time transcode backend: the HIGHEST rendition at/below 720p, so
+ * playback begins from a cheap segment the transcoder can produce fast — never
+ * the top (e.g. 1080p) rendition. Falls back to the overall lowest rendition
+ * when every level is above the cheap cap, and to `0` when heights are unknown.
+ * ABR is re-enabled immediately after, so quality still ramps up.
+ *
+ * Returns an index into the passed `levels` array (hls.js's own level order).
+ */
+export function conservativeStartLevel(levels: { height: number }[]): number {
+  if (levels.length === 0) return 0;
+  let cheapIdx = -1;
+  let cheapHeight = -1;
+  let lowestIdx = 0;
+  let lowestHeight = Infinity;
+  for (let i = 0; i < levels.length; i++) {
+    const h = levels[i].height;
+    if (h <= CHEAP_START_MAX_HEIGHT && h > cheapHeight) {
+      cheapHeight = h;
+      cheapIdx = i;
+    }
+    if (h < lowestHeight) {
+      lowestHeight = h;
+      lowestIdx = i;
+    }
+  }
+  return cheapIdx >= 0 ? cheapIdx : lowestIdx;
+}
+
 /** Map an hls.js level height to a menu label (e.g. 1080 → "1080p"). */
 export function levelLabel(height: number): string {
   return height > 0 ? `${height}p` : "Auto";

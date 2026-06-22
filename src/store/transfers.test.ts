@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { useTransfers } from "./transfers";
+import { useTransfers, jobsEqual, inflightEqual, needsPolling, type QueueItem } from "./transfers";
+import { laneOf } from "../lib/lane";
 import type { JobStatus, DownloadItem } from "../lib/tauri/commands";
 
 function item(name: string): DownloadItem {
@@ -66,5 +67,106 @@ describe("transfers queue", () => {
     const qid = useTransfers.getState().queue[0].id;
     useTransfers.getState().removeQueued(qid);
     expect(useTransfers.getState().queue).toHaveLength(0);
+  });
+});
+
+// ── Pure helpers (no-op short-circuit + polling decision) ────────────────────
+
+function qItem(over: Partial<QueueItem> & { accountId: string }): QueueItem {
+  return {
+    id: over.id ?? `q_${over.accountId}`,
+    item: item(over.item?.name ?? over.accountId),
+    dest: "/dest",
+    ...over,
+    lane: laneOf(over.accountId),
+  };
+}
+function inflightItem(accountId: string, jobId: number, bytes = 0): QueueItem & { jobId: number; bytes: number } {
+  return { ...qItem({ accountId, id: `inf_${jobId}` }), jobId, bytes };
+}
+
+describe("jobsEqual", () => {
+  it("is true for identical job data", () => {
+    expect(jobsEqual([job({ jobId: 1, bytes: 500 })], [job({ jobId: 1, bytes: 500 })])).toBe(true);
+  });
+  it("is false when a UI-driving field differs", () => {
+    expect(jobsEqual([job({ jobId: 1, bytes: 500 })], [job({ jobId: 1, bytes: 600 })])).toBe(false);
+    expect(jobsEqual([job({ jobId: 1, speed: 0 })], [job({ jobId: 1, speed: 10 })])).toBe(false);
+    expect(jobsEqual([job({ jobId: 1, finished: false })], [job({ jobId: 1, finished: true })])).toBe(false);
+    expect(jobsEqual([job({ jobId: 1, error: "" })], [job({ jobId: 1, error: "boom" })])).toBe(false);
+  });
+  it("is false when lengths differ", () => {
+    expect(jobsEqual([job({ jobId: 1 })], [])).toBe(false);
+  });
+});
+
+describe("inflightEqual", () => {
+  it("is true for identical jobId + bytes", () => {
+    expect(inflightEqual([inflightItem("drive_x", 1, 100)], [inflightItem("drive_x", 1, 100)])).toBe(true);
+  });
+  it("is false when bytes or membership change", () => {
+    expect(inflightEqual([inflightItem("drive_x", 1, 100)], [inflightItem("drive_x", 1, 200)])).toBe(false);
+    expect(inflightEqual([inflightItem("drive_x", 1, 100)], [])).toBe(false);
+  });
+});
+
+describe("needsPolling", () => {
+  it("is true while a job is in flight", () => {
+    expect(needsPolling([], [inflightItem("drive_x", 1)])).toBe(true);
+  });
+  it("is true for a startable (non-paused, non-autoPaused) queued item", () => {
+    expect(needsPolling([qItem({ accountId: "drive_x" })], [])).toBe(true);
+  });
+  it("is false when the only queued item is user-paused", () => {
+    expect(needsPolling([qItem({ accountId: "drive_x", paused: true })], [])).toBe(false);
+  });
+  it("is false when the only queued item is auto-paused (resumes via pump, not the poll loop)", () => {
+    expect(needsPolling([qItem({ accountId: "http", autoPaused: true })], [])).toBe(false);
+  });
+  it("is false when truly idle", () => {
+    expect(needsPolling([], [])).toBe(false);
+  });
+});
+
+describe("refresh no-op short-circuit", () => {
+  it("a tick with identical job data performs no set() and no localStorage write", async () => {
+    // One running job whose bytes don't move between ticks.
+    useTransfers.getState().enqueue("drive_x", [item("a")], "/dest");
+    await vi.waitFor(() => expect(useTransfers.getState().inflight).toHaveLength(1));
+    const jobId = useTransfers.getState().inflight[0].jobId;
+    // Steady-state: list_jobs returns the same in-flight job every tick.
+    listReturns = [job({ jobId, bytes: 250, totalBytes: 1000 })];
+    await useTransfers.getState().refresh(); // first observation — state updates
+
+    const jobsBefore = useTransfers.getState().jobs;
+    const inflightBefore = useTransfers.getState().inflight;
+    const inflightLs = localStorage.getItem("download_inflight_v1");
+    const setSpy = vi.spyOn(localStorage, "setItem");
+
+    await useTransfers.getState().refresh(); // identical data — must short-circuit
+
+    // No new object identities: the set() was skipped, so references are stable.
+    expect(useTransfers.getState().jobs).toBe(jobsBefore);
+    expect(useTransfers.getState().inflight).toBe(inflightBefore);
+    // No INFLIGHT_KEY write occurred on the idle tick.
+    expect(setSpy).not.toHaveBeenCalledWith("download_inflight_v1", expect.anything());
+    expect(localStorage.getItem("download_inflight_v1")).toBe(inflightLs);
+    setSpy.mockRestore();
+  });
+
+  it("a tick with changed bytes DOES update state and persist", async () => {
+    useTransfers.getState().enqueue("drive_x", [item("a")], "/dest");
+    await vi.waitFor(() => expect(useTransfers.getState().inflight).toHaveLength(1));
+    const jobId = useTransfers.getState().inflight[0].jobId;
+    listReturns = [job({ jobId, bytes: 250, totalBytes: 1000 })];
+    await useTransfers.getState().refresh();
+    const jobsBefore = useTransfers.getState().jobs;
+
+    listReturns = [job({ jobId, bytes: 750, totalBytes: 1000 })]; // progress moved
+    await useTransfers.getState().refresh();
+
+    expect(useTransfers.getState().jobs).not.toBe(jobsBefore);
+    expect(useTransfers.getState().inflight[0].bytes).toBe(750);
+    expect(JSON.parse(localStorage.getItem("download_inflight_v1")!)[0].bytes).toBe(750);
   });
 });

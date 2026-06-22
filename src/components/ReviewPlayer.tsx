@@ -19,6 +19,7 @@ import {
   playbackMode,
   qualityOptions,
   activeQualityLabel,
+  conservativeStartLevel,
   AUTO_LEVEL,
   type QualityOption,
 } from "../lib/hls";
@@ -100,7 +101,20 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
       : "direct";
 
     if (mode === "hls" && hlsSrc) {
-      const hls = new Hls({ enableWorker: true });
+      // Tuned for a just-in-time transcode backend: pull several segments ahead
+      // so hls.js drives backend prefetch (large forward buffer), keep a modest
+      // back-buffer, and tolerate small gaps. `startLevel` picks a CHEAP
+      // rendition for first paint (set per-manifest below); ABR stays on after,
+      // and capLevelToPlayerSize stays off so a large window isn't forced to a
+      // high level before the transcoder is warm.
+      const hls = new Hls({
+        enableWorker: true,
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
+        backBufferLength: 30,
+        maxBufferHole: 0.5,
+        capLevelToPlayerSize: false,
+      });
       hlsRef.current = hls;
       let recoveries = 0; // cap retries so a dead HLS path always falls back
       hls.loadSource(hlsSrc);
@@ -109,6 +123,14 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
       hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
         setLevels(data.levels.map((l) => ({ height: l.height })));
         setCurLevel(AUTO_LEVEL);
+        // Start cheap: prefer the lowest rendition at/below 720p (a mid level),
+        // falling back to the very lowest. This forces a fast first segment from
+        // the transcoder; after the manifest is parsed we hand control back to
+        // ABR (currentLevel = -1) so quality ramps up automatically.
+        const start = conservativeStartLevel(data.levels.map((l) => ({ height: l.height })));
+        hls.startLevel = start;
+        hls.nextLevel = start; // honour the cheap pick for the first fragment
+        hls.currentLevel = AUTO_LEVEL; // re-enable ABR for everything after
       });
       hls.on(Hls.Events.LEVEL_SWITCHED, (_e, data) => setLoadingLevel(data.level));
       hls.on(Hls.Events.ERROR, (_e, data) => {
