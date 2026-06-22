@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::fs::File;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -36,6 +37,8 @@ const MAX_BLOCK_ATTEMPTS: u32 = 8;
 /// Total deadline for a single 8 MiB block request (a stalled/half-open socket
 /// errors here instead of hanging forever, then the block is retried).
 const BLOCK_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+/// Browser-ish UA for generic web (HTTP) downloads — some hosts 403 a default UA.
+const HTTP_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 FDM/1.0";
 
 // ---- global bandwidth cap (token bucket) -----------------------------------
 
@@ -476,6 +479,74 @@ fn enumerate_folder(app: &AppHandle, conn: &RcConnection, account_id: &str, item
     Ok(tasks)
 }
 
+/// Stream a generic web (HTTP/HTTPS) URL to `dest`. Unlike the block engine, the
+/// size is usually unknown and the server may not support Range, so we sequentially
+/// stream the body into a `.fdmpart`, resuming via Range when possible and
+/// restarting if the server ignores it. `url` is carried in the item's `fid`.
+fn download_http(url: &str, dest: &Path, h: &NativeHandles) -> Result<(), String> {
+    if let Some(p) = dest.parent() {
+        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    let part = part_path(dest);
+    // No total-request timeout (a big file streams in one response); connect only.
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // Resume from any partial via Range.
+    let mut offset = len_of(&part);
+    let mut req = client.get(url).header("User-Agent", HTTP_UA);
+    if offset > 0 {
+        req = req.header("Range", format!("bytes={offset}-"));
+    }
+    let mut resp = req.send().map_err(|e| e.to_string())?;
+    let status = resp.status();
+    // Server ignored our Range (sent 200 not 206) → start over.
+    if offset > 0 && status.as_u16() == 200 {
+        offset = 0;
+        let _ = std::fs::remove_file(&part);
+    }
+    if !status.is_success() {
+        let b = resp.text().unwrap_or_default();
+        return Err(format!("download {status}: {}", b.chars().take(200).collect::<String>()));
+    }
+    // Reject obvious HTML pages (download portals / share pages aren't direct files).
+    if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+        if ct.trim_start().starts_with("text/html") {
+            return Err("the link returned a web page, not a file — use a direct file URL".into());
+        }
+    }
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .truncate(false)
+        .open(&part)
+        .map_err(|e| e.to_string())?;
+    if offset == 0 {
+        let _ = file.set_len(0);
+    }
+    h.transferred.store(offset as i64, Ordering::SeqCst);
+
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        if h.cancelled.load(Ordering::SeqCst) {
+            return Err("paused".into());
+        }
+        let n = resp.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        throttle(n as u64);
+        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        h.transferred.fetch_add(n as i64, Ordering::SeqCst);
+    }
+    file.flush().map_err(|e| e.to_string())?;
+    drop(file);
+    std::fs::rename(&part, dest).map_err(|e| e.to_string())
+}
+
 /// Worker body for one queued item (a file or a whole folder).
 pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, item: DownloadItem, dest: String, connections: usize, h: NativeHandles) {
     let connections = if connections == 0 { DEFAULT_CONNECTIONS } else { connections };
@@ -509,7 +580,13 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
             if h.cancelled.load(Ordering::SeqCst) {
                 return Err("paused".into());
             }
-            download_file(&auth, &client, t, &h, connections)?;
+            // Generic web URLs stream (unknown size / no Range); cloud files use the
+            // multi-connection block engine. The URL is carried in the item's `fid`.
+            if auth.kind == Kind::Http {
+                download_http(&t.fid, &t.dest, &h)?;
+            } else {
+                download_file(&auth, &client, t, &h, connections)?;
+            }
         }
         Ok(())
     })();

@@ -110,6 +110,10 @@ function Main {
   npm run fetch:rclone
   if ($LASTEXITCODE -ne 0) { throw "fetch:rclone failed (exit $LASTEXITCODE)." }
 
+  Write-Host "  [ffmpeg] fetching transcoder sidecars (ffmpeg + ffprobe)..." -ForegroundColor Yellow
+  npm run fetch:ffmpeg
+  if ($LASTEXITCODE -ne 0) { throw "fetch:ffmpeg failed (exit $LASTEXITCODE)." }
+
   Write-Host "  [tauri] building app (this takes a few minutes)...`n" -ForegroundColor Yellow
   npm run tauri build
   if ($LASTEXITCODE -ne 0) { throw "tauri build failed (exit $LASTEXITCODE). See the log above." }

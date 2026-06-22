@@ -734,11 +734,24 @@ pub fn setup(app: &tauri::AppHandle) {
     rt.sem.set_permits(concurrency_for(encoder));
 }
 
+/// Build a sidecar Command that does not flash a console window on Windows
+/// (the raw std::process::Command drops the flag Tauri's own Command sets).
+fn sidecar_cmd<P: AsRef<std::ffi::OsStr>>(program: P) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 /// Verify an encoder actually works by encoding a single synthetic frame to null.
 /// Returns true on success. Catches machines that advertise a hardware encoder in
 /// `-encoders` but fail to initialize it at runtime.
 fn verify_encoder(ffmpeg: &std::path::Path, encoder: Encoder) -> bool {
-    std::process::Command::new(ffmpeg)
+    sidecar_cmd(ffmpeg)
         .args([
             "-hide_banner",
             "-loglevel",
@@ -777,7 +790,7 @@ pub fn cleanup(app: &tauri::AppHandle) {
 
 /// Run `ffmpeg -encoders` and collect the H.264 encoder names present.
 fn list_encoders(ffmpeg: &std::path::Path) -> Vec<String> {
-    let out = match std::process::Command::new(ffmpeg)
+    let out = match sidecar_cmd(ffmpeg)
         .args(["-hide_banner", "-encoders"])
         .output()
     {
@@ -806,7 +819,7 @@ fn probe_source(state: &HlsRuntime, src: &HlsSource) -> Result<Probe, String> {
     }
     let ffprobe = state.ffprobe()?;
     let args = ffprobe_args(src.input.as_ffmpeg_input());
-    let out = std::process::Command::new(&ffprobe)
+    let out = sidecar_cmd(&ffprobe)
         .args(&args)
         .output()
         .map_err(|e| format!("ffprobe spawn: {e}"))?;
@@ -928,7 +941,7 @@ fn run_ffmpeg(
     encoder: Encoder,
 ) -> Result<Vec<u8>, String> {
     let args = ffmpeg_args(input, start, dur, rend, encoder);
-    let out = std::process::Command::new(ffmpeg)
+    let out = sidecar_cmd(ffmpeg)
         .args(&args)
         .output()
         .map_err(|e| format!("ffmpeg spawn: {e}"))?;

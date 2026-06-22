@@ -54,6 +54,9 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
   const barRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const manifestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const directRef = useRef(false); // true once we've fallen back to direct /media
+  const attemptedPlay = useRef(false);
 
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
@@ -65,6 +68,8 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
   const [fs, setFs] = useState(false);
   const [show, setShow] = useState(true);
   const [hover, setHover] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true); // until the first frame is ready
+  const [failed, setFailed] = useState(false); // HLS + direct both failed
 
   // Quality menu — populated only when hls.js drives playback (so it exposes levels).
   const [levels, setLevels] = useState<{ height: number }[]>([]);
@@ -74,15 +79,40 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
 
   const v = () => videoRef.current;
 
+  // First frame is ready: drop the spinner and try to autoplay (browsers may block
+  // autoplay-with-audio — that's fine, the Play button stays). Runs on `canplay`.
+  const markReady = useCallback(() => {
+    setLoading(false);
+    setFailed(false);
+    if (!attemptedPlay.current) {
+      attemptedPlay.current = true;
+      v()?.play().catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Attach the video source: hls.js (ABR + quality menu) → native HLS → direct
-  // /media. On a fatal hls.js error we tear down and fall back to direct so a
+  // /media. On a fatal hls.js error — OR if the manifest never parses (e.g. the
+  // transcoder is hung/unavailable) — we tear down and fall back to direct so a
   // review session never hard-breaks. Re-runs when the source URLs change.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+    setLoading(true);
+    setFailed(false);
+    directRef.current = false;
+    attemptedPlay.current = false;
+
+    const clearManifestTimer = () => {
+      if (manifestTimer.current) {
+        clearTimeout(manifestTimer.current);
+        manifestTimer.current = null;
+      }
+    };
 
     // Direct-source fallback shared by every failure path.
     const useDirect = () => {
+      clearManifestTimer();
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -90,7 +120,9 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
       setLevels([]);
       setCurLevel(AUTO_LEVEL);
       setLoadingLevel(AUTO_LEVEL);
+      directRef.current = true;
       if (video.src !== src) video.src = src;
+      video.load();
     };
 
     const mode = hlsSrc
@@ -119,8 +151,12 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
       let recoveries = 0; // cap retries so a dead HLS path always falls back
       hls.loadSource(hlsSrc);
       hls.attachMedia(video);
+      // If the manifest never parses (transcoder hung/unavailable), don't sit on a
+      // frozen frame forever — fall back to direct play.
+      manifestTimer.current = setTimeout(useDirect, 12000);
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
+        clearManifestTimer();
         setLevels(data.levels.map((l) => ({ height: l.height })));
         setCurLevel(AUTO_LEVEL);
         // Start cheap: prefer the lowest rendition at/below 720p (a mid level),
@@ -150,12 +186,15 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
       });
     } else if (mode === "native" && hlsSrc) {
       // Native HLS (e.g. WKWebView): ABR is automatic; no manual level menu.
+      directRef.current = true; // a native-HLS load error is a real failure
       video.src = hlsSrc;
+      video.load();
     } else {
       useDirect();
     }
 
     return () => {
+      clearManifestTimer();
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -292,7 +331,7 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
   return (
     <div
       ref={wrapRef}
-      className="group relative flex max-h-full max-w-full items-center justify-center overflow-hidden rounded-[8px] bg-black"
+      className="group relative flex h-full w-full items-center justify-center overflow-hidden rounded-[8px] bg-black"
       onPointerMove={flashControls}
       onMouseLeave={() => playing && setShow(false)}
     >
@@ -302,9 +341,11 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
         key={noCors ? "nocors" : "cors"}
         ref={videoRef}
         {...(noCors ? {} : { crossOrigin: "anonymous" as const })}
-        className="max-h-full max-w-full"
+        className="h-full w-full object-contain"
+        preload="auto"
         onClick={togglePlay}
         onDoubleClick={toggleFullscreen}
+        onCanPlay={markReady}
         onLoadedMetadata={(e) => onDuration(e.currentTarget.duration || 0)}
         onDurationChange={(e) => onDuration(e.currentTarget.duration || 0)}
         onTimeUpdate={(e) => {
@@ -331,11 +372,32 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
           setVolume(e.currentTarget.volume);
           setMuted(e.currentTarget.muted);
         }}
-        onError={onError}
+        onError={() => {
+          // A <video> error only means failure once we're on the direct source;
+          // on the HLS path, hls.js's own error handler drives the fallback.
+          if (directRef.current) setFailed(true);
+          onError();
+        }}
       />
 
+      {/* Loading spinner until the first frame is ready */}
+      {loading && !failed && (
+        <div className="absolute inset-0 grid place-items-center bg-black/25">
+          <div className="h-9 w-9 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+        </div>
+      )}
+
+      {/* Playback failed on every source */}
+      {failed && (
+        <div className="absolute inset-0 grid place-items-center px-8 text-center">
+          <p className="text-sm text-white/85">
+            Couldn’t play this video. The transcoder may be unavailable — try reopening, or download the file to review it locally.
+          </p>
+        </div>
+      )}
+
       {/* Center play affordance when paused */}
-      {!playing && (
+      {!playing && !loading && !failed && (
         <button
           onClick={togglePlay}
           aria-label="Play"
