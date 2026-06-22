@@ -3,6 +3,7 @@ pub mod bdm;
 pub mod download;
 pub mod drive;
 pub mod dropbox;
+pub mod hls;
 pub mod index;
 pub mod locate;
 pub mod provider;
@@ -56,6 +57,7 @@ pub fn run() {
         .manage(accounts::OAuthState::default())
         .manage(index::IndexState::default())
         .manage(stream::StreamState::default())
+        .manage(hls::HlsState::default())
         .manage(bdm::BdmState::default())
         .invoke_handler(tauri::generate_handler![
             rc_call,
@@ -90,6 +92,9 @@ pub fn run() {
             if let Err(e) = stream::start_stream_server(&handle) {
                 eprintln!("stream server failed to start: {e}");
             }
+            // Resolve the ffmpeg/ffprobe sidecars + HLS cache dir (best-effort;
+            // failure just leaves HLS unavailable and the player uses direct /media).
+            hls::setup(&handle);
             // BDM sync agent (no-op until enabled + configured in Settings → Sync).
             bdm::start_agent(&handle);
             Ok(())
@@ -98,6 +103,8 @@ pub fn run() {
             if let tauri::WindowEvent::Destroyed = event {
                 let state = window.state::<RcloneState>();
                 stop_rclone(&state);
+                // Best-effort: clear the HLS segment cache dir on exit.
+                hls::cleanup(window.app_handle());
             }
         })
         .run(tauri::generate_context!())

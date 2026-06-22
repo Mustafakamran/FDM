@@ -6,7 +6,7 @@ import { useReview, fileKey, type FileReview } from "../store/review";
 import { useAccountMeta, prettyLabel } from "../store/account-meta";
 import { useToasts } from "../store/toast";
 import { writeBinaryFile } from "../lib/tauri/commands";
-import { streamUrl, isPlayable, timecode } from "../lib/review";
+import { streamUrl, hlsMasterUrl, isPlayable, timecode } from "../lib/review";
 import { ReviewPlayer } from "./ReviewPlayer";
 import { Button } from "./ui";
 
@@ -25,6 +25,7 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const [url, setUrl] = useState<string | null>(null);
+  const [hlsUrl, setHlsUrl] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [duration, setDuration] = useState(0);
   const [curTime, setCurTime] = useState(0);
@@ -43,16 +44,19 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
     if (!playable) return;
     let alive = true;
     setUrl(null);
+    setHlsUrl(null);
     setErr("");
     setDiag("");
     setNoCors(false);
-    streamUrl(accountId, target)
-      .then((u) => {
+    // Build the HLS (ABR) master URL and the direct /media URL from the same
+    // source params. The player prefers HLS and falls back to direct on failure.
+    Promise.all([hlsMasterUrl(accountId, target), streamUrl(accountId, target)])
+      .then(([hls, u]) => {
         if (!alive) return;
-        // Let the <video> element try directly (most permissive path). Run a
-        // background probe only to capture a real error message we can show IF
-        // playback fails — never block playback on it.
+        setHlsUrl(hls);
         setUrl(u);
+        // Background-probe the direct /media URL only to capture a real error
+        // message we can surface IF playback fails — never block playback on it.
         fetch(u)
           .then(async (res) => {
             if (!res.ok) {
@@ -220,6 +224,7 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
                   <ReviewPlayer
                     videoRef={videoRef}
                     src={url}
+                    hlsSrc={hlsUrl}
                     noCors={noCors}
                     comments={comments}
                     duration={duration}

@@ -30,13 +30,31 @@ function b64url(s: string): string {
 }
 
 /**
- * Loopback streaming-proxy URL for a video. All values are URL-safe (path is
- * base64url; ids/ext/acct are alphanumeric), so no extra percent-encoding — the
- * Rust side parses the query by raw split.
+ * The cloud-source query params shared by the direct `/media` URL and the HLS
+ * `master.m3u8` URL. Both endpoints parse this exact string by raw split, so all
+ * values must already be URL-safe (path is base64url; ids/ext/acct alphanumeric).
+ */
+export function sourceParams(accountId: string, t: ReviewTarget): string {
+  return `acct=${accountId}&path=${b64url(t.path)}&fid=${t.fileId ?? ""}&size=${t.size}&ext=${t.ext}`;
+}
+
+/**
+ * Loopback streaming-proxy URL for a video — the direct, non-transcoded path.
+ * Also the input ffmpeg pulls bytes through when transcoding HLS segments.
  */
 export async function streamUrl(accountId: string, t: ReviewTarget): Promise<string> {
   const base = await streamBase();
-  return `${base}/media?acct=${accountId}&path=${b64url(t.path)}&fid=${t.fileId ?? ""}&size=${t.size}&ext=${t.ext}`;
+  return `${base}/media?${sourceParams(accountId, t)}`;
+}
+
+/**
+ * HLS master-playlist URL for a video — the adaptive-bitrate path. Same source
+ * params as {@link streamUrl}; only the route differs (`/hls/master.m3u8`). The
+ * backend serves the per-rendition media playlists and JIT-transcoded segments.
+ */
+export async function hlsMasterUrl(accountId: string, t: ReviewTarget): Promise<string> {
+  const base = await streamBase();
+  return `${base}/hls/master.m3u8?${sourceParams(accountId, t)}`;
 }
 
 /** Seconds → "m:ss" or "h:mm:ss". */

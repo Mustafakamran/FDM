@@ -47,14 +47,17 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Cache the rclone sidecar
+      - name: Cache the sidecar binaries (rclone + ffmpeg/ffprobe)
         uses: actions/cache@v4
         with:
           path: src-tauri/binaries
-          key: rclone-${{ runner.os }}-${{ hashFiles('scripts/fetch-rclone.mjs') }}
+          key: sidecars-${{ runner.os }}-${{ hashFiles('scripts/fetch-rclone.mjs', 'scripts/fetch-ffmpeg.mjs') }}
 
       - name: Fetch the rclone sidecar for this OS
         run: npm run fetch:rclone
+
+      - name: Fetch the ffmpeg/ffprobe sidecars for this OS
+        run: npm run fetch:ffmpeg
 
       - name: Build the app (and publish on tag)
         uses: tauri-apps/tauri-action@v0

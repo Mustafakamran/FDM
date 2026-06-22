@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import Hls from "hls.js";
 import {
   Play,
   Pause,
@@ -11,8 +12,16 @@ import {
   ChevronLeft,
   ChevronRight,
   Gauge,
+  Settings,
 } from "lucide-react";
 import { timecode } from "../lib/review";
+import {
+  playbackMode,
+  qualityOptions,
+  activeQualityLabel,
+  AUTO_LEVEL,
+  type QualityOption,
+} from "../lib/hls";
 
 interface Marker {
   id: string;
@@ -26,7 +35,10 @@ const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  /** Direct `/media` proxy URL — the no-transcode fallback source. */
   src: string;
+  /** HLS `master.m3u8` URL — the adaptive-bitrate path (null while still building). */
+  hlsSrc: string | null;
   /** When true, drop crossOrigin (PDF frame-capture won't work, but playback will). */
   noCors: boolean;
   comments: Marker[];
@@ -36,10 +48,11 @@ interface Props {
   onError: () => void;
 }
 
-export function ReviewPlayer({ videoRef, src, noCors, comments, duration, onDuration, onTime, onError }: Props) {
+export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration, onDuration, onTime, onError }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
 
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
@@ -52,7 +65,90 @@ export function ReviewPlayer({ videoRef, src, noCors, comments, duration, onDura
   const [show, setShow] = useState(true);
   const [hover, setHover] = useState<number | null>(null);
 
+  // Quality menu — populated only when hls.js drives playback (so it exposes levels).
+  const [levels, setLevels] = useState<{ height: number }[]>([]);
+  const [curLevel, setCurLevel] = useState(AUTO_LEVEL); // user selection (-1 = Auto)
+  const [loadingLevel, setLoadingLevel] = useState(AUTO_LEVEL); // what ABR is loading
+  const [qualityOpen, setQualityOpen] = useState(false);
+
   const v = () => videoRef.current;
+
+  // Attach the video source: hls.js (ABR + quality menu) → native HLS → direct
+  // /media. On a fatal hls.js error we tear down and fall back to direct so a
+  // review session never hard-breaks. Re-runs when the source URLs change.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    // Direct-source fallback shared by every failure path.
+    const useDirect = () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      setLevels([]);
+      setCurLevel(AUTO_LEVEL);
+      setLoadingLevel(AUTO_LEVEL);
+      if (video.src !== src) video.src = src;
+    };
+
+    const mode = hlsSrc
+      ? playbackMode({
+          hlsSupported: Hls.isSupported(),
+          nativeHls: !!video.canPlayType("application/vnd.apple.mpegurl"),
+        })
+      : "direct";
+
+    if (mode === "hls" && hlsSrc) {
+      const hls = new Hls({ enableWorker: true });
+      hlsRef.current = hls;
+      let recoveries = 0; // cap retries so a dead HLS path always falls back
+      hls.loadSource(hlsSrc);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
+        setLevels(data.levels.map((l) => ({ height: l.height })));
+        setCurLevel(AUTO_LEVEL);
+      });
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_e, data) => setLoadingLevel(data.level));
+      hls.on(Hls.Events.ERROR, (_e, data) => {
+        if (!data.fatal) return;
+        // Try hls.js's own recovery for transient media/network faults a couple
+        // of times; if it keeps failing (e.g. ffmpeg unavailable), tear down and
+        // fall back to the direct /media URL so review never hard-breaks.
+        if (recoveries < 2 && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          recoveries++;
+          hls.startLoad();
+        } else if (recoveries < 2 && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          recoveries++;
+          hls.recoverMediaError();
+        } else {
+          useDirect();
+        }
+      });
+    } else if (mode === "native" && hlsSrc) {
+      // Native HLS (e.g. WKWebView): ABR is automatic; no manual level menu.
+      video.src = hlsSrc;
+    } else {
+      useDirect();
+    }
+
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+    // noCors re-keys the <video> (remount), so the source must be re-attached too.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src, hlsSrc, noCors]);
+
+  // Apply a manual quality selection (or restore Auto) to the live hls.js instance.
+  const selectLevel = useCallback((level: number) => {
+    setCurLevel(level);
+    setQualityOpen(false);
+    if (hlsRef.current) hlsRef.current.currentLevel = level;
+  }, []);
 
   const seek = useCallback(
     (t: number) => {
@@ -169,6 +265,8 @@ export function ReviewPlayer({ videoRef, src, noCors, comments, duration, onDura
 
   const pct = (t: number) => (duration > 0 ? `${Math.min(100, (t / duration) * 100)}%` : "0%");
 
+  const qualities: QualityOption[] = levels.length ? qualityOptions(levels) : [];
+
   return (
     <div
       ref={wrapRef}
@@ -177,10 +275,10 @@ export function ReviewPlayer({ videoRef, src, noCors, comments, duration, onDura
       onMouseLeave={() => playing && setShow(false)}
     >
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      {/* src is attached imperatively (hls.js or fallback) by the source effect. */}
       <video
         key={noCors ? "nocors" : "cors"}
         ref={videoRef}
-        src={src}
         {...(noCors ? {} : { crossOrigin: "anonymous" as const })}
         className="max-h-full max-w-full"
         onClick={togglePlay}
@@ -316,6 +414,35 @@ export function ReviewPlayer({ videoRef, src, noCors, comments, duration, onDura
           </span>
 
           <div className="ml-auto flex items-center gap-1">
+            {/* Quality (hls.js only — native/direct have no manual level menu) */}
+            {qualities.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => setQualityOpen((o) => !o)}
+                  className="flex items-center gap-1 rounded px-2 py-1 text-xs text-white hover:bg-white/15"
+                  aria-label="Quality"
+                  title="Quality"
+                >
+                  <Settings size={16} /> {activeQualityLabel(curLevel, loadingLevel, levels)}
+                </button>
+                {qualityOpen && (
+                  <div className="absolute bottom-9 right-0 overflow-hidden rounded-md bg-black/90 py-1 text-xs text-white shadow-lg">
+                    {qualities.map((q) => (
+                      <button
+                        key={q.level}
+                        onClick={() => selectLevel(q.level)}
+                        className={`block w-24 px-3 py-1.5 text-left hover:bg-white/15 ${
+                          q.level === curLevel ? "text-[var(--accent)]" : ""
+                        }`}
+                      >
+                        {q.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Speed */}
             <div className="relative">
               <button

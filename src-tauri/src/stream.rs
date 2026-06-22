@@ -155,8 +155,61 @@ fn build_response(
     Ok((data, start, end, size, mime_for_ext(ext)))
 }
 
-fn serve(app: AppHandle, secret: String, req: tiny_http::Request) {
+/// Serve an HLS request (`/{secret}/hls/<path>?<query>`). On any error the response
+/// is a 500 so hls.js can retry/drop a level — and the frontend can fall back to
+/// direct `/media` if the whole HLS path is unavailable.
+fn serve_hls(app: &AppHandle, base: &str, secret: &str, url: &str, req: tiny_http::Request) {
+    let prefix = format!("/{secret}/hls/");
+    let rest = match url.strip_prefix(&prefix) {
+        Some(r) => r,
+        None => {
+            let _ = req.respond(
+                Response::from_string("bad hls path")
+                    .with_status_code(404)
+                    .with_header(header("Access-Control-Allow-Origin", "*")),
+            );
+            return;
+        }
+    };
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+
+    match crate::hls::handle(app, path, query, base) {
+        Ok(crate::hls::HlsResponse::Playlist(text)) => {
+            let _ = req.respond(
+                Response::from_string(text)
+                    .with_status_code(200)
+                    .with_header(header("Content-Type", "application/vnd.apple.mpegurl"))
+                    .with_header(header("Access-Control-Allow-Origin", "*")),
+            );
+        }
+        Ok(crate::hls::HlsResponse::Segment(bytes)) => {
+            let _ = req.respond(
+                Response::from_data(bytes)
+                    .with_status_code(200)
+                    .with_header(header("Content-Type", "video/mp2t"))
+                    .with_header(header("Access-Control-Allow-Origin", "*")),
+            );
+        }
+        Err(e) => {
+            let _ = req.respond(
+                Response::from_string(e)
+                    .with_status_code(500)
+                    .with_header(header("Access-Control-Allow-Origin", "*")),
+            );
+        }
+    }
+}
+
+fn serve(app: AppHandle, base: String, secret: String, req: tiny_http::Request) {
     let url = req.url().to_string();
+
+    // Dispatch HLS requests; the legacy /media path below is unchanged (it is both
+    // the legacy player source and the ffmpeg cloud input).
+    if url.starts_with(&format!("/{secret}/hls/")) {
+        serve_hls(&app, &base, &secret, &url, req);
+        return;
+    }
+
     let range_hdr = req
         .headers()
         .iter()
@@ -184,14 +237,15 @@ pub fn start_stream_server(app: &AppHandle) -> Result<(), String> {
     let secret = random_secret(24);
     let server = Server::http(format!("127.0.0.1:{port}")).map_err(|e| e.to_string())?;
     let base = format!("http://127.0.0.1:{port}/{secret}");
-    *app.state::<StreamState>().base.lock().unwrap_or_else(|e| e.into_inner()) = Some(base);
+    *app.state::<StreamState>().base.lock().unwrap_or_else(|e| e.into_inner()) = Some(base.clone());
 
     let app = app.clone();
     std::thread::spawn(move || {
         for req in server.incoming_requests() {
             let app = app.clone();
+            let base = base.clone();
             let secret = secret.clone();
-            std::thread::spawn(move || serve(app, secret, req));
+            std::thread::spawn(move || serve(app, base, secret, req));
         }
     });
     Ok(())
