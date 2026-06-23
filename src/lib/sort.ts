@@ -58,8 +58,13 @@ export function sortItems(
   resolvers: SortResolvers = defaultResolvers,
 ): RcItem[] {
   const mult = state.dir === "asc" ? 1 : -1;
+  // Folders-first grouping applies only to the NAME sort (the conventional
+  // "folders above files alphabetically"). For Size/Date/Type the user wants a
+  // TRUE value order — a 16 GB video must outrank a 2 GB folder — so folders are
+  // sorted by their own aggregate value, not pinned to the top.
+  const groupFolders = state.foldersFirst && state.field === "name";
   return [...items].sort((a, b) => {
-    if (state.foldersFirst && a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1;
+    if (groupFolders && a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1;
     let r = compareByField(a, b, state.field, resolvers) * mult;
     if (r === 0 && state.field !== "name") {
       // Deterministic tiebreaker — keep equal sizes/dates in a stable name order.

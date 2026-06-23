@@ -47,33 +47,34 @@ describe("sortItems", () => {
     ]);
   });
 
-  it("size ascending uses folder aggregates for folders", () => {
+  it("size ascending: folders sort by their aggregate value, NOT pinned first", () => {
+    // foldersFirst is ignored for value sorts → a true size order across all items.
     expect(names({ field: "size", dir: "asc", foldersFirst: true })).toEqual([
-      "alpha", // 50
-      "Zebra", // 5000
+      "alpha", // 50 (folder)
       "a.txt", // 100
       "c.mp4", // 200
       "b.mp4", // 300
+      "Zebra", // 5000 (folder)
     ]);
   });
 
-  it("size descending reorders files largest-first within the file group", () => {
+  it("size descending: largest overall first (folder included by size)", () => {
     expect(names({ field: "size", dir: "desc", foldersFirst: true })).toEqual([
-      "Zebra", // 5000
-      "alpha", // 50
+      "Zebra", // 5000 (folder)
       "b.mp4", // 300
       "c.mp4", // 200
       "a.txt", // 100
+      "alpha", // 50 (folder)
     ]);
   });
 
-  it("date modified ascending orders by mod time", () => {
+  it("date modified ascending orders by mod time across folders + files", () => {
     expect(names({ field: "modified", dir: "asc", foldersFirst: true })).toEqual([
-      "alpha", // 2025-12
-      "Zebra", // 2026-05
+      "alpha", // 2025-12 (folder)
       "a.txt", // 2026-01
       "c.mp4", // 2026-02
       "b.mp4", // 2026-03
+      "Zebra", // 2026-05 (folder)
     ]);
   });
 
