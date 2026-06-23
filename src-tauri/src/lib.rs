@@ -83,6 +83,7 @@ pub fn run() {
             download::list_jobs,
             download::cancel_job,
             download::clear_finished_jobs,
+            download::delete_item,
             drive::drive_uploader,
             index::index_start,
             index::index_recrawl,

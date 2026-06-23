@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, FolderSearch, FolderOpen, FileSearch, ArrowUp, ArrowDown, FolderTree } from "lucide-react";
+import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, FolderSearch, FolderOpen, FileSearch, ArrowUp, ArrowDown, FolderTree, Trash2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
 import { isVideo, extOf } from "../lib/review";
@@ -18,6 +18,7 @@ import { IndexProgress } from "./IndexProgress";
 import { formatBytes, formatDate } from "../lib/format";
 import { sortItems, DEFAULT_SORT, type SortField, type SortState } from "../lib/sort";
 import type { RcItem } from "../lib/rc/browse";
+import { deleteItem } from "../lib/tauri/commands";
 import type { Account, DownloadItem } from "../lib/tauri/commands";
 
 const FOLDER_KEY = "default_download_folder";
@@ -87,6 +88,33 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   // A folder is "indexed" once the crawl has captured its subtree (children or aggregate present).
   const folderIndexed = (p: string) => !!(index && (index.agg[p] || index.tree[p]));
   const indexFolder = (folderPath: string) => void useIndex.getState().indexFolder(account, folderPath);
+
+  // Delete (with confirm). Cloud deletes go to the provider Trash (recoverable).
+  // pendingDelete holds one item (per-row trash) or many (selection-bar delete).
+  const dropPath = useIndex((s) => s.dropPath);
+  const [pendingDelete, setPendingDelete] = useState<RcItem[] | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  async function confirmDelete() {
+    const list = pendingDelete;
+    if (!list || list.length === 0) return;
+    setDeleting(true);
+    let ok = 0;
+    const fails: string[] = [];
+    for (const it of list) {
+      try {
+        await deleteItem(account.id, it.Path, it.IsDir);
+        dropPath(account.id, it.Path);
+        ok++;
+      } catch (e) {
+        fails.push(`${it.Name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    setSelected(new Set());
+    if (ok) toast(`Deleted ${ok} item${ok > 1 ? "s" : ""} (moved to Trash)`, "success");
+    if (fails.length) toast(`Delete failed — ${fails[0]}${fails.length > 1 ? ` (+${fails.length - 1} more)` : ""}`, "error");
+    setDeleting(false);
+    setPendingDelete(null);
+  }
   const reviewTarget = (i: RcItem): ReviewTarget => ({ path: i.Path, name: i.Name, fileId: i.ID ?? "", size: sizeOf(i), ext: extOf(i.Name) });
 
   // Live fallback for folder views the crawl didn't capture.
@@ -362,6 +390,9 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                         <button onClick={() => toggleStar(account.id, item.Path)} aria-label="Star" className={`shrink-0 ${isStar ? "text-[var(--accent)]" : "text-[var(--text-3)] opacity-0 group-hover:opacity-100 hover:text-[var(--text)]"}`}>
                           <Star size={14} fill={isStar ? "currentColor" : "none"} />
                         </button>
+                        <button onClick={() => setPendingDelete([item])} aria-label={`Delete ${item.Name}`} title="Delete (moves to Trash)" className="shrink-0 text-[var(--text-3)] opacity-0 group-hover:opacity-100 hover:text-[var(--error)]">
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                     </td>
                     <td className="py-2.5 text-[var(--text-3)]">{formatDate(dateOf(item))}</td>
@@ -381,7 +412,40 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           <span className="text-sm text-[var(--text-2)]">
             Selected: <span className="tnum text-[var(--text)]">{selected.size}</span> items · <span className="tnum text-[var(--text)]">{formatBytes(totalSelected)}</span>
           </span>
-          <Button variant="primary" onClick={download}><Download size={16} /> Download</Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setPendingDelete(items.filter((i) => selected.has(i.Path)))}
+            >
+              <Trash2 size={16} /> Delete
+            </Button>
+            <Button variant="primary" onClick={download}><Download size={16} /> Download</Button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation (cloud deletes go to the provider Trash — recoverable). */}
+      {pendingDelete && pendingDelete.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6" onClick={() => !deleting && setPendingDelete(null)}>
+          <div className="w-full max-w-md rounded-[12px] border border-[var(--border-strong)] bg-[var(--card)] p-5 shadow-[var(--shadow-lg)]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 text-[var(--text)]">
+              <Trash2 size={18} className="text-[var(--error)]" />
+              <h2 className="text-base font-semibold">
+                Delete {pendingDelete.length === 1 ? pendingDelete[0].Name : `${pendingDelete.length} items`}?
+              </h2>
+            </div>
+            <p className="mt-2 text-sm text-[var(--text-2)]">
+              {pendingDelete.some((i) => i.IsDir) ? "This includes folders and everything inside them. " : ""}
+              It's removed from <span className="text-[var(--text)]">{displayLabel}</span> and moved to the provider's Trash
+              (Google Drive Trash / Dropbox history) — recoverable there for a limited time.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setPendingDelete(null)} disabled={deleting}>Cancel</Button>
+              <Button variant="danger" onClick={confirmDelete} disabled={deleting}>
+                {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />} Delete
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

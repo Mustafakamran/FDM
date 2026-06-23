@@ -372,6 +372,32 @@ pub fn clear_finished_jobs(
     Ok(())
 }
 
+/// Delete a file or folder from its cloud account. Deletions go to the provider's
+/// recycle bin (Google Drive Trash / Dropbox's 30-day history), so they're
+/// recoverable — not a hard erase. A file uses `operations/deletefile`; a folder
+/// uses `operations/purge` (folder + contents). Shared-link accounts
+/// (`dropboxlink_`) are read-only and rejected, and an empty path (the account
+/// root) is refused as a guard.
+#[tauri::command]
+pub fn delete_item(
+    rclone: tauri::State<RcloneState>,
+    account_id: String,
+    path: String,
+    is_dir: bool,
+) -> Result<(), String> {
+    if account_id.starts_with("dropboxlink_") {
+        return Err("can't delete from a Dropbox shared link (it's read-only)".into());
+    }
+    if path.trim().is_empty() {
+        return Err("refusing to delete the account root".into());
+    }
+    let conn = connection(&rclone)?;
+    let fs = account_fs(&account_id)?;
+    let endpoint = if is_dir { "operations/purge" } else { "operations/deletefile" };
+    rc_post(&conn, endpoint, &json!({ "fs": fs, "remote": path }))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

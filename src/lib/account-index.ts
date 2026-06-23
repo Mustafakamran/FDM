@@ -55,6 +55,30 @@ export function itemAt(index: AccountIndex, path: string): RcItem | undefined {
   return (index.tree[parent] ?? []).find((i) => i.Path === path);
 }
 
+/**
+ * Remove an entry (and, if it's a folder, its whole subtree) from an index,
+ * returning a NEW index — used to optimistically reflect a delete in the UI before
+ * the next re-index. Folder aggregates upstream aren't recomputed (sizes may be
+ * slightly stale until a re-index); only the visible tree + the removed subtree's
+ * own agg keys are pruned.
+ */
+export function removeFromIndex(index: AccountIndex, path: string): AccountIndex {
+  const slash = path.lastIndexOf("/");
+  const parent = slash === -1 ? "" : path.slice(0, slash);
+  const prefix = path + "/";
+  const tree: Record<string, RcItem[]> = {};
+  for (const k in index.tree) {
+    if (k === path || k.startsWith(prefix)) continue; // drop the removed subtree's keys
+    tree[k] = k === parent ? index.tree[k].filter((i) => i.Path !== path) : index.tree[k];
+  }
+  const agg: Record<string, Aggregate> = {};
+  for (const k in index.agg) {
+    if (k === path || k.startsWith(prefix)) continue;
+    agg[k] = index.agg[k];
+  }
+  return { tree, agg };
+}
+
 /** Kick the Rust background indexer (serve from memory / disk / crawl). */
 export function indexStart(accountId: string): Promise<void> {
   return invoke("index_start", { accountId });

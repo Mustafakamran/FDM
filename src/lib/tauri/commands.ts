@@ -142,6 +142,14 @@ export function streamBase(): Promise<string> {
 }
 
 /**
+ * Delete a file or folder from its cloud account. Goes to the provider's Trash
+ * (Drive Trash / Dropbox 30-day history) — recoverable, not a hard erase.
+ */
+export function deleteItem(accountId: string, path: string, isDir: boolean): Promise<void> {
+  return invoke("delete_item", { accountId, path, isDir });
+}
+
+/**
  * Decide how the review player should source a clip given its `sourceParams`
  * query string: "direct" (already-playable H.264/AAC → no transcode, instant) or
  * "hls" (needs the JIT transcoder). Probes the codec server-side; falls back to

@@ -7,6 +7,7 @@ import {
   indexRemove,
   indexFolder,
   indexCancel,
+  removeFromIndex,
   type AccountIndex,
 } from "../lib/account-index";
 import type { Account } from "../lib/tauri/commands";
@@ -42,6 +43,8 @@ interface IndexState {
   indexFolder: (account: Account, folderPath: string) => Promise<void>;
   cancel: (accountId: string) => Promise<void>;
   remove: (accountId: string) => Promise<void>;
+  /** Optimistically drop a deleted file/folder from the cached index. */
+  dropPath: (accountId: string, path: string) => void;
 }
 
 const blankProgress = (): IndexProgressData => ({ done: 0, total: 0, files: 0, bytes: 0, dateMin: "", dateMax: "" });
@@ -147,5 +150,12 @@ export const useIndex = create<IndexState>((set, get) => {
         return { byAccount: b };
       });
     },
+
+    dropPath: (accountId, path) =>
+      set((s) => {
+        const e = s.byAccount[accountId];
+        if (!e?.index) return s;
+        return { byAccount: { ...s.byAccount, [accountId]: { ...e, index: removeFromIndex(e.index, path) } } };
+      }),
   };
 });
