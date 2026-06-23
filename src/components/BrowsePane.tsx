@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, FolderSearch, FolderOpen, FileSearch } from "lucide-react";
+import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, FolderSearch, FolderOpen, FileSearch, ArrowUp, ArrowDown, FolderTree } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
 import { isVideo, extOf } from "../lib/review";
@@ -16,14 +16,31 @@ import { fileType } from "../lib/file-types";
 import { recentFiles, itemAt } from "../lib/account-index";
 import { IndexProgress } from "./IndexProgress";
 import { formatBytes, formatDate } from "../lib/format";
+import { sortItems, DEFAULT_SORT, type SortField, type SortState } from "../lib/sort";
 import type { RcItem } from "../lib/rc/browse";
 import type { Account, DownloadItem } from "../lib/tauri/commands";
 
 const FOLDER_KEY = "default_download_folder";
+const SORT_KEY = "browse_sort";
 const EMPTY: RcItem[] = [];
 const EMPTY_STARS: string[] = [];
 
-type SortKey = "name" | "modified" | "size" | "type";
+/** Restore the persisted sort (field + direction + folders-first), falling back to the default. */
+function loadSort(): SortState {
+  try {
+    const raw = localStorage.getItem(SORT_KEY);
+    if (raw) {
+      const p = JSON.parse(raw) as Partial<SortState>;
+      const field: SortField[] = ["name", "size", "modified", "type"];
+      if (field.includes(p.field as SortField) && (p.dir === "asc" || p.dir === "desc")) {
+        return { field: p.field as SortField, dir: p.dir, foldersFirst: p.foldersFirst !== false };
+      }
+    }
+  } catch {
+    /* corrupt value — ignore and use default */
+  }
+  return DEFAULT_SORT;
+}
 
 const SECTION_TITLE: Record<Section, string> = {
   all: "All Files",
@@ -45,8 +62,17 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [grid, setGrid] = useState(false);
-  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
+  const [sort, setSort] = useState<SortState>(loadSort);
   const [sortOpen, setSortOpen] = useState(false);
+
+  // Persist sort field + direction + folders-first so it sticks across sessions.
+  useEffect(() => {
+    try {
+      localStorage.setItem(SORT_KEY, JSON.stringify(sort));
+    } catch {
+      /* storage unavailable — non-fatal */
+    }
+  }, [sort]);
 
   useEffect(() => {
     void useIndex.getState().ensure(account);
@@ -90,16 +116,9 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   }, [index, q, section, starred, usingIndex, indexItems, liveItems, folderView]);
 
   const items = useMemo(() => {
-    const dir = sort.dir === "asc" ? 1 : -1;
-    return [...base].sort((a, b) => {
-      if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1; // folders first
-      let r = 0;
-      if (sort.key === "name") r = a.Name.toLowerCase().localeCompare(b.Name.toLowerCase());
-      else if (sort.key === "size") r = sizeOf(a) - sizeOf(b);
-      else if (sort.key === "modified") r = dateOf(a) < dateOf(b) ? -1 : dateOf(a) > dateOf(b) ? 1 : 0;
-      else r = fileType(a.Name, a.IsDir).label.localeCompare(fileType(b.Name, b.IsDir).label);
-      return r * dir;
-    });
+    // Resolvers honor folder aggregates from the index (recursive size / latest
+    // mod time), falling back to the entry's own values when not indexed.
+    return sortItems(base, sort, { sizeOf, dateOf });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, sort, index]);
 
@@ -134,12 +153,13 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const showCrawl = status === "crawling" || status === "loading";
   const spinner = (!index && status !== "error") || (folderView && !usingIndex && liveLoading && items.length === 0);
 
-  const SORTS: { key: SortKey; label: string }[] = [
+  const SORTS: { key: SortField; label: string }[] = [
     { key: "name", label: "Name" },
-    { key: "modified", label: "Modified" },
+    { key: "modified", label: "Date modified" },
     { key: "size", label: "Size" },
     { key: "type", label: "Type" },
   ];
+  const sortLabel = SORTS.find((s) => s.key === sort.field)?.label ?? "Name";
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -178,27 +198,54 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           )}
         </div>
 
-        {/* Sort */}
-        <div className="relative">
-          <button onClick={() => setSortOpen((o) => !o)} className="flex items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text-2)] hover:text-[var(--text)]">
-            Sort <ChevronDown size={14} />
-          </button>
-          {sortOpen && (
-            <div className="absolute right-0 top-9 z-20 w-40 overflow-hidden rounded-[8px] border border-[var(--border-strong)] bg-[var(--card)] py-1 shadow-[var(--shadow-lg)]">
-              {SORTS.map((o) => (
+        {/* Sort: field picker + asc/desc toggle (+ folders-first) */}
+        <div className="flex overflow-hidden rounded-[8px] border border-[var(--border)]">
+          <div className="relative">
+            <button
+              onClick={() => setSortOpen((o) => !o)}
+              title="Sort by"
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+            >
+              {sortLabel} <ChevronDown size={14} />
+            </button>
+            {sortOpen && (
+              <div className="absolute right-0 top-9 z-20 w-44 overflow-hidden rounded-[8px] border border-[var(--border-strong)] bg-[var(--card)] py-1 shadow-[var(--shadow-lg)]">
+                {SORTS.map((o) => (
+                  <button
+                    key={o.key}
+                    onClick={() => {
+                      setSort((s) => ({ ...s, field: o.key }));
+                      setSortOpen(false);
+                    }}
+                    title={`Sort by ${o.label.toLowerCase()}`}
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                  >
+                    {o.label} {sort.field === o.key && <Check size={14} className="text-[var(--accent)]" />}
+                  </button>
+                ))}
+                <div className="my-1 border-t border-[var(--border)]" />
                 <button
-                  key={o.key}
                   onClick={() => {
-                    setSort((s) => (s.key === o.key ? { key: o.key, dir: s.dir === "asc" ? "desc" : "asc" } : { key: o.key, dir: "asc" }));
+                    setSort((s) => ({ ...s, foldersFirst: !s.foldersFirst }));
                     setSortOpen(false);
                   }}
+                  title="Group folders above files regardless of sort field"
                   className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
                 >
-                  {o.label} {sort.key === o.key && <Check size={14} className="text-[var(--accent)]" />}
+                  <span className="flex items-center gap-2"><FolderTree size={14} /> Folders first</span>
+                  {sort.foldersFirst && <Check size={14} className="text-[var(--accent)]" />}
                 </button>
-              ))}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => setSort((s) => ({ ...s, dir: s.dir === "asc" ? "desc" : "asc" }))}
+            title={sort.dir === "asc" ? "Ascending — click for descending" : "Descending — click for ascending"}
+            aria-label={`Sort direction: ${sort.dir === "asc" ? "ascending" : "descending"}`}
+            className="border-l border-[var(--border)] px-2 py-1.5 text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+          >
+            {sort.dir === "asc" ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
+          </button>
         </div>
 
         <div className="flex overflow-hidden rounded-[8px] border border-[var(--border)]">

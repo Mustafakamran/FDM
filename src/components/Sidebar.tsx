@@ -12,6 +12,7 @@ import { Skeleton } from "./ui";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { AddLinkDialog } from "./AddLinkDialog";
 import { formatBytes, formatSpeed } from "../lib/format";
+import { laneOf } from "../lib/lane";
 import type { Provider } from "../lib/tauri/commands";
 
 const SECTIONS: { key: Section; label: string; Icon: typeof FolderOpen }[] = [
@@ -24,7 +25,7 @@ const SECTIONS: { key: Section; label: string; Icon: typeof FolderOpen }[] = [
 export function Sidebar() {
   // Narrow + shallow-compared slice of the app store: `view` and `accounts` are
   // the only reactive fields the sidebar renders; the rest are stable actions.
-  const { view, accounts, accountsLoaded, selectAccount, setSection, removeAccount, showDownloads } = useApp(
+  const { view, accounts, accountsLoaded, selectAccount, setSection, removeAccount, showDownloads, showWebDownloads } = useApp(
     useShallow((s) => ({
       view: s.view,
       accounts: s.accounts,
@@ -33,9 +34,12 @@ export function Sidebar() {
       setSection: s.setSection,
       removeAccount: s.removeAccount,
       showDownloads: s.showDownloads,
+      showWebDownloads: s.showWebDownloads,
     })),
   );
-  const dlFilter = view.kind === "downloads" ? view.filter : null;
+  // Primary Downloads filter is active only when NOT in the web sub-view.
+  const onWeb = view.kind === "downloads" && !!view.web;
+  const dlFilter = view.kind === "downloads" && !view.web ? view.filter : null;
   const jobs = useTransfers((s) => s.jobs);
   const queue = useTransfers((s) => s.queue);
   const history = useHistory((s) => s.items);
@@ -68,6 +72,10 @@ export function Sidebar() {
     completed: history.filter((h) => h.status === "success").length,
     paused: queue.filter((q) => q.paused).length,
     failed: history.filter((h) => h.status === "failed").length,
+    // Web (secondary-lane) downloads, live + queued, for the Web Downloads entry.
+    web:
+      active.filter((j) => laneOf(j.accountId) === "secondary").length +
+      queue.filter((q) => laneOf(q.accountId) === "secondary" && !q.paused).length,
   };
   const totalSpeed = active.reduce((s, j) => s + Math.max(0, j.speed), 0);
 
@@ -270,7 +278,7 @@ export function Sidebar() {
         <div className="mb-1 flex items-center justify-between px-1">
           <span className="text-[11px] font-semibold tracking-wide text-[var(--text-3)]">DOWNLOADS</span>
           <button
-            onClick={() => showDownloads("active")}
+            onClick={() => showWebDownloads()}
             aria-label="Download from a web link"
             title="Download a file from a URL"
             className="flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent)] hover:bg-[var(--hover)]"
@@ -283,6 +291,14 @@ export function Sidebar() {
           <DownloadStat Icon={Check} label="Completed" count={counts.completed} onClick={() => showDownloads("completed")} active={dlFilter === "completed"} />
           <DownloadStat Icon={Pause} label="Paused" count={counts.paused} onClick={() => showDownloads("active")} active={false} />
           <DownloadStat Icon={AlertCircle} label="Failed" count={counts.failed} onClick={() => showDownloads("failed")} active={dlFilter === "failed"} />
+          <DownloadStat
+            Icon={Globe}
+            label="Web Downloads"
+            count={counts.web}
+            onClick={() => showWebDownloads()}
+            active={onWeb}
+            title="Downloads grabbed from web links (URLs)"
+          />
         </div>
       </div>
 
@@ -308,6 +324,7 @@ function DownloadStat({
   accent,
   onClick,
   active,
+  title,
 }: {
   Icon: typeof Download;
   label: string;
@@ -315,10 +332,12 @@ function DownloadStat({
   accent?: boolean;
   onClick?: () => void;
   active?: boolean;
+  title?: string;
 }) {
   return (
     <button
       onClick={onClick}
+      title={title}
       className={`flex items-center gap-3 rounded-[8px] px-3 py-2 text-sm ${
         active ? "bg-[var(--hover)] text-[var(--text)]" : "text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
       }`}

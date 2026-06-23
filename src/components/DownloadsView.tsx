@@ -7,7 +7,7 @@ import { useHistory } from "../store/history";
 import { fileType } from "../lib/file-types";
 import { laneOf } from "../lib/lane";
 import { formatBytes, formatSpeed, formatEta } from "../lib/format";
-import { UrlDownload } from "./UrlDownload";
+import { GeneralDownloads } from "./GeneralDownloads";
 import type { JobStatus } from "../lib/tauri/commands";
 
 /** id → display label, so rows look up account names without scanning `accounts`. */
@@ -51,6 +51,19 @@ function isGated(q: QueueItem): boolean {
 }
 
 export function DownloadsView({ filter }: { filter: DownloadFilter }) {
+  // AppShell mounts this view for BOTH the primary Drive/Dropbox transfers and
+  // the GENERAL / WEB DOWNLOADS sub-view (they share the "downloads" view kind).
+  // When `web` is set we delegate entirely to <GeneralDownloads/>; otherwise we
+  // render the primary transfers list below.
+  const web = useApp((s) => (s.view.kind === "downloads" ? s.view.web : false));
+  const webCategory = useApp((s) => (s.view.kind === "downloads" ? s.view.category : undefined));
+  const webDetail = useApp((s) => (s.view.kind === "downloads" ? s.view.detail : undefined));
+  if (web) return <GeneralDownloads filter={webCategory ?? "All"} detail={webDetail} />;
+
+  return <PrimaryDownloads filter={filter} />;
+}
+
+function PrimaryDownloads({ filter }: { filter: DownloadFilter }) {
   const showDownloads = useApp((s) => s.showDownloads);
   // Narrow selectors: the data slices (jobs/queue) re-render this view as they
   // change, while the action slice is shallow-compared so its stable refs never
@@ -76,9 +89,18 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
     return (id: string) => byId.get(id) ?? id;
   }, [accounts]);
 
-  const active = jobs.filter((j) => !j.finished && !j.cancelled);
+  // The primary Downloads view now shows ONLY Drive/Dropbox (primary-lane)
+  // transfers; web (secondary-lane) downloads live in the GENERAL DOWNLOADS view.
+  const primaryJobs = useMemo(() => jobs.filter((j) => laneOf(j.accountId) === "primary"), [jobs]);
+  const primaryQueue = useMemo(() => queue.filter((q) => laneOf(q.accountId) === "primary"), [queue]);
+  const primaryHistory = useMemo(
+    () => history.filter((h) => laneOf(h.accountId) === "primary"),
+    [history],
+  );
+
+  const active = primaryJobs.filter((j) => !j.finished && !j.cancelled);
   const showActive = filter === "all" || filter === "active";
-  const histFiltered = history.filter((h) =>
+  const histFiltered = primaryHistory.filter((h) =>
     filter === "completed" ? h.status === "success" : filter === "failed" ? h.status !== "success" : true,
   );
   const showHistory = filter !== "active";
@@ -87,15 +109,11 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between px-6 pt-6">
         <h1 className="text-lg font-semibold text-[var(--text)]">Downloads</h1>
-        {history.length > 0 && (
+        {primaryHistory.length > 0 && (
           <button onClick={() => clear()} className="text-xs text-[var(--text-3)] hover:text-[var(--text)]">
             Clear history
           </button>
         )}
-      </div>
-
-      <div className="px-6 pt-4">
-        <UrlDownload />
       </div>
 
       <div className="flex gap-1 px-6 py-3">
@@ -113,7 +131,7 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-6 pb-4">
-        {showActive && (active.length > 0 || queue.length > 0) && (
+        {showActive && (active.length > 0 || primaryQueue.length > 0) && (
           <div className="mb-4">
             <div className="mb-2 text-xs font-semibold tracking-wide text-[var(--text-3)]">IN PROGRESS</div>
             <div className="flex flex-col gap-1.5">
@@ -146,7 +164,7 @@ export function DownloadsView({ filter }: { filter: DownloadFilter }) {
                   </div>
                 );
               })}
-              {queue.map((q, i) => {
+              {primaryQueue.map((q, i) => {
                 const ft = fileType(q.item.name, q.item.isDir);
                 return (
                   <div key={q.id} className="flex items-center gap-3 rounded-[9px] border border-[var(--border)] px-4 py-3">

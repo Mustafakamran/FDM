@@ -3,12 +3,24 @@ import { listAccounts, removeAccount, type Account } from "../lib/tauri/commands
 import { useIndex } from "./index-store";
 import { useToasts } from "./toast";
 import { prettyLabel } from "./account-meta";
+import type { Category } from "../lib/categories";
+
+/** Category filter for the GENERAL / WEB DOWNLOADS view ("All" passes all). */
+export type WebCategoryFilter = "All" | Category;
 
 export type Section = "all" | "recent" | "starred" | "shared";
 
 export type View =
   | { kind: "browse"; accountId: string; section: Section; path: string }
-  | { kind: "downloads"; filter: DownloadFilter }
+  // The Downloads area. `web` selects the GENERAL / WEB DOWNLOADS sub-view
+  // (secondary-lane http/ytdlp jobs) instead of the primary Drive/Dropbox
+  // transfers list; `detail` pins one web download open in the detail panel
+  // (keyed by its job id as `j<jobId>`, or a queue id). It is exposed as a
+  // distinct top-level destination ("web-downloads") via showWebDownloads(),
+  // but shares the `downloads` view kind so the shared app router (AppShell)
+  // mounts <DownloadsView/> for it without needing a per-kind branch edit —
+  // DownloadsView itself switches to <GeneralDownloads/> when `web` is set.
+  | { kind: "downloads"; filter: DownloadFilter; web?: boolean; detail?: string; category?: WebCategoryFilter }
   | { kind: "review"; accountId: string; target: ReviewTarget }
   | { kind: "accounts" };
 
@@ -33,6 +45,12 @@ interface AppState {
   selectAccount: (accountId: string) => void;
   openReview: (accountId: string, target: ReviewTarget) => void;
   showDownloads: (filter: DownloadFilter) => void;
+  /** Open the GENERAL / WEB DOWNLOADS view (secondary-lane http/ytdlp jobs). */
+  showWebDownloads: () => void;
+  /** Pin (or, with undefined, clear) one web download in the detail panel. */
+  openWebDownloadDetail: (id: string | undefined) => void;
+  /** Set the category filter on the web downloads view. */
+  setWebCategory: (category: WebCategoryFilter) => void;
   setSection: (section: Section) => void;
   setPath: (path: string) => void;
   loadAccounts: () => Promise<void>;
@@ -51,6 +69,20 @@ export const useApp = create<AppState>((set, get) => ({
   openReview: (accountId, target) => set({ view: { kind: "review", accountId, target } }),
 
   showDownloads: (filter) => set({ view: { kind: "downloads", filter } }),
+
+  showWebDownloads: () => set({ view: { kind: "downloads", filter: "all", web: true, category: "All" } }),
+
+  openWebDownloadDetail: (id) =>
+    set((s) =>
+      s.view.kind === "downloads" && s.view.web ? { view: { ...s.view, detail: id } } : s,
+    ),
+
+  setWebCategory: (category) =>
+    set((s) =>
+      s.view.kind === "downloads" && s.view.web
+        ? { view: { ...s.view, category, detail: undefined } }
+        : { view: { kind: "downloads", filter: "all", web: true, category } },
+    ),
 
   setSection: (section) =>
     set((s) =>

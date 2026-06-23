@@ -9,7 +9,7 @@ import {
 } from "../lib/tauri/commands";
 import { loadDlSettings, toDownloadConfig } from "../lib/dl-settings";
 import { laneOf, type Lane } from "../lib/lane";
-import { useHistory } from "./history";
+import { useHistory, type JobStats } from "./history";
 import { useToasts } from "./toast";
 
 const CONCURRENCY_KEY = "download_concurrency";
@@ -88,6 +88,29 @@ export interface QueueItem {
 interface InflightItem extends QueueItem {
   jobId: number;
   bytes: number;
+  /**
+   * Stats accumulated from the 1s poll speed samples while in flight. Folded
+   * into the history entry on finish (see refresh()). Optional so persisted
+   * pre-stats in-flight items still validate after an upgrade.
+   */
+  stats?: JobStats;
+}
+
+/**
+ * Fold one poll speed sample into a job's accumulated stats. Pure (timestamp
+ * passed in) so it can be unit-tested.
+ *
+ * - startedAt is set on the FIRST observation and never moves.
+ * - peakSpeed tracks the max sample; minSpeed the min of NON-ZERO samples
+ *   (a 0 sample is a stall/ramp, not a meaningful floor).
+ * - lastAt records the most recent observation (a finish-time fallback).
+ */
+export function accrueStats(prev: JobStats | undefined, speed: number, at: number): JobStats {
+  const startedAt = prev?.startedAt ?? at;
+  const peakSpeed = Math.max(prev?.peakSpeed ?? 0, speed > 0 ? speed : 0);
+  const minSpeed =
+    speed > 0 ? (prev?.minSpeed != null ? Math.min(prev.minSpeed, speed) : speed) : prev?.minSpeed;
+  return { startedAt, peakSpeed, minSpeed, lastAt: at };
 }
 
 function readJson<T>(key: string): T[] {
@@ -418,7 +441,10 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     for (const j of jobs) {
       if ((j.finished || j.cancelled) && !pausedJobIds.has(j.jobId)) {
         const inf = get().inflight.find((i) => i.jobId === j.jobId);
-        useHistory.getState().record(j, inf?.item);
+        // Fold the final sample in too so a job that finishes between ticks
+        // still has a startedAt/lastAt even if it was never seen mid-flight.
+        const stats = accrueStats(inf?.stats, j.speed, Date.now());
+        useHistory.getState().record(j, inf?.item, stats);
       }
       if (j.finished && !j.success && !j.cancelled && !failedToasted.has(j.jobId)) {
         failedToasted.add(j.jobId);
@@ -433,17 +459,22 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     if (!jobsEqual(jobs, get().jobs)) set({ jobs });
 
     // Reconcile persisted in-flight set against live jobs: drop finished/cancelled
-    // (and jobs that vanished), update live bytes for the rest.
+    // (and jobs that vanished), update live bytes + accrue speed stats for the rest.
+    const now = Date.now();
     const stillInflight: InflightItem[] = [];
     for (const inf of get().inflight) {
       const job = jobs.find((j) => j.jobId === inf.jobId);
       if (!job) continue; // cleared from tracking
       if (job.finished || job.cancelled) continue; // done — leaves the in-flight set
-      stillInflight.push({ ...inf, bytes: job.bytes });
+      stillInflight.push({ ...inf, bytes: job.bytes, stats: accrueStats(inf.stats, job.speed, now) });
     }
-    // Same short-circuit for the in-flight set: only set()/writeJson when the
-    // tracked bytes (or membership) changed, so an idle tick touches neither
-    // state nor localStorage.
+    // Short-circuit on a byte-for-byte idle tick: skip BOTH the localStorage
+    // write and the in-memory set() (per inflightEqual, which compares jobId +
+    // bytes). The stats we accrue here only ever change peak/min when bytes
+    // advance (a non-zero speed sample), so an idle tick has nothing new to
+    // commit — and committing would needlessly re-render every subscriber and
+    // break the no-op invariant. The finish-time record() folds in one final
+    // fresh sample, so the last-committed stats are all it needs.
     if (!inflightEqual(stillInflight, get().inflight)) {
       writeJson(INFLIGHT_KEY, stillInflight);
       set({ inflight: stillInflight });
