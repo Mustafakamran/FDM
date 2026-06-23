@@ -17,8 +17,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -547,10 +548,145 @@ fn download_http(url: &str, dest: &Path, h: &NativeHandles) -> Result<(), String
     std::fs::rename(&part, dest).map_err(|e| e.to_string())
 }
 
+// ---- yt-dlp (social / video URL) -------------------------------------------
+
+/// Resolve the absolute path of a bundled sidecar binary by name (e.g. "yt-dlp",
+/// "ffmpeg"), reusing Tauri's sidecar resolution so it works in both `tauri dev`
+/// and the packaged app. Mirrors the approach in `hls::setup`.
+fn sidecar_path(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+    use tauri_plugin_shell::ShellExt;
+    let cmd = app
+        .shell()
+        .sidecar(name)
+        .map_err(|e| format!("resolve {name} sidecar: {e}"))?;
+    let std_cmd: std::process::Command = cmd.into();
+    Ok(PathBuf::from(std_cmd.get_program()))
+}
+
+/// Build the yt-dlp argument vector for downloading `url` into `dest_dir`.
+///
+/// `--no-playlist` keeps a playlist URL to the single clicked video; `--newline`
+/// makes progress one line each so we can parse percentages; `--no-part` writes
+/// straight to the final file; `--ffmpeg-location` points at the bundled ffmpeg so
+/// merging/remuxing never needs a system install. The output template caps the
+/// title to 200 chars so long titles can't blow the filesystem name limit.
+fn ytdlp_args(url: &str, dest_dir: &Path, ffmpeg_dir: &Path) -> Vec<String> {
+    vec![
+        "--no-playlist".into(),
+        "--newline".into(),
+        "--no-part".into(),
+        "--ffmpeg-location".into(),
+        ffmpeg_dir.to_string_lossy().into_owned(),
+        "-o".into(),
+        format!("{}/%(title).200s.%(ext)s", dest_dir.to_string_lossy()),
+        url.to_string(),
+    ]
+}
+
+/// Parse a yt-dlp `--newline` progress line into a fractional progress in [0,1].
+///
+/// yt-dlp prints lines like `[download]  42.5% of  10.00MiB at  1.20MiB/s ETA ...`.
+/// We only extract the percentage; bytes are derived by the caller against a
+/// best-effort total. Returns `None` for any line that is not a download-percent
+/// line (titles, merger output, warnings, …).
+fn parse_ytdlp_percent(line: &str) -> Option<f64> {
+    let rest = line.trim_start().strip_prefix("[download]")?.trim_start();
+    let pct = rest.split('%').next()?.trim();
+    let v: f64 = pct.parse().ok()?;
+    if (0.0..=100.0).contains(&v) {
+        Some(v / 100.0)
+    } else {
+        None
+    }
+}
+
+/// Build a Command that does not flash a console window on Windows (the raw
+/// std::process::Command drops the flag Tauri's own Command would set).
+fn no_window_command<P: AsRef<std::ffi::OsStr>>(program: P) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
+/// Download a social/video URL with the bundled yt-dlp sidecar into `dest_dir`.
+///
+/// Spawns yt-dlp synchronously, streaming `--newline` stdout to approximate
+/// progress against the job's best-effort total (`h` carries no real size for a
+/// URL, so percent drives an estimated byte figure). On `h.cancelled` the child is
+/// killed. Success is exit code 0.
+fn download_ytdlp(app: &AppHandle, url: &str, dest_dir: &Path, h: &NativeHandles) -> Result<(), String> {
+    std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
+    let ytdlp = sidecar_path(app, "yt-dlp")?;
+    let ffmpeg = sidecar_path(app, "ffmpeg")?;
+    // yt-dlp wants the *directory* containing ffmpeg, not the binary path.
+    let ffmpeg_dir = ffmpeg.parent().map(Path::to_path_buf).unwrap_or(ffmpeg.clone());
+
+    let args = ytdlp_args(url, dest_dir, &ffmpeg_dir);
+    let mut child = no_window_command(&ytdlp)
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn yt-dlp: {e}"))?;
+
+    // Best-effort total so the progress bar moves: a video URL has no known size,
+    // so we map percent onto a nominal 100 MiB scale purely for the UI. The total
+    // is corrected by the frontend when the file lands, but progress reads smoothly.
+    const NOMINAL_TOTAL: f64 = 100.0 * 1024.0 * 1024.0;
+
+    if let Some(stdout) = child.stdout.take() {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if h.cancelled.load(Ordering::SeqCst) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("paused".into());
+            }
+            if let Some(frac) = parse_ytdlp_percent(&line) {
+                h.transferred.store((frac * NOMINAL_TOTAL) as i64, Ordering::SeqCst);
+            }
+        }
+    }
+
+    // Drain stderr for a useful error message before reaping.
+    let mut stderr_buf = String::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = stderr.read_to_string(&mut stderr_buf);
+    }
+
+    let status = child.wait().map_err(|e| format!("yt-dlp wait: {e}"))?;
+    if h.cancelled.load(Ordering::SeqCst) {
+        return Err("paused".into());
+    }
+    if status.success() {
+        h.transferred.store(NOMINAL_TOTAL as i64, Ordering::SeqCst);
+        Ok(())
+    } else {
+        let tail: String = stderr_buf.lines().rev().take(3).collect::<Vec<_>>().join(" ");
+        let tail = tail.chars().take(300).collect::<String>();
+        Err(format!("yt-dlp failed ({status}): {tail}"))
+    }
+}
+
 /// Worker body for one queued item (a file or a whole folder).
 pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, item: DownloadItem, dest: String, connections: usize, h: NativeHandles) {
     let connections = if connections == 0 { DEFAULT_CONNECTIONS } else { connections };
     let result = (|| -> Result<(), String> {
+        // yt-dlp downloads run the sidecar (it resolves the real media + filename
+        // itself), so they short-circuit before the cloud auth/engine setup. The
+        // URL is carried in the item's `id`; yt-dlp writes into the dest folder.
+        if provider::kind_of(&account_id) == Kind::Ytdlp {
+            if item.is_dir {
+                return Err("folders not supported for media URL downloads".into());
+            }
+            return download_ytdlp(&app, &item.id, Path::new(&dest), &h);
+        }
+
         let auth = Arc::new(Auth::new(&app, conn.clone(), &account_id)?);
         let client = reqwest::blocking::Client::builder()
             .connect_timeout(Duration::from_secs(30))
@@ -621,6 +757,42 @@ mod tests {
         assert_eq!(back.block, BLOCK);
         assert_eq!(back.done, vec![true, false, true]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ytdlp_args_have_flags_template_and_url() {
+        let args = ytdlp_args(
+            "https://x.test/watch?v=abc",
+            Path::new("/downloads"),
+            Path::new("/bin"),
+        );
+        assert!(args.contains(&"--no-playlist".to_string()));
+        assert!(args.contains(&"--newline".to_string()));
+        assert!(args.contains(&"--no-part".to_string()));
+        assert!(args.contains(&"--ffmpeg-location".to_string()));
+        assert!(args.contains(&"/bin".to_string()));
+        // Output template lands under the dest dir with a length-capped title.
+        assert!(args.iter().any(|a| a == "/downloads/%(title).200s.%(ext)s"));
+        // The URL is the final positional argument.
+        assert_eq!(args.last().unwrap(), "https://x.test/watch?v=abc");
+        // -o precedes its template value.
+        let oi = args.iter().position(|a| a == "-o").unwrap();
+        assert_eq!(args[oi + 1], "/downloads/%(title).200s.%(ext)s");
+    }
+
+    #[test]
+    fn parse_ytdlp_percent_extracts_download_lines_only() {
+        assert_eq!(
+            parse_ytdlp_percent("[download]  42.5% of 10.00MiB at 1.20MiB/s ETA 00:05"),
+            Some(0.425)
+        );
+        assert_eq!(parse_ytdlp_percent("[download]   0.0% of ~12.00MiB"), Some(0.0));
+        assert_eq!(parse_ytdlp_percent("[download] 100% of 5.00MiB"), Some(1.0));
+        // Non-progress lines yield nothing.
+        assert_eq!(parse_ytdlp_percent("[youtube] abc: Downloading webpage"), None);
+        assert_eq!(parse_ytdlp_percent("[Merger] Merging formats into \"out.mp4\""), None);
+        assert_eq!(parse_ytdlp_percent("[download] Destination: out.mp4"), None);
+        assert_eq!(parse_ytdlp_percent(""), None);
     }
 
     #[test]

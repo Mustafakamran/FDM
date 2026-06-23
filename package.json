@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "fetch:rclone": "node scripts/fetch-rclone.mjs",
-    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs"
+    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs",
+    "fetch:ytdlp": "node scripts/fetch-ytdlp.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

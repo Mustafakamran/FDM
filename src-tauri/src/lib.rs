@@ -5,6 +5,7 @@ pub mod drive;
 pub mod dropbox;
 pub mod hls;
 pub mod index;
+pub mod ingest;
 pub mod locate;
 pub mod provider;
 pub mod rclone;
@@ -63,6 +64,7 @@ pub fn run() {
             rc_call,
             write_binary_file,
             stream::stream_base,
+            ingest::ingest_token,
             bdm::bdm_get_config,
             bdm::bdm_set_config,
             accounts::list_accounts,
@@ -94,6 +96,9 @@ pub fn run() {
             if let Err(e) = stream::start_stream_server(&handle) {
                 eprintln!("stream server failed to start: {e}");
             }
+            // Loopback ingest server for the FDM browser extension (best-effort;
+            // a taken port just disables browser ingest, logged inside).
+            ingest::start_ingest_server(&handle);
             // Resolve the ffmpeg/ffprobe sidecars + HLS cache dir (best-effort;
             // failure just leaves HLS unavailable and the player uses direct /media).
             hls::setup(&handle);
