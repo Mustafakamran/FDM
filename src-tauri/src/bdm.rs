@@ -273,7 +273,7 @@ fn download_project(
                 let fid = drive_folder_id(&link).ok_or("couldn't find a Drive folder id in the link")?;
                 let (rt, cid, csec) = fetch_drive_creds(c, &cfg.portal_url, key)?;
                 let acct = create_drivelink_with_creds(conn, &label, &fid, &rt, &cid, &csec)?;
-                let item = DownloadItem { path: String::new(), name: couple.clone(), is_dir: true, size: 0, id: String::new() };
+                let item = DownloadItem { path: String::new(), name: couple.clone(), is_dir: true, size: 0, id: String::new(), headers: Default::default() };
                 crate::transfer::download_item(app.clone(), conn.clone(), acct.clone(), item, dest_str.clone(), CONNECTIONS, handles.clone());
                 crate::accounts::delete_remote(conn, &acct);
                 if handles.success.load(Ordering::SeqCst) {

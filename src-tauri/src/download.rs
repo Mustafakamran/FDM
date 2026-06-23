@@ -29,6 +29,11 @@ pub struct DownloadItem {
     /// Backend file id — required to stream a single Drive file (empty otherwise).
     #[serde(default)]
     pub id: String,
+    /// Extra HTTP request headers for direct (Http) downloads — notably
+    /// `Referer`, `Cookie`, and `User-Agent` — so cookie/referer-gated direct
+    /// downloads (mediafire/filecr/"save image as") succeed.
+    #[serde(default)]
+    pub headers: std::collections::HashMap<String, String>,
 }
 
 /// A tracked job (what we remember after launching).
@@ -372,7 +377,14 @@ mod tests {
     use super::*;
 
     fn item(path: &str, name: &str, is_dir: bool, size: i64) -> DownloadItem {
-        DownloadItem { path: path.into(), name: name.into(), is_dir, size, id: String::new() }
+        DownloadItem {
+            path: path.into(),
+            name: name.into(),
+            is_dir,
+            size,
+            id: String::new(),
+            headers: Default::default(),
+        }
     }
 
     #[test]

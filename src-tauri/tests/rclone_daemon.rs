@@ -222,6 +222,7 @@ fn rclone_async_copyfile_completes_locally() {
         is_dir: false,
         size: content.len() as i64,
         id: String::new(),
+        headers: Default::default(),
     };
     let (endpoint, params) = build_copy(&src.to_string_lossy(), &item, &dst.to_string_lossy());
     assert_eq!(endpoint, "operations/copyfile");

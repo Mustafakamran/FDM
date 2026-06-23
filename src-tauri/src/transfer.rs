@@ -15,7 +15,7 @@ use crate::provider::{self, Kind};
 use crate::rclone::supervisor::{rc_post, RcConnection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -480,11 +480,20 @@ fn enumerate_folder(app: &AppHandle, conn: &RcConnection, account_id: &str, item
     Ok(tasks)
 }
 
+/// Case-insensitive lookup of a request header by name (the frontend threads
+/// `Referer`/`Cookie`/`User-Agent`, but match any casing defensively).
+fn header_lookup<'a>(headers: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
+}
+
 /// Stream a generic web (HTTP/HTTPS) URL to `dest`. Unlike the block engine, the
 /// size is usually unknown and the server may not support Range, so we sequentially
 /// stream the body into a `.fdmpart`, resuming via Range when possible and
 /// restarting if the server ignores it. `url` is carried in the item's `fid`.
-fn download_http(url: &str, dest: &Path, h: &NativeHandles) -> Result<(), String> {
+fn download_http(url: &str, dest: &Path, headers: &HashMap<String, String>, h: &NativeHandles) -> Result<(), String> {
     if let Some(p) = dest.parent() {
         std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
     }
@@ -495,9 +504,21 @@ fn download_http(url: &str, dest: &Path, h: &NativeHandles) -> Result<(), String
         .build()
         .map_err(|e| e.to_string())?;
 
+    // A User-Agent from the item headers overrides the default browser-ish UA
+    // (some hosts gate on the originating browser's exact UA); otherwise keep
+    // HTTP_UA. Referer/Cookie are forwarded when present so referer/cookie-gated
+    // direct downloads (mediafire/filecr/"save image as") succeed.
+    let ua = header_lookup(headers, "user-agent").unwrap_or(HTTP_UA);
+
     // Resume from any partial via Range.
     let mut offset = len_of(&part);
-    let mut req = client.get(url).header("User-Agent", HTTP_UA);
+    let mut req = client.get(url).header("User-Agent", ua);
+    if let Some(referer) = header_lookup(headers, "referer") {
+        req = req.header("Referer", referer);
+    }
+    if let Some(cookie) = header_lookup(headers, "cookie") {
+        req = req.header("Cookie", cookie);
+    }
     if offset > 0 {
         req = req.header("Range", format!("bytes={offset}-"));
     }
@@ -570,17 +591,37 @@ fn sidecar_path(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
 /// straight to the final file; `--ffmpeg-location` points at the bundled ffmpeg so
 /// merging/remuxing never needs a system install. The output template caps the
 /// title to 200 chars so long titles can't blow the filesystem name limit.
-fn ytdlp_args(url: &str, dest_dir: &Path, ffmpeg_dir: &Path) -> Vec<String> {
-    vec![
+///
+/// The `-f` selection + `--merge-output-format`/`--remux-video` force a PLAYABLE
+/// mp4: prefer an H.264 (avc1) mp4 video stream + m4a audio, falling back to any
+/// mp4 video+audio, then a progressive mp4, then best — and remux into an mp4
+/// container so QuickTime/the in-app player can always play it. When a `referrer`
+/// is known it's passed as a `Referer` request header so referer-gated media
+/// (embeds, some CDNs) resolves.
+fn ytdlp_args(url: &str, dest_dir: &Path, ffmpeg_dir: &Path, referrer: Option<&str>) -> Vec<String> {
+    let mut args = vec![
         "--no-playlist".into(),
         "--newline".into(),
         "--no-part".into(),
+        "-f".into(),
+        "bv*[ext=mp4][vcodec^=avc1]+ba[ext=m4a]/bv*[ext=mp4]+ba/b[ext=mp4]/b".into(),
+        "--merge-output-format".into(),
+        "mp4".into(),
+        "--remux-video".into(),
+        "mp4".into(),
         "--ffmpeg-location".into(),
         ffmpeg_dir.to_string_lossy().into_owned(),
         "-o".into(),
         format!("{}/%(title).200s.%(ext)s", dest_dir.to_string_lossy()),
-        url.to_string(),
-    ]
+    ];
+    if let Some(ref_url) = referrer {
+        if !ref_url.is_empty() {
+            args.push("--add-header".into());
+            args.push(format!("Referer: {ref_url}"));
+        }
+    }
+    args.push(url.to_string());
+    args
 }
 
 /// Parse a yt-dlp `--newline` progress line into a fractional progress in [0,1].
@@ -619,14 +660,14 @@ fn no_window_command<P: AsRef<std::ffi::OsStr>>(program: P) -> Command {
 /// progress against the job's best-effort total (`h` carries no real size for a
 /// URL, so percent drives an estimated byte figure). On `h.cancelled` the child is
 /// killed. Success is exit code 0.
-fn download_ytdlp(app: &AppHandle, url: &str, dest_dir: &Path, h: &NativeHandles) -> Result<(), String> {
+fn download_ytdlp(app: &AppHandle, url: &str, dest_dir: &Path, referrer: Option<&str>, h: &NativeHandles) -> Result<(), String> {
     std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
     let ytdlp = sidecar_path(app, "yt-dlp")?;
     let ffmpeg = sidecar_path(app, "ffmpeg")?;
     // yt-dlp wants the *directory* containing ffmpeg, not the binary path.
     let ffmpeg_dir = ffmpeg.parent().map(Path::to_path_buf).unwrap_or(ffmpeg.clone());
 
-    let args = ytdlp_args(url, dest_dir, &ffmpeg_dir);
+    let args = ytdlp_args(url, dest_dir, &ffmpeg_dir, referrer);
     let mut child = no_window_command(&ytdlp)
         .args(&args)
         .stdout(Stdio::piped())
@@ -684,7 +725,8 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
             if item.is_dir {
                 return Err("folders not supported for media URL downloads".into());
             }
-            return download_ytdlp(&app, &item.id, Path::new(&dest), &h);
+            let referrer = header_lookup(&item.headers, "referer");
+            return download_ytdlp(&app, &item.id, Path::new(&dest), referrer, &h);
         }
 
         let auth = Arc::new(Auth::new(&app, conn.clone(), &account_id)?);
@@ -719,7 +761,7 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
             // Generic web URLs stream (unknown size / no Range); cloud files use the
             // multi-connection block engine. The URL is carried in the item's `fid`.
             if auth.kind == Kind::Http {
-                download_http(&t.fid, &t.dest, &h)?;
+                download_http(&t.fid, &t.dest, &item.headers, &h)?;
             } else {
                 download_file(&auth, &client, t, &h, connections)?;
             }
@@ -765,12 +807,26 @@ mod tests {
             "https://x.test/watch?v=abc",
             Path::new("/downloads"),
             Path::new("/bin"),
+            None,
         );
         assert!(args.contains(&"--no-playlist".to_string()));
         assert!(args.contains(&"--newline".to_string()));
         assert!(args.contains(&"--no-part".to_string()));
         assert!(args.contains(&"--ffmpeg-location".to_string()));
         assert!(args.contains(&"/bin".to_string()));
+
+        // Forces a playable mp4: H.264 mp4 + m4a preferred, then any mp4, then best,
+        // remuxed/merged into an mp4 container.
+        let fi = args.iter().position(|a| a == "-f").unwrap();
+        assert_eq!(
+            args[fi + 1],
+            "bv*[ext=mp4][vcodec^=avc1]+ba[ext=m4a]/bv*[ext=mp4]+ba/b[ext=mp4]/b"
+        );
+        let mi = args.iter().position(|a| a == "--merge-output-format").unwrap();
+        assert_eq!(args[mi + 1], "mp4");
+        let ri = args.iter().position(|a| a == "--remux-video").unwrap();
+        assert_eq!(args[ri + 1], "mp4");
+
         // Output template lands under the dest dir with a length-capped title.
         assert!(args.iter().any(|a| a == "/downloads/%(title).200s.%(ext)s"));
         // The URL is the final positional argument.
@@ -778,6 +834,22 @@ mod tests {
         // -o precedes its template value.
         let oi = args.iter().position(|a| a == "-o").unwrap();
         assert_eq!(args[oi + 1], "/downloads/%(title).200s.%(ext)s");
+        // No referrer → no --add-header.
+        assert!(!args.contains(&"--add-header".to_string()));
+    }
+
+    #[test]
+    fn ytdlp_args_add_referer_header_when_present() {
+        let args = ytdlp_args(
+            "https://x.test/watch?v=abc",
+            Path::new("/downloads"),
+            Path::new("/bin"),
+            Some("https://ref.test/page"),
+        );
+        let hi = args.iter().position(|a| a == "--add-header").unwrap();
+        assert_eq!(args[hi + 1], "Referer: https://ref.test/page");
+        // The URL remains the final positional argument after the header.
+        assert_eq!(args.last().unwrap(), "https://x.test/watch?v=abc");
     }
 
     #[test]

@@ -54,11 +54,26 @@ pub fn ingest_token() -> Result<String, String> {
 }
 
 /// Body of a `POST /fdm/ingest` request.
+///
+/// The optional fields are additive: the extension may supply a suggested
+/// `filename`, the originating page's `referrer`, the page `cookie`/`ua` so
+/// cookie/referer-gated direct downloads succeed, and `prompt` to force the
+/// native save dialog regardless of the user's `askWhereToSave` setting.
 #[derive(Deserialize)]
 struct IngestBody {
     url: String,
     /// "file" (direct download) or "media" (social/video via yt-dlp).
     kind: String,
+    #[serde(default)]
+    filename: Option<String>,
+    #[serde(default)]
+    referrer: Option<String>,
+    #[serde(default)]
+    cookie: Option<String>,
+    #[serde(default)]
+    ua: Option<String>,
+    #[serde(default)]
+    prompt: Option<bool>,
 }
 
 fn header(k: &str, v: &str) -> Header {
@@ -173,7 +188,18 @@ fn handle(app: &AppHandle, version: &str, expected_token: &str, mut req: tiny_ht
                 return;
             }
 
-            let _ = app.emit("ingest-url", json!({ "url": parsed.url, "kind": kind }));
+            let _ = app.emit(
+                "ingest-url",
+                json!({
+                    "url": parsed.url,
+                    "kind": kind,
+                    "filename": parsed.filename,
+                    "referrer": parsed.referrer,
+                    "cookie": parsed.cookie,
+                    "ua": parsed.ua,
+                    "prompt": parsed.prompt,
+                }),
+            );
             respond_json(req, 200, json!({ "ok": true }));
         }
         _ => {
@@ -241,9 +267,38 @@ mod tests {
 
     #[test]
     fn ingest_body_parses() {
+        // Minimal body: the new optional fields default to None.
         let b: IngestBody =
             serde_json::from_str(r#"{"url":"https://x.test/v","kind":"media"}"#).unwrap();
         assert_eq!(b.url, "https://x.test/v");
         assert_eq!(b.kind, "media");
+        assert_eq!(b.filename, None);
+        assert_eq!(b.referrer, None);
+        assert_eq!(b.cookie, None);
+        assert_eq!(b.ua, None);
+        assert_eq!(b.prompt, None);
+    }
+
+    #[test]
+    fn ingest_body_parses_optional_fields() {
+        let b: IngestBody = serde_json::from_str(
+            r#"{
+                "url":"https://x.test/f.bin",
+                "kind":"file",
+                "filename":"f.bin",
+                "referrer":"https://x.test/page",
+                "cookie":"a=1; b=2",
+                "ua":"Mozilla/5.0 Test",
+                "prompt":true
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(b.url, "https://x.test/f.bin");
+        assert_eq!(b.kind, "file");
+        assert_eq!(b.filename.as_deref(), Some("f.bin"));
+        assert_eq!(b.referrer.as_deref(), Some("https://x.test/page"));
+        assert_eq!(b.cookie.as_deref(), Some("a=1; b=2"));
+        assert_eq!(b.ua.as_deref(), Some("Mozilla/5.0 Test"));
+        assert_eq!(b.prompt, Some(true));
     }
 }
