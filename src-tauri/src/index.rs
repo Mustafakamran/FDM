@@ -468,50 +468,14 @@ fn do_crawl(app: &AppHandle, account_id: &str, cancel: &Arc<AtomicBool>) -> Resu
     }
 }
 
-/// Incremental refresh: keep already-indexed top-level folders, only crawl ones
-/// missing from the index (failed earlier or newly added); drop deleted folders.
+/// Re-index ("Refresh"): a FULL fresh crawl, so newly added / changed / removed
+/// files are all reflected. An earlier version kept already-indexed top-level
+/// folders for speed, but that made a file added INSIDE an existing folder
+/// invisible until a full re-crawl — a correctness bug. The BFS crawl is cheap,
+/// cancellable, and shows progress, so Refresh now always re-lists from scratch.
+/// (For a single folder, the per-folder `index_folder` is the fast targeted path.)
 fn do_refresh(app: &AppHandle, account_id: &str, cancel: &Arc<AtomicBool>) -> Result<CrawlOutcome, String> {
-    // Dropbox links list in a single recursive call — incremental folder-diffing
-    // doesn't apply, so just re-list.
-    if account_id.starts_with("dropboxlink_") {
-        return Ok(CrawlOutcome::Done(crawl_dropbox_link(app, account_id)?));
-    }
-    let existing = match load_from_disk(app, account_id) {
-        Some(e) if !e.is_empty() => e,
-        _ => return do_crawl(app, account_id, cancel),
-    };
-    let conn = lock(&app.state::<RcloneState>().connection).clone().ok_or_else(|| "rclone not started".to_string())?;
-    let fs = account_fs(account_id)?;
-    let root = list_op(&conn, &fs, "", false)?;
-
-    // Top-level folder names still present, and which already have indexed contents.
-    let current_tops: std::collections::HashSet<String> = root.iter().map(|e| e.path.clone()).collect();
-    let indexed: std::collections::HashSet<String> = existing
-        .iter()
-        .filter(|e| e.path.contains('/'))
-        .filter_map(|e| e.path.split('/').next().map(|s| s.to_string()))
-        .collect();
-
-    let to_crawl: Vec<Entry> = root.iter().filter(|e| e.is_dir && !indexed.contains(&e.path)).cloned().collect();
-
-    // Keep nested entries under top folders that still exist (drop deleted ones
-    // and all old root-level entries — the fresh root list replaces those).
-    let kept: Vec<Entry> = existing
-        .into_iter()
-        .filter(|e| e.path.contains('/') && current_tops.contains(e.path.split('/').next().unwrap_or("")))
-        .collect();
-
-    let mut base_stats = stats_of(&root);
-    base_stats.merge(&stats_of(&kept));
-    match bfs_crawl(app, account_id, &conn, &fs, to_crawl, base_stats, cancel) {
-        Ok(sub) => {
-            let mut merged = root;
-            merged.extend(kept);
-            merged.extend(sub);
-            Ok(CrawlOutcome::Done(merged))
-        }
-        Err(Cancelled) => Ok(CrawlOutcome::Cancelled),
-    }
+    do_crawl(app, account_id, cancel)
 }
 
 /// On a cancelled crawl: mark status cancelled (keep any prior totals) and leave

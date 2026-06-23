@@ -204,7 +204,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           <button className={`px-2 py-1.5 ${!grid ? "bg-[var(--hover)] text-[var(--text)]" : "text-[var(--text-3)]"}`} onClick={() => setGrid(false)} aria-label="List view"><ListIcon size={15} /></button>
           <button className={`px-2 py-1.5 ${grid ? "bg-[var(--hover)] text-[var(--text)]" : "text-[var(--text-3)]"}`} onClick={() => setGrid(true)} aria-label="Grid view"><LayoutGrid size={15} /></button>
         </div>
-        <button className="rounded-[8px] border border-[var(--border)] p-1.5 text-[var(--text-3)] hover:text-[var(--text)] disabled:opacity-50" onClick={() => useIndex.getState().recrawl(account)} disabled={showCrawl} aria-label="Re-index"><RefreshCw size={15} /></button>
+        <button className="rounded-[8px] border border-[var(--border)] p-1.5 text-[var(--text-3)] hover:text-[var(--text)] disabled:opacity-50" onClick={() => useIndex.getState().recrawl(account)} disabled={showCrawl} aria-label="Re-index" title="Re-index (full refresh — picks up new/changed files)"><RefreshCw size={15} /></button>
       </div>
 
       {/* Body */}
