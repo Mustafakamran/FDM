@@ -3,12 +3,21 @@
 A dependency-free Manifest V3 extension (Chrome / Edge / any Chromium browser)
 that sends download links straight to the **FDM** desktop app.
 
+- **Intercept browser downloads (IDM-style)**: when a download starts and FDM is
+  running, the extension cancels the browser download and hands it to FDM
+  instead — together with the page's cookies, referrer and User-Agent so
+  cookie/referer-gated direct links still work. Toggle this in the popup
+  ("Intercept browser downloads", on by default). If FDM isn't reachable, the
+  browser download proceeds normally — downloads never break.
 - **Direct files** (`.zip`, `.mp4`, `.pdf`, `.dmg`, …): hover any download link and
-  click the small **⬇ FDM** button, or right-click → **Download with FDM**.
-- **Social / video pages** (YouTube, Instagram, TikTok, X/Twitter, Facebook,
-  Vimeo, …) or any page with a real `<video>`: click the floating
-  **Download video with FDM** pill, or right-click → **Download this page's
-  video with FDM**. These run through FDM's bundled yt-dlp engine.
+  click the small **⬇ FDM** button, or right-click → **Download with FDM** /
+  **Save image with FDM**.
+- **Social / video pages**: on **YouTube** a **Download with FDM** control is
+  injected into the player controls (next to settings / fullscreen). On other
+  media/social sites or any page with a real `<video>`, a **⬇ FDM** button is
+  pinned to the top-right corner of that video. You can also right-click →
+  **Download this page's video with FDM**. These run through FDM's bundled
+  yt-dlp engine.
 
 The extension never downloads anything itself — it just hands the URL to the
 FDM app over a loopback connection. FDM does the actual downloading into your
@@ -50,7 +59,7 @@ port, **53713**:
 | Method | Path          | Purpose                                                            |
 | ------ | ------------- | ------------------------------------------------------------------ |
 | `GET`  | `/fdm/ping`   | Detect FDM + check it's reachable. Returns `{ ok:true, version }`. |
-| `POST` | `/fdm/ingest` | Accept a download. Body `{ url, kind:"file"\|"media" }`.           |
+| `POST` | `/fdm/ingest` | Accept a download. Body `{ url, kind:"file"\|"media", filename?, referrer?, cookie?, ua?, prompt? }`. |
 
 Every `POST /fdm/ingest` carries the header `X-FDM-Token: <token>`. FDM compares
 it (constant-time) against its stored token and returns **401** if it's wrong.

@@ -36,9 +36,11 @@
     "activeTab",
     "scripting",
     "downloads",
-    "notifications"
+    "notifications",
+    "cookies"
   ],
   "host_permissions": [
-    "http://127.0.0.1:53713/*"
+    "http://127.0.0.1:53713/*",
+    "<all_urls>"
   ]
 }

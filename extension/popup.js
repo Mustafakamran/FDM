@@ -10,6 +10,7 @@ const $port = document.getElementById("port");
 const $save = document.getElementById("save");
 const $test = document.getElementById("test");
 const $reveal = document.getElementById("reveal");
+const $intercept = document.getElementById("intercept");
 const $status = document.getElementById("status");
 const $msg = $status.querySelector(".msg");
 
@@ -23,12 +24,14 @@ function setStatus(state, text) {
 // ---- Load persisted config --------------------------------------------------
 
 async function load() {
-  const { fdmToken = "", fdmPort = DEFAULT_PORT } = await chrome.storage.local.get([
-    "fdmToken",
-    "fdmPort",
-  ]);
+  const {
+    fdmToken = "",
+    fdmPort = DEFAULT_PORT,
+    fdmIntercept = true,
+  } = await chrome.storage.local.get(["fdmToken", "fdmPort", "fdmIntercept"]);
   $token.value = fdmToken;
   $port.value = fdmPort || DEFAULT_PORT;
+  $intercept.checked = fdmIntercept !== false;
 }
 
 // ---- Save -------------------------------------------------------------------
@@ -40,7 +43,8 @@ async function save() {
     fdmPort = DEFAULT_PORT;
     $port.value = DEFAULT_PORT;
   }
-  await chrome.storage.local.set({ fdmToken, fdmPort });
+  const fdmIntercept = !!$intercept.checked;
+  await chrome.storage.local.set({ fdmToken, fdmPort, fdmIntercept });
   setStatus("", fdmToken ? "Saved. Click Test connection." : "Saved (no token yet).");
 }
 
@@ -78,6 +82,12 @@ $test.addEventListener("click", async () => {
 
 $reveal.addEventListener("click", () => {
   $token.type = $token.type === "password" ? "text" : "password";
+});
+
+// Persist the interception toggle immediately so it takes effect without
+// requiring the user to click Save.
+$intercept.addEventListener("change", () => {
+  chrome.storage.local.set({ fdmIntercept: !!$intercept.checked });
 });
 
 // Save automatically when the popup closes / loses focus, so a pasted token

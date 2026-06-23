@@ -4,9 +4,10 @@
 //   (a) Decorate DIRECT download links (anchors whose href ends in a known
 //       downloadable extension) with a small, tasteful "⬇ FDM" button that
 //       appears on hover and sends { url, kind:"file" } to the background.
-//   (b) On known media/social sites OR any page that has a <video>, show a
-//       floating "Download video with FDM" pill that sends
-//       { url: location.href, kind:"media" }.
+//   (b) On YouTube, inject a "Download with FDM" control INTO the player's
+//       right-controls cluster. On other media/social sites or any generic
+//       <video>, anchor a "⬇ FDM" button to the TOP-RIGHT CORNER of that
+//       specific video element. Both send { url: location.href, kind:"media" }.
 //
 // All UI is rendered inside a single closed-ish ShadowRoot host appended to
 // <html>, so the page's CSS can't clobber our styling and ours can't leak.
@@ -63,11 +64,14 @@
 
   function send(url, kind, onResult) {
     try {
-      chrome.runtime.sendMessage({ type: "fdm:send", url, kind }, (res) => {
-        // chrome.runtime.lastError is read to avoid "Unchecked runtime.lastError".
-        const err = chrome.runtime.lastError;
-        if (typeof onResult === "function") onResult(err ? { ok: false } : res);
-      });
+      chrome.runtime.sendMessage(
+        { type: "fdm:send", url, kind, referrer: location.href },
+        (res) => {
+          // chrome.runtime.lastError is read to avoid "Unchecked runtime.lastError".
+          const err = chrome.runtime.lastError;
+          if (typeof onResult === "function") onResult(err ? { ok: false } : res);
+        }
+      );
     } catch (_) {
       if (typeof onResult === "function") onResult({ ok: false });
     }
@@ -115,37 +119,29 @@
     .fdm-btn.fdm-ok   { background: linear-gradient(180deg, #22c55e, #16a34a); }
     .fdm-btn.fdm-fail { background: linear-gradient(180deg, #ef4444, #dc2626); }
 
-    .fdm-pill {
-      position: fixed;
-      right: 18px;
-      bottom: 18px;
+    /* A compact button anchored to the TOP-RIGHT CORNER of a specific <video>. */
+    .fdm-vbtn {
+      position: absolute;
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      font: 600 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      gap: 6px;
+      font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       color: #fff;
-      background: linear-gradient(180deg, #3b82f6, #2563eb);
-      border: 1px solid rgba(0,0,0,.18);
-      border-radius: 999px;
-      padding: 10px 16px;
+      background: linear-gradient(180deg, rgba(59,130,246,.96), rgba(37,99,235,.96));
+      border: 1px solid rgba(0,0,0,.25);
+      border-radius: 8px;
+      padding: 7px 11px;
       cursor: pointer;
-      box-shadow: 0 6px 20px rgba(0,0,0,.3);
+      box-shadow: 0 4px 14px rgba(0,0,0,.4);
       pointer-events: auto;
       user-select: none;
-      transition: background .15s ease, transform .15s ease, opacity .15s ease;
+      white-space: nowrap;
+      transition: background .15s ease, transform .12s ease, opacity .15s ease;
     }
-    .fdm-pill:hover { transform: translateY(-1px); }
-    .fdm-pill:active { transform: translateY(0); }
-    .fdm-pill.fdm-ok   { background: linear-gradient(180deg, #22c55e, #16a34a); }
-    .fdm-pill.fdm-fail { background: linear-gradient(180deg, #ef4444, #dc2626); }
-    .fdm-pill .fdm-x {
-      margin-left: 2px;
-      opacity: .8;
-      font-weight: 700;
-      padding: 0 2px;
-      border-radius: 4px;
-    }
-    .fdm-pill .fdm-x:hover { opacity: 1; background: rgba(255,255,255,.18); }
+    .fdm-vbtn:hover { transform: translateY(-1px); background: linear-gradient(180deg, #2563eb, #1d4ed8); }
+    .fdm-vbtn:active { transform: translateY(0); }
+    .fdm-vbtn.fdm-ok   { background: linear-gradient(180deg, #22c55e, #16a34a); }
+    .fdm-vbtn.fdm-fail { background: linear-gradient(180deg, #ef4444, #dc2626); }
     .fdm-ico { font-size: 13px; line-height: 1; }
   `;
   shadow.appendChild(style);
@@ -300,81 +296,189 @@
   );
 
   // --------------------------------------------------------------------------
-  // (b) Floating media pill
+  // (b) Media "Download with FDM" button
+  //
+  // Two placements, IDM-style:
+  //   - YouTube: a real player control injected INTO .ytp-right-controls, next
+  //     to settings / fullscreen, so it lives with the native buttons.
+  //   - Any other media/social site or a generic sized <video>: a button
+  //     anchored to the TOP-RIGHT CORNER of that specific <video>, positioned
+  //     over the video (tracked via the shadow-root overlay layer).
   // --------------------------------------------------------------------------
-
-  let pill = null;
 
   function isMediaHost() {
     const h = location.hostname.replace(/^www\./, "");
     return MEDIA_HOSTS.some((m) => h === m || h.endsWith("." + m));
   }
 
-  function pageHasVideo() {
-    // A real, sized <video>, not a 0x0 tracking pixel.
-    const vids = document.querySelectorAll("video");
-    for (const v of vids) {
-      const r = v.getBoundingClientRect();
-      if (r.width >= 120 && r.height >= 80) return true;
-    }
-    return false;
+  function isYouTube() {
+    const h = location.hostname.replace(/^www\./, "");
+    return h === "youtube.com" || h === "m.youtube.com" || h === "youtu.be";
   }
 
-  function shouldShowPill() {
-    return isMediaHost() || pageHasVideo();
-  }
-
-  function buildPill() {
-    if (pill) return;
-    pill = document.createElement("div");
-    pill.className = "fdm-pill";
-    pill.innerHTML =
-      `<span class="fdm-ico">⬇</span><span class="fdm-label">Download video with FDM</span>` +
-      `<span class="fdm-x" title="Hide">✕</span>`;
-    layer.appendChild(pill);
-    mountHost();
-
-    const label = pill.querySelector(".fdm-label");
-
-    pill.addEventListener("click", (e) => {
-      // The little ✕ dismisses the pill for this page load.
-      if (e.target && e.target.classList.contains("fdm-x")) {
-        e.stopPropagation();
-        removePill();
-        pillDismissed = true;
-        return;
+  // Click handler shared by both placements: send the page URL as media.
+  function sendMediaFrom(btn, setLabel) {
+    const url = location.href;
+    if (setLabel) setLabel("Sending…");
+    send(url, "media", (res) => {
+      if (res && res.ok) {
+        btn.classList.add("fdm-ok");
+        if (setLabel) setLabel("Sent ✓");
+      } else {
+        btn.classList.add("fdm-fail");
+        if (setLabel) setLabel("Failed");
       }
-      const url = location.href;
-      label.textContent = "Sending…";
-      send(url, "media", (res) => {
-        if (res && res.ok) {
-          pill.classList.add("fdm-ok");
-          label.textContent = "Sent to FDM ✓";
-        } else {
-          pill.classList.add("fdm-fail");
-          label.textContent = "Failed — is FDM running?";
-        }
-        setTimeout(() => {
-          if (!pill) return;
-          pill.classList.remove("fdm-ok", "fdm-fail");
-          label.textContent = "Download video with FDM";
-        }, 2200);
-      });
+      setTimeout(() => {
+        btn.classList.remove("fdm-ok", "fdm-fail");
+        if (setLabel) setLabel(null);
+      }, 2200);
     });
   }
 
-  function removePill() {
-    if (pill && pill.parentNode) pill.parentNode.removeChild(pill);
-    pill = null;
+  // ---- YouTube: inject a .ytp-button control into .ytp-right-controls -------
+
+  const YT_BTN_ID = "fdm-yt-button";
+
+  function buildYouTubeButton() {
+    const right = document.querySelector(".ytp-right-controls");
+    if (!right) return false;
+    if (right.querySelector("#" + YT_BTN_ID)) return true; // de-duped
+
+    const btn = document.createElement("button");
+    btn.id = YT_BTN_ID;
+    btn.className = "ytp-button";
+    btn.title = "Download with FDM";
+    btn.setAttribute("aria-label", "Download with FDM");
+    // 36x36 viewBox to match native YouTube control icons; a download arrow.
+    btn.innerHTML =
+      '<svg height="100%" viewBox="0 0 36 36" width="100%" fill="#fff">' +
+      '<path d="M18 21.5l-5-5h3.2V10h3.6v6.5H26z" />' +
+      '<path d="M11 24.5h14v2H11z" />' +
+      "</svg>";
+    btn.style.verticalAlign = "top";
+
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      btn.style.opacity = "0.6";
+      sendMediaFrom(btn, null);
+      setTimeout(() => {
+        btn.style.opacity = "";
+      }, 2200);
+    });
+
+    // Insert as the first of the right-controls (before settings) so it sits
+    // alongside the native settings / fullscreen cluster.
+    right.insertBefore(btn, right.firstChild);
+    return true;
   }
 
-  let pillDismissed = false;
-
-  function refreshPill() {
-    if (pillDismissed) return;
-    if (shouldShowPill()) buildPill();
-    else removePill();
+  function refreshYouTubeButton() {
+    // YouTube re-renders the player chrome on navigation; (re)inject if needed.
+    buildYouTubeButton();
   }
+
+  // ---- Generic <video>: a corner button tracked over the element ----------
+  //
+  // We keep at most a handful of tracked videos. Each gets one overlay button
+  // in our shadow layer, kept positioned at the video's top-right corner.
+
+  const tracked = new Map(); // video element -> { btn }
+
+  function isSizedVideo(v) {
+    const r = v.getBoundingClientRect();
+    return r.width >= 160 && r.height >= 90;
+  }
+
+  function makeVideoButton(video) {
+    const btn = document.createElement("button");
+    btn.className = "fdm-vbtn";
+    btn.type = "button";
+    btn.innerHTML = `<span class="fdm-ico">⬇</span><span class="fdm-vlabel">FDM</span>`;
+    const label = btn.querySelector(".fdm-vlabel");
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      sendMediaFrom(btn, (t) => {
+        label.textContent = t == null ? "FDM" : t;
+      });
+    });
+    layer.appendChild(btn);
+    return btn;
+  }
+
+  function positionVideoButton(video, btn) {
+    const r = video.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) {
+      btn.style.display = "none";
+      return;
+    }
+    // Off-screen videos: hide the button.
+    if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) {
+      btn.style.display = "none";
+      return;
+    }
+    btn.style.display = "";
+    // Top-right corner of the video, nudged inside by a small margin.
+    const margin = 8;
+    const btnW = btn.offsetWidth || 64;
+    let left = r.right - btnW - margin;
+    let top = r.top + margin;
+    left = Math.max(2, Math.min(left, window.innerWidth - btnW - 2));
+    top = Math.max(2, top);
+    btn.style.left = `${left}px`;
+    btn.style.top = `${top}px`;
+  }
+
+  function refreshVideoButtons() {
+    // On YouTube we use the player control instead of corner buttons.
+    if (isYouTube()) {
+      // Tear down any stray corner buttons (e.g. after navigating into YT).
+      for (const [video, entry] of tracked) {
+        if (entry.btn && entry.btn.parentNode) entry.btn.parentNode.removeChild(entry.btn);
+        tracked.delete(video);
+      }
+      return;
+    }
+
+    const live = new Set();
+    const vids = document.querySelectorAll("video");
+    for (const v of vids) {
+      if (!isSizedVideo(v)) continue;
+      live.add(v);
+      if (!tracked.has(v)) {
+        mountHost();
+        tracked.set(v, { btn: makeVideoButton(v) });
+      }
+    }
+    // Remove buttons for videos that vanished or shrank away.
+    for (const [video, entry] of tracked) {
+      if (!live.has(video) || !video.isConnected) {
+        if (entry.btn && entry.btn.parentNode) entry.btn.parentNode.removeChild(entry.btn);
+        tracked.delete(video);
+      }
+    }
+    repositionAll();
+  }
+
+  function repositionAll() {
+    for (const [video, entry] of tracked) {
+      positionVideoButton(video, entry.btn);
+    }
+  }
+
+  function refreshMedia() {
+    if (isYouTube()) {
+      refreshYouTubeButton();
+      refreshVideoButtons(); // clears corner buttons on YT
+    } else if (isMediaHost() || document.querySelector("video")) {
+      refreshVideoButtons();
+    }
+  }
+
+  // Keep corner buttons glued to their videos while scrolling / resizing.
+  window.addEventListener("scroll", repositionAll, true);
+  window.addEventListener("resize", repositionAll, true);
 
   // --------------------------------------------------------------------------
   // SPA awareness: observe DOM mutations + URL changes (debounced).
@@ -388,10 +492,12 @@
     debounceTimer = setTimeout(() => {
       if (location.href !== lastUrl) {
         lastUrl = location.href;
-        // New "page" in an SPA — re-evaluate the pill from scratch.
-        pillDismissed = false;
+        // New "page" in an SPA — drop the old YouTube button so it re-injects
+        // into the fresh player chrome.
+        const stale = document.getElementById(YT_BTN_ID);
+        if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
       }
-      refreshPill();
+      refreshMedia();
     }, 400);
   }
 
@@ -426,7 +532,7 @@
   function boot() {
     mountHost();
     startObserving();
-    refreshPill();
+    refreshMedia();
   }
 
   if (document.readyState === "loading") {
