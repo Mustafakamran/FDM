@@ -1,7 +1,9 @@
 import { downloadDir } from "@tauri-apps/api/path";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useTransfers, filenameFromUrl, HTTP_ACCOUNT_ID } from "../store/transfers";
 import { useToasts } from "../store/toast";
+import { getAskWhereToSave } from "./ask-where";
 import type { DownloadItem } from "./tauri/commands";
 
 /**
@@ -17,10 +19,55 @@ export const FOLDER_KEY = "default_download_folder";
 /** The kind of capture the browser extension forwards. */
 export type IngestKind = "file" | "media";
 
-/** Shape of the Rust `ingest-url` event payload. */
+/**
+ * Shape of the Rust `ingest-url` event payload (also the JSON body the extension
+ * POSTs to /fdm/ingest). `url` + `kind` are required; the rest are additive
+ * refinements from the IDM-style grab:
+ *  - `filename`  — the suggested name (overrides the URL-derived guess).
+ *  - `referrer` / `cookie` / `ua` — request headers threaded into the download so
+ *    cookie/referer-gated direct links (mediafire/filecr/"save image as") work.
+ *  - `prompt`    — force the native save dialog for this capture regardless of the
+ *    `askWhereToSave` setting.
+ */
 export interface IngestPayload {
   url: string;
   kind: IngestKind;
+  filename?: string;
+  referrer?: string;
+  cookie?: string;
+  ua?: string;
+  prompt?: boolean;
+}
+
+/**
+ * Build the per-download request headers from the ingest payload. Only the keys
+ * that are actually present are emitted, so we never override the downloader's
+ * default User-Agent / send empty Referer/Cookie. Returns undefined when none are
+ * present (keeps the item lean and the headers field truly optional). Pure.
+ */
+export function headersForPayload(payload: IngestPayload): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+  if (payload.referrer) headers.Referer = payload.referrer;
+  if (payload.cookie) headers.Cookie = payload.cookie;
+  if (payload.ua) headers["User-Agent"] = payload.ua;
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+/** Best-effort filename for the suggested save path: explicit filename, else from URL. */
+export function suggestedName(payload: IngestPayload): string {
+  return payload.filename?.trim() || filenameFromUrl(payload.url);
+}
+
+/**
+ * Split an OS path chosen in the save dialog into a destination folder + leaf
+ * name. Handles both POSIX (`/`) and Windows (`\`) separators. If there is no
+ * separator the whole string is treated as the name and the folder is empty.
+ * Pure; unit-tested.
+ */
+export function splitSavePath(chosen: string): { dir: string; name: string } {
+  const idx = Math.max(chosen.lastIndexOf("/"), chosen.lastIndexOf("\\"));
+  if (idx < 0) return { dir: "", name: chosen };
+  return { dir: chosen.slice(0, idx), name: chosen.slice(idx + 1) };
 }
 
 /**
@@ -35,11 +82,23 @@ export function accountIdForKind(kind: IngestKind): string {
 
 /**
  * Build the download item for an ingested URL. The backend resolves the real
- * filename, so name is a best-effort guess from the URL and size is unknown.
- * Pure; unit-tested.
+ * filename, so `name` is a best-effort guess (the suggested filename when given,
+ * else derived from the URL) and size is unknown. Optional `headers` carry the
+ * Referer/Cookie/User-Agent for gated direct downloads. Pure; unit-tested.
  */
-export function itemForUrl(url: string): DownloadItem {
-  return { path: "", name: filenameFromUrl(url), isDir: false, size: 0, id: url };
+export function itemForUrl(
+  url: string,
+  name?: string,
+  headers?: Record<string, string>,
+): DownloadItem {
+  return {
+    path: "",
+    name: name?.trim() || filenameFromUrl(url),
+    isDir: false,
+    size: 0,
+    id: url,
+    ...(headers ? { headers } : {}),
+  };
 }
 
 /**
@@ -58,7 +117,16 @@ export async function resolveDest(): Promise<string> {
 }
 
 /**
- * Enqueue a single ingested URL into the default download folder and toast it.
+ * Enqueue a single ingested URL and toast it.
+ *
+ * Destination resolution:
+ *  - If the `askWhereToSave` setting is on OR the payload sets `prompt`, pop a
+ *    native save dialog seeded with `<defaultFolder>/<suggested filename>`. If the
+ *    user cancels, abort with no download. Otherwise split the chosen path into a
+ *    dest folder + item name.
+ *  - Else drop straight into the default download folder under the suggested name.
+ *
+ * Referer/Cookie/User-Agent from the payload ride along on `item.headers`.
  * Exported (and dependency-injectable) so it can be unit-tested without Tauri.
  */
 export async function ingest(
@@ -67,16 +135,42 @@ export async function ingest(
     enqueue?: (accountId: string, items: DownloadItem[], dest: string) => void;
     pushToast?: (msg: string) => void;
     dest?: () => Promise<string>;
+    askWhereToSave?: () => boolean;
+    saveDialog?: (opts: { defaultPath?: string }) => Promise<string | null>;
   } = {},
 ): Promise<void> {
   const url = payload.url?.trim();
   if (!url) return;
   const enqueue = deps.enqueue ?? useTransfers.getState().enqueue;
   const pushToast = deps.pushToast ?? ((m: string) => useToasts.getState().push(m, "success"));
-  const dest = await (deps.dest ?? resolveDest)();
-  const item = itemForUrl(url);
+  const askWhere = (deps.askWhereToSave ?? getAskWhereToSave)();
+  const saveDialog = deps.saveDialog ?? save;
+
+  const defaultFolder = await (deps.dest ?? resolveDest)();
+  const suggested = suggestedName(payload);
+  const headers = headersForPayload(payload);
+
+  let dest = defaultFolder;
+  let name = suggested;
+
+  if (askWhere || payload.prompt) {
+    const defaultPath = defaultFolder ? joinPath(defaultFolder, suggested) : suggested;
+    const chosen = await saveDialog({ defaultPath });
+    if (!chosen) return; // user cancelled — no download
+    const split = splitSavePath(chosen);
+    dest = split.dir;
+    name = split.name;
+  }
+
+  const item = itemForUrl(url, name, headers);
   enqueue(accountIdForKind(payload.kind), [item], dest);
   pushToast(`Added from browser: ${item.name}`);
+}
+
+/** Join a folder and a leaf with the folder's existing separator (POSIX default). */
+function joinPath(dir: string, name: string): string {
+  const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
+  return dir.endsWith("/") || dir.endsWith("\\") ? dir + name : dir + sep + name;
 }
 
 /**

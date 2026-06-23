@@ -63,6 +63,12 @@ export interface DownloadItem {
   size: number;
   /** Backend file id — needed to stream/resume a single Drive file. */
   id?: string;
+  /**
+   * Extra request headers for the streaming HTTP downloader (e.g. Referer,
+   * Cookie, User-Agent) so cookie/referer-gated direct downloads succeed. Maps to
+   * the Rust `DownloadItem.headers` field (#[serde(default)]).
+   */
+  headers?: Record<string, string>;
 }
 
 /** Live status of a download job. */

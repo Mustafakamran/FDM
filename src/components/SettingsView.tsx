@@ -8,6 +8,7 @@ import { useToasts } from "../store/toast";
 import { useTransfers } from "../store/transfers";
 import { useUpdater } from "../store/updater";
 import { loadDlSettings, saveDlSettings, type DlSettings } from "../lib/dl-settings";
+import { getAskWhereToSave, setAskWhereToSave } from "../lib/ask-where";
 
 const FOLDER_KEY = "default_download_folder";
 
@@ -40,6 +41,7 @@ export function SettingsView() {
   const [dl, setDl] = useState<DlSettings>(() => loadDlSettings());
   const [token, setToken] = useState<string | null>(null);
   const [tokenErr, setTokenErr] = useState(false);
+  const [askWhere, setAskWhere] = useState<boolean>(() => getAskWhereToSave());
 
   // Load the pairing token lazily when the Browser-extension tab is first opened
   // (it generates one on first read — no need to do it on every Settings mount).
@@ -60,6 +62,12 @@ export function SettingsView() {
       .writeText(token)
       .then(() => markSaved("token", "Token copied"))
       .catch(() => toast("Couldn't copy token", "error"));
+  }
+
+  function toggleAskWhere(on: boolean) {
+    setAskWhere(on);
+    setAskWhereToSave(on);
+    markSaved("askwhere", on ? "Will ask where to save" : "Saving to default folder");
   }
 
   function setDlField(k: keyof DlSettings, v: number) {
@@ -262,6 +270,28 @@ export function SettingsView() {
                 video lands in your default download folder.
               </li>
             </ol>
+          </Card>
+
+          <Card className="p-5">
+            <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Ask where to save</h2>
+            <p className="mb-4 text-xs text-[var(--text-3)]">
+              When on, a captured download opens a save dialog so you can pick the folder and name (seeded with the
+              suggested filename). When off, captures drop straight into your default download folder.
+            </p>
+            <div className="flex items-center justify-between gap-3">
+              <label
+                className="flex items-center gap-2 text-sm text-[var(--text)]"
+                title="Show a save dialog for each browser-captured download"
+              >
+                <input
+                  type="checkbox"
+                  checked={askWhere}
+                  onChange={(e) => toggleAskWhere(e.target.checked)}
+                />
+                Ask where to save (browser downloads)
+              </label>
+              {tick("askwhere")}
+            </div>
           </Card>
         </div>
       )}
