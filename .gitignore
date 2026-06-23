@@ -8,3 +8,4 @@ src-tauri/binaries/
 .tauri/
 *.key
 UPDATER_KEYS.txt
+extension.zip
