@@ -161,19 +161,11 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     // all / shared: the LIVE listing is the source of truth (instant). If it's
     // empty or failed, fall back to the background index so folders still show.
     if (liveItems && liveItems.length) return liveItems;
+    // Fall back to the index ONLY if one already exists (from Recent/Search) — we
+    // never force a full crawl here; that would hammer huge accounts.
     if (indexItems && indexItems.length) return indexItems;
     return liveItems ?? EMPTY;
   }, [index, q, section, starred, indexItems, liveItems]);
-
-  // Safety net: if the live listing failed OR came back empty at a spot that
-  // shouldn't be empty (the account root), kick the background index so folders
-  // still appear, and we have a fallback. Healthy live listings never trigger it.
-  useEffect(() => {
-    if (!folderView) return;
-    const liveEmptyAtRoot = path === "" && liveItems !== undefined && liveItems.length === 0;
-    if (liveError || liveEmptyAtRoot) void useIndex.getState().ensure(account);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folderView, liveError, liveItems, path, account]);
 
   const items = useMemo(() => {
     return sortItems(base, sort, { sizeOf, dateOf });

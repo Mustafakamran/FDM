@@ -729,31 +729,33 @@ pub fn setup(app: &tauri::AppHandle) {
         }
     }
 
-    // Probe the ffmpeg encoder list once and pick the best for this OS, then VERIFY
-    // a hardware pick actually encodes a frame (some machines advertise an encoder
-    // that fails at runtime) — falling back to libx264 if it doesn't.
-    let encoder = match rt.ffmpeg() {
-        Ok(ffmpeg) => {
-            let available = list_encoders(&ffmpeg);
-            let picked = pick_encoder(&available, std::env::consts::OS);
-            if picked.is_hardware() && !verify_encoder(&ffmpeg, picked) {
-                eprintln!(
-                    "hls: {} advertised but failed a one-frame test encode — falling back to libx264",
-                    picked.ffmpeg_name()
-                );
-                Encoder::Libx264
-            } else {
-                picked
+    // Probe the ffmpeg encoder on a BACKGROUND thread. The FIRST spawn of the large
+    // bundled ffmpeg can be very slow on Windows (Defender real-time-scans the
+    // unsigned binary on first run), and it must NEVER block app startup — doing
+    // this on the setup thread froze the window on Windows. Until the probe
+    // resolves, the runtime defaults to libx264 (see HlsRuntime::encoder).
+    std::thread::spawn(move || {
+        let encoder = match rt.ffmpeg() {
+            Ok(ffmpeg) => {
+                let available = list_encoders(&ffmpeg);
+                let picked = pick_encoder(&available, std::env::consts::OS);
+                if picked.is_hardware() && !verify_encoder(&ffmpeg, picked) {
+                    eprintln!(
+                        "hls: {} advertised but failed a one-frame test encode — falling back to libx264",
+                        picked.ffmpeg_name()
+                    );
+                    Encoder::Libx264
+                } else {
+                    picked
+                }
             }
-        }
-        Err(_) => Encoder::Libx264,
-    };
-    eprintln!("hls: selected encoder {}", encoder.ffmpeg_name());
-    *rt.encoder.lock().unwrap_or_else(|e| e.into_inner()) = Some(encoder);
-
-    // Size the ffmpeg-concurrency semaphore to the chosen encoder: hardware can run
-    // several at once, software is capped low so it can't saturate the CPU.
-    rt.sem.set_permits(concurrency_for(encoder));
+            Err(_) => Encoder::Libx264,
+        };
+        eprintln!("hls: selected encoder {}", encoder.ffmpeg_name());
+        *rt.encoder.lock().unwrap_or_else(|e| e.into_inner()) = Some(encoder);
+        // Size the ffmpeg-concurrency semaphore to the chosen encoder.
+        rt.sem.set_permits(concurrency_for(encoder));
+    });
 }
 
 /// Build a sidecar Command that does not flash a console window on Windows
