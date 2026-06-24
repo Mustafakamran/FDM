@@ -17,7 +17,7 @@ pub mod wetransfer;
 use base64::Engine;
 use download::{JobsState, NativeJobsState};
 use rclone::supervisor::{start_rclone, stop_rclone, RcloneState};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 fn rc_call(
@@ -94,20 +94,42 @@ pub fn run() {
             index::index_remove,
         ])
         .setup(|app| {
+            // CRITICAL: the setup closure runs on the main thread BEFORE Tauri's
+            // event loop starts pumping, so anything blocking here freezes the
+            // window at launch. `start_rclone` spawns the large unsigned
+            // `rclone.exe` (Windows Defender real-time-scans it on the first
+            // launch after every fresh install) and then blocks polling the rcd
+            // daemon until it answers — easily several seconds under a Defender
+            // scan. Doing that on the setup thread is exactly the startup freeze.
+            //
+            // Move ALL startup I/O to a background thread: the window paints
+            // instantly, the daemon comes up asynchronously, and the frontend
+            // (which already tolerates a not-ready daemon and re-loads on the
+            // "rclone-ready" event below) catches up once it's live.
             let handle = app.handle().clone();
-            start_rclone(&handle).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            // Loopback streaming proxy for the review player (best-effort).
-            if let Err(e) = stream::start_stream_server(&handle) {
-                eprintln!("stream server failed to start: {e}");
-            }
-            // Loopback ingest server for the FDM browser extension (best-effort;
-            // a taken port just disables browser ingest, logged inside).
-            ingest::start_ingest_server(&handle);
-            // Resolve the ffmpeg/ffprobe sidecars + HLS cache dir (best-effort;
-            // failure just leaves HLS unavailable and the player uses direct /media).
-            hls::setup(&handle);
-            // BDM sync agent (no-op until enabled + configured in Settings → Sync).
-            bdm::start_agent(&handle);
+            std::thread::spawn(move || {
+                match start_rclone(&handle) {
+                    Ok(_) => {
+                        // Tell the frontend the daemon is live so it can (re)load
+                        // accounts/browse — its initial mount may have run before
+                        // the daemon was ready and silently shown the empty state.
+                        let _ = handle.emit("rclone-ready", ());
+                    }
+                    Err(e) => eprintln!("rclone failed to start: {e}"),
+                }
+                // Loopback streaming proxy for the review player (best-effort).
+                if let Err(e) = stream::start_stream_server(&handle) {
+                    eprintln!("stream server failed to start: {e}");
+                }
+                // Loopback ingest server for the FDM browser extension (best-effort;
+                // a taken port just disables browser ingest, logged inside).
+                ingest::start_ingest_server(&handle);
+                // Resolve the ffmpeg/ffprobe sidecars + HLS cache dir (best-effort;
+                // failure just leaves HLS unavailable and the player uses direct /media).
+                hls::setup(&handle);
+                // BDM sync agent (no-op until enabled + configured in Settings → Sync).
+                bdm::start_agent(&handle);
+            });
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { AppShell } from "./components/AppShell";
 import { useApp } from "./store/app";
 import { useUpdater } from "./store/updater";
@@ -15,15 +16,22 @@ export default function App() {
   const loadAccounts = useApp((s) => s.loadAccounts);
 
   useEffect(() => {
-    loadAccounts()
-      .then(() => {
-        // Daemon is up and accounts are loaded — resume any downloads that were
-        // queued or in flight when the app last closed (torrent-style).
-        useTransfers.getState().resume();
-      })
-      .catch(() => {
-        /* daemon may not be ready on first paint; AccountsView shows empty state */
-      });
+    const boot = () =>
+      loadAccounts()
+        .then(() => {
+          // Daemon is up and accounts are loaded — resume any downloads that were
+          // queued or in flight when the app last closed (torrent-style).
+          useTransfers.getState().resume();
+        })
+        .catch(() => {
+          /* daemon may not be ready on first paint; AccountsView shows empty state */
+        });
+    // Try immediately (covers the warm path where rcd is already up), then again
+    // when the Rust side finishes starting the daemon in the background. Startup
+    // I/O is now off the main thread (no launch freeze), so the daemon can come
+    // up a few seconds after first paint — this re-load fills in the accounts.
+    void boot();
+    const readyUnlisten = listen("rclone-ready", () => void boot());
     startWatching();
     // Listen for browser-extension captures (Rust emits "ingest-url" on a valid
     // POST /fdm/ingest) and enqueue them into the default download folder.
@@ -37,6 +45,7 @@ export default function App() {
       clearInterval(poll);
       stopWatching();
       stopIngest();
+      void readyUnlisten.then((un) => un());
     };
   }, [loadAccounts]);
 

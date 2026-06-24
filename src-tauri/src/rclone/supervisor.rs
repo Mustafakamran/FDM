@@ -72,19 +72,27 @@ pub fn start_rclone(app: &AppHandle) -> Result<RcConnection, String> {
         cfg.pass,
     );
 
-    wait_until_ready(&connection)?;
-
+    // Publish the child + connection BEFORE waiting for the daemon to answer.
+    // rc commands and the frontend's retry logic can then attempt calls (which
+    // fail with a connection error, not "rclone not started", and get retried)
+    // while the port is still binding — and on Windows, while Defender finishes
+    // scanning the freshly-extracted rclone.exe on first launch.
     let state = app.state::<RcloneState>();
     *state.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
     *state.connection.lock().unwrap_or_else(|e| e.into_inner()) = Some(connection.clone());
+
+    wait_until_ready(&connection)?;
     Ok(connection)
 }
 
 /// Poll `core/version` until the daemon responds or we time out.
 pub fn wait_until_ready(conn: &RcConnection) -> Result<(), String> {
     // Reuse the connection's shared keep-alive client (no per-poll handshake).
+    // Generous window (~30s): this runs off the main thread, so a slow first
+    // launch (Windows Defender scanning the unsigned rclone.exe) never freezes
+    // the UI — it just delays the "rclone-ready" signal.
     let url = format!("{}/core/version", conn.base_url);
-    for _ in 0..50 {
+    for _ in 0..300 {
         let resp = conn
             .client
             .post(&url)
