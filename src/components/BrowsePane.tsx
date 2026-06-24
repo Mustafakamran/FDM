@@ -75,16 +75,32 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     }
   }, [sort]);
 
+  // Build the background index ONLY when something needs it — Recent, Starred, or
+  // Search. Plain folder browsing ("All Files") is live and never triggers a crawl,
+  // so opening an account is instant.
   useEffect(() => {
-    void useIndex.getState().ensure(account);
-  }, [account]);
+    if (section === "recent" || section === "starred" || q.trim()) {
+      void useIndex.getState().ensure(account);
+    }
+  }, [account, section, q]);
 
   const index = entry?.index ?? null;
   const status = entry?.status ?? "idle";
 
+  const browseSizes = useBrowse((s) => s.sizes);
   const aggOf = (p: string) => index?.agg[p];
-  const sizeOf = (i: RcItem) => (i.IsDir ? aggOf(i.Path)?.size ?? 0 : Math.max(0, i.Size));
-  const dateOf = (i: RcItem) => (i.IsDir ? aggOf(i.Path)?.latest ?? "" : i.ModTime);
+  // Folder size: the index aggregate if a crawl captured it, else the lazily
+  // computed live size (operations/size), else unknown (0).
+  const folderBytes = (p: string): number => {
+    const agg = aggOf(p)?.size;
+    if (typeof agg === "number" && agg > 0) return agg;
+    const v = browseSizes[browseKey(account.id, p)];
+    return typeof v === "number" ? v : 0;
+  };
+  const sizeOf = (i: RcItem) => (i.IsDir ? folderBytes(i.Path) : Math.max(0, i.Size));
+  // Folder date: index "latest file" if crawled, else the folder's own mod time
+  // (instant from the live listing). Files use their own mod time.
+  const dateOf = (i: RcItem) => (i.IsDir ? (aggOf(i.Path)?.latest || i.ModTime) : i.ModTime);
   // A folder is "indexed" once the crawl has captured its subtree (children or aggregate present).
   const folderIndexed = (p: string) => !!(index && (index.agg[p] || index.tree[p]));
   const indexFolder = (folderPath: string) => void useIndex.getState().indexFolder(account, folderPath);
@@ -117,38 +133,49 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   }
   const reviewTarget = (i: RcItem): ReviewTarget => ({ path: i.Path, name: i.Name, fileId: i.ID ?? "", size: sizeOf(i), ext: extOf(i.Name) });
 
-  // Live fallback for folder views the crawl didn't capture.
+  // Browse is LIVE: each folder is listed on demand (instant), independent of the
+  // background index (which now only powers Recent + Search). Index entries are a
+  // fallback shown until the live listing arrives.
   const folderView = section === "all" || section === "shared";
   const indexItems = folderView ? index?.tree[path] : undefined;
   const liveItems = useBrowse((s) => (folderView ? s.listings[browseKey(account.id, path)] : undefined));
   const liveLoading = useBrowse((s) => (folderView ? s.loading[browseKey(account.id, path)] : false)) ?? false;
-  const usingIndex = !!(indexItems && indexItems.length);
 
+  // List the current folder live whenever it changes — never wait for the crawl.
   useEffect(() => {
-    if (folderView && status === "ready" && (!indexItems || indexItems.length === 0)) {
-      void useBrowse.getState().ensure(account, path);
-    }
-  }, [folderView, status, path, indexItems, account]);
+    if (folderView) void useBrowse.getState().ensure(account, path);
+  }, [folderView, path, account]);
 
   useEffect(() => setSelected(new Set()), [section, path, q]);
 
   const base: RcItem[] = useMemo(() => {
-    if (!index) return folderView ? ((usingIndex ? indexItems : liveItems) ?? EMPTY) : EMPTY;
+    // Search + Recent + Starred come from the background index (when it's ready).
     if (q.trim()) {
+      if (!index) return EMPTY;
       const needle = q.toLowerCase();
       return Object.values(index.tree).flat().filter((i) => i.Name.toLowerCase().includes(needle));
     }
-    if (section === "recent") return recentFiles(index);
-    if (section === "starred") return starred.map((p) => itemAt(index, p)).filter(Boolean) as RcItem[];
-    return (usingIndex ? indexItems : liveItems) ?? EMPTY;
-  }, [index, q, section, starred, usingIndex, indexItems, liveItems, folderView]);
+    if (section === "recent") return index ? recentFiles(index) : EMPTY;
+    if (section === "starred") return index ? (starred.map((p) => itemAt(index, p)).filter(Boolean) as RcItem[]) : EMPTY;
+    // all / shared: the LIVE listing is the source of truth (instant); index
+    // entries are only a fallback shown until the live list arrives.
+    return (liveItems ?? indexItems) ?? EMPTY;
+  }, [index, q, section, starred, indexItems, liveItems]);
 
   const items = useMemo(() => {
-    // Resolvers honor folder aggregates from the index (recursive size / latest
-    // mod time), falling back to the entry's own values when not indexed.
     return sortItems(base, sort, { sizeOf, dateOf });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, sort, index]);
+  }, [base, sort, index, browseSizes]);
+
+  // Lazily compute recursive sizes for visible folders (background, capped queue).
+  // The index aggregate wins when present; otherwise this fills the Size column.
+  useEffect(() => {
+    if (!folderView || q.trim()) return;
+    for (const it of items) {
+      if (it.IsDir && !aggOf(it.Path)?.size) void useBrowse.getState().computeSize(account, it.Path);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, folderView, q, account]);
 
   const allSelected = items.length > 0 && items.every((i) => selected.has(i.Path));
   const totalSelected = items.filter((i) => selected.has(i.Path)).reduce((s, i) => s + sizeOf(i), 0);
@@ -179,7 +206,9 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
 
   const segments = path ? path.split("/") : [];
   const showCrawl = status === "crawling" || status === "loading";
-  const spinner = (!index && status !== "error") || (folderView && !usingIndex && liveLoading && items.length === 0);
+  // Folder views spin only while the LIVE listing is loading; Recent/Starred/Search
+  // spin while their background index is still building.
+  const spinner = folderView ? liveLoading && items.length === 0 : !index && status !== "error";
 
   const SORTS: { key: SortField; label: string }[] = [
     { key: "name", label: "Name" },

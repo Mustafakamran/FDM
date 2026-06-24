@@ -34,9 +34,14 @@ beforeEach(() => {
   useTransfers.setState({ jobs: [], queue: [], concurrency: 1, dockOpen: true });
   useStarred.setState({ byAccount: {} });
   useSearch.setState({ q: "" });
-  invokeMock.mockImplementation((cmd: string) => {
+  invokeMock.mockImplementation((cmd: string, args?: { endpoint?: string; params?: { remote?: string } }) => {
     if (cmd === "start_download") return Promise.resolve([]);
     if (cmd === "list_jobs") return Promise.resolve([]);
+    // Live browse: the folder listing comes from rc_call/operations/list.
+    if (cmd === "rc_call" && args?.endpoint === "operations/list") {
+      const remote = args.params?.remote ?? "";
+      return Promise.resolve({ list: remote ? [] : [d("FolderA"), f("a.mxf", 1000), f("b.mxf", 2000)] });
+    }
     return Promise.resolve({});
   });
 });
