@@ -4,7 +4,6 @@ import { addAccount, getSecret, SECRET_KEYS, type Provider } from "../lib/tauri/
 import { providerName } from "./icons";
 import { useApp } from "../store/app";
 import { useToasts } from "../store/toast";
-import { useIndex } from "../store/index-store";
 import { useAccountMeta } from "../store/account-meta";
 import { useUI } from "../store/ui";
 import { Button, TextField, Card } from "./ui";
@@ -38,7 +37,10 @@ export function AddAccountDialog({ provider, onClose }: Props) {
       useAccountMeta.getState().setLabel(account.id, label.trim()); // keep original casing
       await loadAccounts();
       toast(`Connected ${providerName(provider)} · ${label.trim()}`, "success");
-      void useIndex.getState().ensure(account); // start crawling/indexing in the background
+      // NB: do NOT auto-index here. Drive accounts surface the whole "Shared with
+      // me" tree (often tens of TB of client footage), so a full crawl on connect
+      // would run for ages and balloon. Browsing is live; folder sizes are computed
+      // on demand, and indexing is opt-in (per-folder, or the Re-index button).
       selectAccount(account.id);
       onClose();
     } catch (e) {

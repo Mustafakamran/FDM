@@ -63,7 +63,7 @@ export default function App() {
       notified.current = version;
       pushToast(
         <span>
-          Update <span className="font-semibold">{version}</span> available —{" "}
+          Update <span className="font-semibold">{version}</span> available ·{" "}
           <button
             onClick={() => void useUpdater.getState().install()}
             className="font-semibold text-[var(--accent)] underline-offset-2 hover:underline"

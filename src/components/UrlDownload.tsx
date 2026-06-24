@@ -11,7 +11,7 @@ const FOLDER_KEY = "default_download_folder";
  * Minimal "Download from URL" entry: paste a URL, pick a destination folder,
  * enqueue a generic HTTP download. This exercises the SECONDARY scheduling lane
  * (account id "http"), which the gate keeps from disturbing primary Drive/
- * Dropbox work. Intentionally bare — the polished generic-download UX is later.
+ * Dropbox work. Intentionally bare, the polished generic-download UX is later.
  */
 export function UrlDownload() {
   const enqueueUrl = useTransfers((s) => s.enqueueUrl);
@@ -47,7 +47,7 @@ export function UrlDownload() {
         <h2 className="text-sm font-semibold text-[var(--text)]">Download from a link</h2>
       </div>
       <p className="mb-3 text-xs text-[var(--text-3)]">
-        Paste any direct file URL — it downloads alongside your Drive/Dropbox transfers.
+        Paste any direct file URL, it downloads alongside your Drive/Dropbox transfers.
       </p>
       <div className="flex items-center gap-2">
         <div className="relative flex-1">

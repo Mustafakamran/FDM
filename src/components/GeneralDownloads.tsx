@@ -37,7 +37,7 @@ function isGated(q: QueueItem): boolean {
 
 /**
  * GENERAL / WEB DOWNLOADS view. Shows ONLY secondary-lane downloads
- * (laneOf(accountId) === "secondary" — i.e. http / ytdlp captures): the URL
+ * (laneOf(accountId) === "secondary", i.e. http / ytdlp captures): the URL
  * input, category filter tabs, then active + queued + history rows, each with
  * its category chip. Clicking a row opens the per-download detail panel.
  */
@@ -74,7 +74,7 @@ export function GeneralDownloads({ filter, detail }: { filter: Category | "All";
     [history],
   );
 
-  // Category filter — "All" passes everything; otherwise match the file's category.
+  // Category filter, "All" passes everything; otherwise match the file's category.
   const match = (name: string, cat?: Category) =>
     filter === "All" || (cat ?? categoryFor(name)) === filter;
   const active = webActive.filter((j) => match(j.name));
@@ -249,7 +249,7 @@ export function GeneralDownloads({ filter, detail }: { filter: Category | "All";
                 {filter === "All" ? "No web downloads yet" : `No ${filter.toLowerCase()} downloads`}
               </div>
               <p className="max-w-xs text-xs text-[var(--text-3)]">
-                Paste a direct file URL above to download it from the web — it runs alongside your Drive/Dropbox transfers.
+                Paste a direct file URL above to download it from the web, it runs alongside your Drive/Dropbox transfers.
               </p>
             </div>
           ) : (

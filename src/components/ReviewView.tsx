@@ -50,7 +50,7 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
     setDiag("");
     setNoCors(false);
     // Build the direct /media URL, then ask the backend whether this clip is
-    // already directly playable (H.264/AAC). If so, we DON'T transcode — the
+    // already directly playable (H.264/AAC). If so, we DON'T transcode, the
     // player streams /media directly (instant, no ffmpeg, no load lag). Only when
     // it actually needs transcoding (ProRes/HEVC/VP9/etc.) do we hand it the HLS
     // master URL. The player still falls back to direct on any HLS failure.
@@ -70,18 +70,18 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
         }
         // else leave hlsUrl null → ReviewPlayer uses the direct /media source.
         // Background-probe the direct /media URL only to capture a real error
-        // message we can surface IF playback fails — never block playback on it.
+        // message we can surface IF playback fails, never block playback on it.
         fetch(u)
           .then(async (res) => {
             if (!res.ok) {
               const body = await res.text().catch(() => "");
-              if (alive) setDiag(`Stream error ${res.status}${body ? ` — ${body.slice(0, 300)}` : ""}`);
+              if (alive) setDiag(`Stream error ${res.status}${body ? `, ${body.slice(0, 300)}` : ""}`);
             } else {
               res.body?.cancel?.();
             }
           })
           .catch(() => {
-            /* probe blocked (e.g. fetch CORS) — ignore; the video may still play */
+            /* probe blocked (e.g. fetch CORS), ignore; the video may still play */
           });
       })
       .catch((e) => alive && setErr(e instanceof Error ? e.message : String(e)));
@@ -125,7 +125,7 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
 
       doc.setFont("helvetica", "bold");
       doc.setFontSize(16);
-      doc.text("FDM — Review notes", margin, y);
+      doc.text("FDM, Review notes", margin, y);
       y += 22;
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
@@ -180,7 +180,7 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
       }
 
       const b64 = bufToBase64(doc.output("arraybuffer"));
-      const fname = `${target.name.replace(/\.[^.]+$/, "")} — review.pdf`;
+      const fname = `${target.name.replace(/\.[^.]+$/, "")}, review.pdf`;
       const path = await save({ defaultPath: fname, filters: [{ name: "PDF", extensions: ["pdf"] }] });
       if (path) {
         await writeBinaryFile(path, b64);
@@ -227,7 +227,7 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
           {!playable ? (
             <Fallback
               title="Can't preview this format in-app"
-              body={`.${target.name.split(".").pop()} (ProRes / RAW / MXF and similar pro codecs can't play in the app). Download it to review in your editor — comments here still export to PDF.`}
+              body={`.${target.name.split(".").pop()} (ProRes / RAW / MXF and similar pro codecs can't play in the app). Download it to review in your editor, comments here still export to PDF.`}
             />
           ) : err ? (
             <Fallback title="Couldn't load the video" body={err} />
@@ -246,12 +246,12 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
                     onTime={setCurTime}
                     onError={() => {
                       // First failure may be the CORS handshake (needed only for PDF
-                      // frame-capture) — retry without it so playback still works.
+                      // frame-capture), retry without it so playback still works.
                       if (!noCors) setNoCors(true);
                       else
                         setErr(
                           diag ||
-                            "The player couldn't decode this file — likely a pro codec (ProRes/RAW). Download it to review in your editor.",
+                            "The player couldn't decode this file, likely a pro codec (ProRes/RAW). Download it to review in your editor.",
                         );
                     }}
                   />
@@ -274,7 +274,7 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
           <div className="min-h-0 flex-1 overflow-auto px-3 py-2">
             {comments.length === 0 ? (
               <p className="px-1 py-6 text-sm text-[var(--text-3)]">
-                Play the video and type a note below — the timestamp is captured automatically.
+                Play the video and type a note below, the timestamp is captured automatically.
               </p>
             ) : (
               <ul className="flex flex-col gap-1.5">
@@ -312,7 +312,7 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
               </span>
               <button
                 onClick={toggleLock}
-                title={locked ? "Pinned — click to follow the playhead" : "Following the playhead — click to pin this time"}
+                title={locked ? "Pinned, click to follow the playhead" : "Following the playhead, click to pin this time"}
                 className={`ml-auto flex items-center gap-1 ${locked ? "text-[var(--accent)]" : "hover:text-[var(--text)]"}`}
               >
                 {locked ? <Lock size={12} /> : <Unlock size={12} />} {locked ? "Pinned" : "Live"}

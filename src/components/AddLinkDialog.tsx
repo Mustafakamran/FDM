@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Loader2, X, Link as LinkIcon } from "lucide-react";
 import { addDriveLink, addDropboxLink } from "../lib/tauri/commands";
 import { useApp } from "../store/app";
-import { useIndex } from "../store/index-store";
 import { useAccountMeta } from "../store/account-meta";
 import { useToasts } from "../store/toast";
 import { ProviderIcon, providerName } from "./icons";
@@ -51,7 +50,7 @@ export function AddLinkDialog({ onClose }: { onClose: () => void }) {
       return;
     }
     if (!baseId) {
-      setError(`Connect a ${providerName(provider)} account first — its login is used to open the link.`);
+      setError(`Connect a ${providerName(provider)} account first, its login is used to open the link.`);
       return;
     }
     setBusy(true);
@@ -66,7 +65,6 @@ export function AddLinkDialog({ onClose }: { onClose: () => void }) {
           : await addDropboxLink(baseId, label.trim(), url.trim());
       useAccountMeta.getState().setLabel(acct.id, label.trim());
       await loadAccounts();
-      void useIndex.getState().ensure(acct);
       toast(`Added link · ${label.trim()}`, "success");
       selectAccount(acct.id);
       onClose();
@@ -103,7 +101,7 @@ export function AddLinkDialog({ onClose }: { onClose: () => void }) {
               autoFocus
               onChange={(e) => setUrl(e.target.value)}
             />
-            <TextField label="Name" placeholder="e.g. Client A — October" value={label} onChange={(e) => setLabel(e.target.value)} />
+            <TextField label="Name" placeholder="e.g. Client A, October" value={label} onChange={(e) => setLabel(e.target.value)} />
 
             {provider && bases.length > 1 && (
               <label className="flex flex-col gap-1.5">
@@ -125,7 +123,7 @@ export function AddLinkDialog({ onClose }: { onClose: () => void }) {
             )}
 
             <p className="text-xs text-[var(--text-3)]">
-              Downloads come straight from the link to your disk — nothing is added to your own Drive/Dropbox.
+              Downloads come straight from the link to your disk, nothing is added to your own Drive/Dropbox.
               {provider && bases.length === 0 && (
                 <span className="text-[var(--warning)]"> Connect a {providerName(provider)} account first.</span>
               )}

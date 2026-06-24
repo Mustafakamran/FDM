@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, FolderSearch, FolderOpen, FileSearch, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
@@ -76,15 +76,15 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     }
   }, [sort]);
 
-  // Ensure the account's index is available for EVERY view that needs sizes/dates
-  // (folder browse included), not just Recent/Starred/Search. `ensure` →
-  // `index_start` loads the persisted index from disk FIRST (instant, silent) and
-  // only runs a fresh crawl when there's no cache — so an account that was crawled
-  // once at link time shows instant cached folder sizes/dates on every open, with
-  // no per-folder live size calls. (This does NOT reintroduce the old browse
-  // freeze: that was a fresh crawl kicked off on browse; a cached load is cheap.)
+  // Index ONLY for views that genuinely need a precomputed tree — Recent, Starred,
+  // Search. Plain folder browsing must NOT trigger a crawl: Drive accounts surface
+  // the entire "Shared with me" tree (tens of TB of client footage), and auto-
+  // crawling it on every account open is what made indexing balloon past the
+  // account's own quota. Folder browse is live; folder sizes are on demand.
   useEffect(() => {
-    void useIndex.getState().ensure(account);
+    if (section === "recent" || section === "starred" || q.trim()) {
+      void useIndex.getState().ensure(account);
+    }
   }, [account, section, q]);
 
   const index = entry?.index ?? null;
@@ -128,12 +128,12 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   // "Calculate" action for folders whose size we don't auto-compute (shared).
   const renderFolderSize = (p: string) => {
     const st = folderSizeState(p);
-    if (st.kind === "known") return st.bytes > 0 ? formatBytes(st.bytes) : "—";
+    if (st.kind === "known") return st.bytes > 0 ? formatBytes(st.bytes) : <span className="text-[var(--text-3)]">·</span>;
     if (st.kind === "loading") return <Loader2 size={13} className="inline animate-spin text-[var(--text-3)]" />;
     return (
       <button
         onClick={() => calcSize(p)}
-        data-tip={st.kind === "error" ? "Couldn’t size this folder — click to retry" : "Calculate folder size on demand"}
+        data-tip={st.kind === "error" ? "Couldn’t size this folder. Click to retry." : "Calculate folder size on demand"}
         className="rounded-[6px] px-1.5 py-0.5 text-xs text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--accent)]"
       >
         {st.kind === "error" ? "Retry" : "Calculate"}
@@ -165,7 +165,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     }
     setSelected(new Set());
     if (ok) toast(`Deleted ${ok} item${ok > 1 ? "s" : ""} (moved to Trash)`, "success");
-    if (fails.length) toast(`Delete failed — ${fails[0]}${fails.length > 1 ? ` (+${fails.length - 1} more)` : ""}`, "error");
+    if (fails.length) toast(`Delete failed: ${fails[0]}${fails.length > 1 ? ` (+${fails.length - 1} more)` : ""}`, "error");
     setDeleting(false);
     setPendingDelete(null);
   }
@@ -371,7 +371,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           </div>
           <button
             onClick={() => setSort((s) => ({ ...s, dir: s.dir === "asc" ? "desc" : "asc" }))}
-            title={sort.dir === "asc" ? "Ascending — click for descending" : "Descending — click for ascending"}
+            title={sort.dir === "asc" ? "Ascending (click for descending)" : "Descending (click for ascending)"}
             aria-label={`Sort direction: ${sort.dir === "asc" ? "ascending" : "descending"}`}
             className="rounded-r-[7px] border-l border-[var(--border)] px-2 py-1.5 text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
           >
@@ -383,7 +383,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           <button className={`px-2 py-1.5 ${!grid ? "bg-[var(--hover)] text-[var(--text)]" : "text-[var(--text-3)]"}`} onClick={() => setGrid(false)} aria-label="List view"><ListIcon size={15} /></button>
           <button className={`px-2 py-1.5 ${grid ? "bg-[var(--hover)] text-[var(--text)]" : "text-[var(--text-3)]"}`} onClick={() => setGrid(true)} aria-label="Grid view"><LayoutGrid size={15} /></button>
         </div>
-        <button className="rounded-[8px] border border-[var(--border)] p-1.5 text-[var(--text-3)] hover:text-[var(--text)] disabled:opacity-50" onClick={() => useIndex.getState().recrawl(account)} disabled={showCrawl} aria-label="Re-index" title="Re-index (full refresh — picks up new/changed files)"><RefreshCw size={15} /></button>
+        <button className="rounded-[8px] border border-[var(--border)] p-1.5 text-[var(--text-3)] hover:text-[var(--text)] disabled:opacity-50" onClick={() => useIndex.getState().recrawl(account)} disabled={showCrawl} aria-label="Re-index" title="Re-index (full refresh, picks up new/changed files)"><RefreshCw size={15} /></button>
       </div>
 
       {/* Body */}
@@ -417,7 +417,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                     <ft.Icon size={30} style={{ color: ft.color }} />
                     <span className="line-clamp-2 text-sm text-[var(--text)]">{item.Name}</span>
                   </button>
-                  <span className="tnum text-xs text-[var(--text-3)]">{item.IsDir ? renderFolderSize(item.Path) : item.Size > 0 ? formatBytes(item.Size) : "—"}</span>
+                  <span className="tnum text-xs text-[var(--text-3)]">{item.IsDir ? renderFolderSize(item.Path) : item.Size > 0 ? formatBytes(item.Size) : "·"}</span>
                 </div>
               );
             })}
@@ -440,61 +440,59 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                 return (
                   <tr key={item.Path} onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, item }); }} className={`group border-b border-[var(--border)]/60 ${selected.has(item.Path) ? "bg-[var(--card)]" : "hover:bg-[var(--hover)]"}`}>
                     <td className="w-9 py-2.5 pl-1"><input type="checkbox" aria-label={`Select ${item.Name}`} checked={selected.has(item.Path)} onChange={() => toggle(item.Path)} /></td>
-                    <td className="min-w-0 py-2.5 pr-3">
-                      <div className="flex min-w-0 items-center gap-3">
+                    <td className="min-w-0 py-2 pr-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        {/* Name — grows and truncates so the row never gets jagged. */}
                         {item.IsDir ? (
-                          <>
-                            <button className="flex min-w-0 items-center gap-3 text-left text-[var(--text)] hover:text-[var(--accent)]" onClick={() => setView({ kind: "browse", accountId: account.id, section: "all", path: item.Path })}>
-                              <ft.Icon size={18} style={{ color: ft.color }} className="shrink-0" />
-                              <span className="truncate">{item.Name}</span>
-                            </button>
-                            {!folderIndexed(item.Path) ? (
-                              <button
-                                onClick={() => indexFolder(item.Path)}
-                                disabled={showCrawl}
-                                title="This folder isn't indexed yet — index it now"
-                                className="shrink-0 whitespace-nowrap text-xs text-[var(--text-3)] hover:text-[var(--accent)] disabled:opacity-50"
-                              >
-                                Not indexed — Index now
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => indexFolder(item.Path)}
-                                disabled={showCrawl}
-                                title="Re-index this folder"
-                                aria-label={`Index ${item.Name}`}
-                                className="shrink-0 text-[var(--text-3)] opacity-0 group-hover:opacity-100 hover:text-[var(--accent)] disabled:opacity-50"
-                              >
-                                <FolderSearch size={14} />
-                              </button>
-                            )}
-                          </>
+                          <button className="flex min-w-0 flex-1 items-center gap-2.5 text-left text-[var(--text)] hover:text-[var(--accent)]" onClick={() => setView({ kind: "browse", accountId: account.id, section: "all", path: item.Path })}>
+                            <ft.Icon size={18} style={{ color: ft.color }} className="shrink-0" />
+                            <span className="truncate">{item.Name}</span>
+                          </button>
                         ) : isVideo(item.Name) ? (
                           <button
-                            className="flex min-w-0 items-center gap-3 text-left text-[var(--text)] hover:text-[var(--accent)]"
+                            className="flex min-w-0 flex-1 items-center gap-2.5 text-left text-[var(--text)] hover:text-[var(--accent)]"
                             onClick={() => openReview(account.id, reviewTarget(item))}
-                            title="Open in review"
+                            data-tip="Open in review"
                           >
                             <ft.Icon size={18} style={{ color: ft.color }} className="shrink-0" />
                             <span className="truncate">{item.Name}</span>
                             <Play size={12} className="shrink-0 text-[var(--text-3)] opacity-0 group-hover:opacity-100" />
                           </button>
                         ) : (
-                          <span className="flex min-w-0 items-center gap-3 text-[var(--text)]">
+                          <span className="flex min-w-0 flex-1 items-center gap-2.5 text-[var(--text)]">
                             <ft.Icon size={18} style={{ color: ft.color }} className="shrink-0" />
                             <span className="truncate">{item.Name}</span>
                           </span>
                         )}
-                        <button onClick={() => toggleStar(account.id, item.Path)} aria-label="Star" className={`shrink-0 ${isStar ? "text-[var(--accent)]" : "text-[var(--text-3)] opacity-0 group-hover:opacity-100 hover:text-[var(--text)]"}`}>
-                          <Star size={14} fill={isStar ? "currentColor" : "none"} />
-                        </button>
-                        <button onClick={() => setPendingDelete([item])} aria-label={`Delete ${item.Name}`} title="Delete (moves to Trash)" className="shrink-0 text-[var(--text-3)] opacity-0 group-hover:opacity-100 hover:text-[var(--error)]">
-                          <Trash2 size={14} />
-                        </button>
+                        {/* Fixed action cluster — reserved width (opacity, not display),
+                            so revealing it on hover never shifts the layout. */}
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          {item.IsDir && (
+                            <RowAction
+                              onClick={() => indexFolder(item.Path)}
+                              disabled={showCrawl}
+                              tip={folderIndexed(item.Path) ? "Re-index this folder" : "Index this folder"}
+                              label={`Index ${item.Name}`}
+                            >
+                              <FolderSearch size={14} />
+                            </RowAction>
+                          )}
+                          <RowAction
+                            onClick={() => toggleStar(account.id, item.Path)}
+                            tip={isStar ? "Unstar" : "Star"}
+                            label="Star"
+                            active={isStar}
+                          >
+                            <Star size={14} fill={isStar ? "currentColor" : "none"} />
+                          </RowAction>
+                          <RowAction onClick={() => setPendingDelete([item])} tip="Delete (moves to Trash)" label={`Delete ${item.Name}`} danger>
+                            <Trash2 size={14} />
+                          </RowAction>
+                        </div>
                       </div>
                     </td>
-                    <td className="whitespace-nowrap py-2.5 text-[var(--text-3)]">{formatDate(dateOf(item))}</td>
-                    <td className="tnum whitespace-nowrap py-2.5 text-right text-[var(--text-2)]">{item.IsDir ? renderFolderSize(item.Path) : item.Size > 0 ? formatBytes(item.Size) : "—"}</td>
+                    <td className="whitespace-nowrap py-2 text-[var(--text-3)]">{formatDate(dateOf(item))}</td>
+                    <td className="tnum whitespace-nowrap py-2 text-right text-[var(--text-2)]">{item.IsDir ? renderFolderSize(item.Path) : item.Size > 0 ? formatBytes(item.Size) : <span className="text-[var(--text-3)]">·</span>}</td>
                     <td className="py-2.5 pl-6 text-[var(--text-3)]">{ft.label}</td>
                   </tr>
                 );
@@ -535,7 +533,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             <p className="mt-2 text-sm text-[var(--text-2)]">
               {pendingDelete.some((i) => i.IsDir) ? "This includes folders and everything inside them. " : ""}
               It's removed from <span className="text-[var(--text)]">{displayLabel}</span> and moved to the provider's Trash
-              (Google Drive Trash / Dropbox history) — recoverable there for a limited time.
+              (Google Drive Trash / Dropbox history), recoverable there for a limited time.
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setPendingDelete(null)} disabled={deleting}>Cancel</Button>
@@ -553,7 +551,43 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   );
 }
 
-/** Shimmer placeholder rows shown while a folder/index loads — shaped like the
+/** A single hover-revealed row action (index / star / delete). Fixed 28px box so
+ *  the cluster reserves consistent width and toggling opacity never shifts layout. */
+function RowAction({
+  onClick,
+  disabled,
+  tip,
+  label,
+  active,
+  danger,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  tip: string;
+  label: string;
+  active?: boolean;
+  danger?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      data-tip={tip}
+      aria-label={label}
+      className={`flex h-7 w-7 items-center justify-center rounded-[6px] transition-opacity hover:bg-[var(--hover)] disabled:opacity-40 ${
+        active
+          ? "text-[var(--accent)] opacity-100"
+          : `text-[var(--text-3)] opacity-0 group-hover:opacity-100 ${danger ? "hover:text-[var(--error)]" : "hover:text-[var(--accent)]"}`
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Shimmer placeholder rows shown while a folder/index loads, shaped like the
  *  file table so the transition to real rows reads as instant. */
 function FileListSkeleton() {
   return (

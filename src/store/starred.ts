@@ -32,7 +32,7 @@ export const useStarred = create<StarState>((set, get) => ({
         localStorage.setItem(KEY, JSON.stringify(byAccount));
       } catch {
         // Revert the optimistic update and tell the user it didn't stick.
-        useToasts.getState().push("Couldn't save star — storage full", "error");
+        useToasts.getState().push("Couldn't save star, storage full", "error");
         return { byAccount: prev };
       }
       return { byAccount };

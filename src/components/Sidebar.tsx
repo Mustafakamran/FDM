@@ -123,7 +123,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Accounts list — scrolls when many accounts are connected */}
+      {/* Accounts list, scrolls when many accounts are connected */}
       <div className="sidebar-scroll min-h-0 flex-1 overflow-y-auto px-3">
         <div className="flex flex-col gap-1.5 pb-2">
           {!accountsLoaded && accounts.length === 0 ? (
@@ -173,7 +173,7 @@ export function Sidebar() {
                             void fetchEmail(a.id, true);
                           }}
                           title={emailErrors[a.id]}
-                          aria-label="Email lookup failed — retry"
+                          aria-label="Email lookup failed, retry"
                           className="shrink-0 text-[var(--warning)] hover:text-[var(--text)]"
                         >
                           <AlertCircle size={12} />

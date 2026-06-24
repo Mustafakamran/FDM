@@ -31,7 +31,7 @@ function persist(data: Record<string, FileReview>): boolean {
     localStorage.setItem(KEY, JSON.stringify(data));
     return true;
   } catch {
-    /* quota — comments are small (no images stored), so this is unlikely */
+    /* quota, comments are small (no images stored), so this is unlikely */
     return false;
   }
 }
@@ -79,7 +79,7 @@ export const useReview = create<ReviewState>((set) => ({
       const cur = s.byFile[k] ?? EMPTY;
       const next = { ...s.byFile, [k]: { status, comments: cur.comments } };
       if (!persist(next)) {
-        useToasts.getState().push("Couldn't save review status — storage full", "error");
+        useToasts.getState().push("Couldn't save review status, storage full", "error");
         return s;
       }
       return { byFile: next };

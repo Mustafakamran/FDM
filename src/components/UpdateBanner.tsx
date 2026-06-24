@@ -48,7 +48,7 @@ export function UpdateBanner() {
     return (
       <Bar>
         <RefreshCw size={15} className="shrink-0 text-[var(--accent)]" />
-        <span className="text-sm text-[var(--text)]">Update installed — restarting…</span>
+        <span className="text-sm text-[var(--text)]">Update installed, restarting…</span>
       </Bar>
     );
   }

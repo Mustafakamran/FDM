@@ -46,7 +46,7 @@ export function SettingsView() {
   const [extBusy, setExtBusy] = useState(false);
 
   // Load the pairing token lazily when the Browser-extension tab is first opened
-  // (it generates one on first read — no need to do it on every Settings mount).
+  // (it generates one on first read, no need to do it on every Settings mount).
   useEffect(() => {
     if (tab !== "extension" || token !== null) return;
     let alive = true;
@@ -72,7 +72,7 @@ export function SettingsView() {
       const folder = await prepareExtension();
       setExtFolder(folder);
       await revealPath(folder).catch(() => {});
-      markSaved("ext", "Extension folder ready — opened in your file manager");
+      markSaved("ext", "Extension folder ready, opened in your file manager");
     } catch (e) {
       toast(`Couldn't prepare the extension: ${e}`, "error");
     } finally {
@@ -188,7 +188,7 @@ export function SettingsView() {
           <Card className="p-5">
             <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Default download folder</h2>
             <p className="mb-4 text-xs text-[var(--text-3)]">
-              Where downloads land unless overridden per job — also used for files sent from the browser extension.
+              Where downloads land unless overridden per job, also used for files sent from the browser extension.
               Defaults to your system Downloads folder when unset.
             </p>
             <div className="flex items-center gap-3">
@@ -252,7 +252,7 @@ export function SettingsView() {
             </h2>
             <p className="mb-4 text-xs text-[var(--text-3)]">
               The FDM browser extension sends downloads to this app over a local connection. Paste this token
-              into the extension once to pair it. Keep it private — anyone with it can queue downloads on this machine.
+              into the extension once to pair it. Keep it private, anyone with it can queue downloads on this machine.
             </p>
             <div className="flex items-center gap-3">
               <div className="tnum min-w-0 flex-1 truncate rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text-2)]">
@@ -294,7 +294,7 @@ export function SettingsView() {
             )}
             <ol className="mt-4 ml-4 list-decimal space-y-1.5 text-xs text-[var(--text-2)]">
               <li>
-                Click <span className="text-[var(--text)]">Install / set up extension</span> above — it opens the
+                Click <span className="text-[var(--text)]">Install / set up extension</span> above, it opens the
                 extension folder in your file manager.
               </li>
               <li>
@@ -347,7 +347,7 @@ export function SettingsView() {
         <Card className="p-5">
           <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Google Drive API</h2>
           <p className="mb-4 text-xs text-[var(--text-3)]">
-            Your OAuth Desktop client (scope: drive.readonly). Entered once — reused for
+            Your OAuth Desktop client (scope: drive.readonly). Entered once, reused for
             <span className="text-[var(--text-2)]"> all </span>your Google accounts.
           </p>
           <div className="flex flex-col gap-3">
@@ -367,7 +367,7 @@ export function SettingsView() {
         <Card className="p-5">
           <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Dropbox API</h2>
           <p className="mb-4 text-xs text-[var(--text-3)]">
-            Your Dropbox app key + secret. Entered once — reused for
+            Your Dropbox app key + secret. Entered once, reused for
             <span className="text-[var(--text-2)]"> all </span>your Dropbox accounts.
           </p>
           <div className="flex flex-col gap-3">
@@ -399,7 +399,7 @@ export function SettingsView() {
             <TextField label="Portal URL" value={bdm.portalUrl} onChange={(e) => setBdm((b) => ({ ...b, portalUrl: e.target.value }))} />
             <TextField label="Machine name" value={bdm.machine} onChange={(e) => setBdm((b) => ({ ...b, machine: e.target.value }))} />
             <TextField
-              label={bdm.hasKey ? "API key (saved — leave blank to keep)" : "API key (x-api-key)"}
+              label={bdm.hasKey ? "API key (saved, leave blank to keep)" : "API key (x-api-key)"}
               type="password"
               placeholder={bdm.hasKey ? "••••••••" : ""}
               value={bdmKey}

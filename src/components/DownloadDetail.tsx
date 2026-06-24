@@ -21,7 +21,7 @@ import type { JobStatus } from "../lib/tauri/commands";
 
 /** ms → "1h 02m 03s", "3m 20s", "12s", "<1s", or "—". */
 export function formatDuration(ms: number | undefined): string {
-  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "·";
   const total = Math.round(ms / 1000);
   if (total < 1) return "<1s";
   if (total < 60) return `${total}s`;
@@ -188,26 +188,26 @@ export function DownloadDetail({ id }: { id: string }) {
           <Field
             Icon={Calendar}
             label="Started"
-            value={detail.startedAt ? new Date(detail.startedAt).toLocaleString() : "—"}
+            value={detail.startedAt ? new Date(detail.startedAt).toLocaleString() : "·"}
             mono
           />
           <Field Icon={Timer} label="Duration" value={formatDuration(detail.durationMs)} mono />
           <Field
             Icon={Gauge}
             label="Avg speed"
-            value={detail.avgSpeed ? formatSpeed(detail.avgSpeed) : "—"}
+            value={detail.avgSpeed ? formatSpeed(detail.avgSpeed) : "·"}
             mono
           />
           <Field
             Icon={Gauge}
             label="Max speed"
-            value={detail.maxSpeed ? formatSpeed(detail.maxSpeed) : "—"}
+            value={detail.maxSpeed ? formatSpeed(detail.maxSpeed) : "·"}
             mono
           />
           <Field
             Icon={Gauge}
             label="Min speed"
-            value={detail.minSpeed ? formatSpeed(detail.minSpeed) : "—"}
+            value={detail.minSpeed ? formatSpeed(detail.minSpeed) : "·"}
             mono
           />
           <Field
@@ -217,7 +217,7 @@ export function DownloadDetail({ id }: { id: string }) {
               detail.sourceUrl ? (
                 <span className="break-all">{detail.sourceUrl}</span>
               ) : (
-                <span className="text-[var(--text-3)]">—</span>
+                <span className="text-[var(--text-3)]">·</span>
               )
             }
             title={detail.sourceUrl}

@@ -30,15 +30,15 @@ interface Marker {
   text: string;
 }
 
-/** ~1 frame at 30fps — fps isn't exposed by <video>, so frame-step is approximate. */
+/** ~1 frame at 30fps, fps isn't exposed by <video>, so frame-step is approximate. */
 const FRAME = 1 / 30;
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement | null>;
-  /** Direct `/media` proxy URL — the no-transcode fallback source. */
+  /** Direct `/media` proxy URL, the no-transcode fallback source. */
   src: string;
-  /** HLS `master.m3u8` URL — the adaptive-bitrate path (null while still building). */
+  /** HLS `master.m3u8` URL, the adaptive-bitrate path (null while still building). */
   hlsSrc: string | null;
   /** When true, drop crossOrigin (PDF frame-capture won't work, but playback will). */
   noCors: boolean;
@@ -71,7 +71,7 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
   const [loading, setLoading] = useState(true); // until the first frame is ready
   const [failed, setFailed] = useState(false); // HLS + direct both failed
 
-  // Quality menu — populated only when hls.js drives playback (so it exposes levels).
+  // Quality menu, populated only when hls.js drives playback (so it exposes levels).
   const [levels, setLevels] = useState<{ height: number }[]>([]);
   const [curLevel, setCurLevel] = useState(AUTO_LEVEL); // user selection (-1 = Auto)
   const [loadingLevel, setLoadingLevel] = useState(AUTO_LEVEL); // what ABR is loading
@@ -80,7 +80,7 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
   const v = () => videoRef.current;
 
   // First frame is ready: drop the spinner and try to autoplay (browsers may block
-  // autoplay-with-audio — that's fine, the Play button stays). Runs on `canplay`.
+  // autoplay-with-audio, that's fine, the Play button stays). Runs on `canplay`.
   const markReady = useCallback(() => {
     setLoading(false);
     setFailed(false);
@@ -92,8 +92,8 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
   }, []);
 
   // Attach the video source: hls.js (ABR + quality menu) → native HLS → direct
-  // /media. On a fatal hls.js error — OR if the manifest never parses (e.g. the
-  // transcoder is hung/unavailable) — we tear down and fall back to direct so a
+  // /media. On a fatal hls.js error, OR if the manifest never parses (e.g. the
+  // transcoder is hung/unavailable), we tear down and fall back to direct so a
   // review session never hard-breaks. Re-runs when the source URLs change.
   useEffect(() => {
     const video = videoRef.current;
@@ -152,7 +152,7 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
       hls.loadSource(hlsSrc);
       hls.attachMedia(video);
       // If the manifest never parses (transcoder hung/unavailable), don't sit on a
-      // frozen frame forever — fall back to direct play.
+      // frozen frame forever, fall back to direct play.
       manifestTimer.current = setTimeout(useDirect, 12000);
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
@@ -391,7 +391,7 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
       {failed && (
         <div className="absolute inset-0 grid place-items-center px-8 text-center">
           <p className="text-sm text-white/85">
-            Couldn’t play this video. The transcoder may be unavailable — try reopening, or download the file to review it locally.
+            Couldn’t play this video. The transcoder may be unavailable, try reopening, or download the file to review it locally.
           </p>
         </div>
       )}
@@ -437,7 +437,7 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
                   e.stopPropagation();
                   seek(c.time);
                 }}
-                title={`${timecode(c.time)} — ${c.text}`}
+                title={`${timecode(c.time)}, ${c.text}`}
                 className="absolute top-1/2 h-3 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-sm bg-[var(--warning)] hover:h-4"
                 style={{ left: pct(c.time) }}
               />
@@ -499,7 +499,7 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
           </span>
 
           <div className="ml-auto flex items-center gap-1">
-            {/* Quality (hls.js only — native/direct have no manual level menu) */}
+            {/* Quality (hls.js only, native/direct have no manual level menu) */}
             {qualities.length > 0 && (
               <div className="relative">
                 <button

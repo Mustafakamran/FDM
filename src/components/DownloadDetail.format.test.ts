@@ -18,8 +18,8 @@ describe("formatDuration", () => {
   });
 
   it("returns em-dash for missing / invalid input", () => {
-    expect(formatDuration(undefined)).toBe("—");
-    expect(formatDuration(-5)).toBe("—");
-    expect(formatDuration(NaN)).toBe("—");
+    expect(formatDuration(undefined)).toBe("·");
+    expect(formatDuration(-5)).toBe("·");
+    expect(formatDuration(NaN)).toBe("·");
   });
 });
