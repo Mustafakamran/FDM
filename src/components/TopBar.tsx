@@ -1,19 +1,16 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Search, Settings as SettingsIcon, Bell, Minus, Square, X, Sun, Moon } from "lucide-react";
+import { Search, Settings as SettingsIcon, Bell, Minus, Square, X } from "lucide-react";
 import { useApp } from "../store/app";
 import { useSearch } from "../store/search";
 import { useNotifications, unreadCount } from "../store/notifications";
-import { useTheme } from "../store/theme";
 import { useUI } from "../store/ui";
-import { FdmLogo } from "./FdmLogo";
+import { LogoMark } from "./ui/Logo";
 
 const appWindow = getCurrentWindow();
 
 export function TopBar() {
   const setView = useApp((s) => s.setView);
-  const theme = useTheme((s) => s.theme);
-  const toggleTheme = useTheme((s) => s.toggle);
   const openSettings = useUI((s) => s.openSettings);
   const q = useSearch((s) => s.q);
   const setQ = useSearch((s) => s.set);
@@ -31,32 +28,23 @@ export function TopBar() {
   }, []);
 
   return (
-    <header
-      data-tauri-drag-region
-      className="flex h-14 shrink-0 select-none items-center gap-3 bg-transparent pl-4 pr-2"
-    >
-      {/* Brand */}
-      <button
-        onClick={() => setView({ kind: "accounts" })}
-        className="flex items-center gap-2.5"
-      >
-        <span className="flex h-9 w-9 items-center justify-center rounded-[9px] bg-[var(--accent)] text-[var(--accent-ink)]">
-          <FdmLogo size={19} />
-        </span>
-        <span className="text-[17px] font-semibold tracking-tight text-[var(--text)]">FDM</span>
+    <header data-tauri-drag-region className="flex h-14 shrink-0 select-none items-center gap-3 bg-transparent pl-3.5 pr-2">
+      {/* Home — the logo mark (the full lockup lives in the nav rail). */}
+      <button onClick={() => setView({ kind: "accounts" })} aria-label="Home" data-tip="Accounts overview">
+        <LogoMark size={28} />
       </button>
 
       {/* Search */}
-      <div className="mx-auto flex w-full max-w-xl items-center gap-2 rounded-[10px] border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2 text-sm">
-        <Search size={16} className="text-[var(--text-3)]" />
+      <div className="mx-auto flex w-full max-w-xl items-center gap-2 rounded-[11px] border border-[var(--line)] bg-[var(--card)] px-3.5 py-2 text-sm">
+        <Search size={15} className="text-[var(--faint)]" />
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search files and folders…"
-          className="w-full bg-transparent text-[var(--text)] placeholder:text-[var(--text-3)] focus:outline-none"
+          className="w-full bg-transparent text-[var(--ink)] placeholder:text-[var(--faint)] focus:outline-none"
         />
         {q && (
-          <button onClick={() => setQ("")} aria-label="Clear search" className="text-[var(--text-3)] hover:text-[var(--text)]">
+          <button onClick={() => setQ("")} aria-label="Clear search" className="text-[var(--faint)] hover:text-[var(--ink)]">
             <X size={14} />
           </button>
         )}
@@ -67,38 +55,33 @@ export function TopBar() {
         <button
           onClick={() => togglePanel()}
           aria-label="Activity"
-          className="relative flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+          data-tip="Activity"
+          className="relative flex h-9 w-9 items-center justify-center rounded-full text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]"
         >
           <Bell size={16} />
           {unread > 0 && (
-            <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold text-[var(--accent-ink)]">
+            <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--dl)] px-1 text-[10px] font-semibold text-white">
               {unread > 9 ? "9+" : unread}
             </span>
           )}
         </button>
         <button
-          onClick={toggleTheme}
-          aria-label="Toggle theme"
-          className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
-        >
-          {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-        </button>
-        <button
           onClick={openSettings}
           aria-label="Settings"
-          className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+          data-tip="Settings"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]"
         >
           <SettingsIcon size={16} />
         </button>
 
         <div className="ml-1 flex items-center gap-0.5">
-          <button onClick={() => appWindow.minimize()} aria-label="Minimize" className="flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]">
+          <button onClick={() => appWindow.minimize()} aria-label="Minimize" className="flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]">
             <Minus size={15} />
           </button>
-          <button onClick={() => appWindow.toggleMaximize()} aria-label={maximized ? "Restore" : "Maximize"} className="flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]">
+          <button onClick={() => appWindow.toggleMaximize()} aria-label={maximized ? "Restore" : "Maximize"} className="flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]">
             <Square size={13} />
           </button>
-          <button onClick={() => appWindow.close()} aria-label="Close" className="flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--text-2)] hover:bg-[var(--error)] hover:text-white">
+          <button onClick={() => appWindow.close()} aria-label="Close" className="flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--mut)] hover:bg-[var(--err)] hover:text-white">
             <X size={16} />
           </button>
         </div>
