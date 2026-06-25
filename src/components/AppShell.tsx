@@ -4,6 +4,7 @@ import { Sidebar } from "./Sidebar";
 import { BrowsePane } from "./BrowsePane";
 import { ReviewView } from "./ReviewView";
 import { DownloadsView } from "./DownloadsView";
+import { Dashboard } from "./Dashboard";
 import { ConnectView } from "./ConnectView";
 import { DownloadsDock } from "./DownloadsDock";
 import { ToastHost } from "./ToastHost";
@@ -32,6 +33,7 @@ export function AppShell() {
         <Sidebar />
         <div className="flex min-h-0 flex-1 flex-col gap-2.5">
           <div className="min-h-0 flex-1 overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)]">
+            {view.kind === "home" && <Dashboard />}
             {view.kind === "accounts" && <ConnectView />}
             {view.kind === "downloads" && <DownloadsView filter={view.filter} />}
             {view.kind === "review" && <ReviewView accountId={view.accountId} target={view.target} />}

@@ -22,6 +22,8 @@ export type View =
   // DownloadsView itself switches to <GeneralDownloads/> when `web` is set.
   | { kind: "downloads"; filter: DownloadFilter; web?: boolean; detail?: string; category?: WebCategoryFilter }
   | { kind: "review"; accountId: string; target: ReviewTarget }
+  // Dashboard / landing: at-a-glance stats (accounts, storage, downloads, files).
+  | { kind: "home" }
   | { kind: "accounts" };
 
 export type DownloadFilter = "all" | "active" | "completed" | "failed";
@@ -42,6 +44,8 @@ interface AppState {
   accountsLoaded: boolean;
 
   setView: (view: View) => void;
+  /** Open the dashboard / home view. */
+  showHome: () => void;
   selectAccount: (accountId: string) => void;
   openReview: (accountId: string, target: ReviewTarget) => void;
   showDownloads: (filter: DownloadFilter) => void;
@@ -63,6 +67,8 @@ export const useApp = create<AppState>((set, get) => ({
   accountsLoaded: false,
 
   setView: (view) => set({ view }),
+
+  showHome: () => set({ view: { kind: "home" } }),
 
   selectAccount: (accountId) => set({ view: { kind: "browse", accountId, section: "all", path: "" } }),
 
@@ -99,7 +105,8 @@ export const useApp = create<AppState>((set, get) => ({
       if (accounts.length === 0) {
         view = { kind: "accounts" };
       } else if (view.kind === "accounts") {
-        view = first();
+        // First load with accounts present → land on the dashboard.
+        view = { kind: "home" };
       } else if (view.kind === "browse") {
         const id = view.accountId;
         if (!accounts.some((a) => a.id === id)) view = first();

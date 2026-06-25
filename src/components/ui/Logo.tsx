@@ -22,13 +22,13 @@ export function LogoMark({ size = 32, radius }: { size?: number; radius?: number
   );
 }
 
-/** Mark + "FDM" wordmark (F ink, DM muted) — the nav-rail lockup. */
+/** Mark + "FDM" wordmark — one ink color (all black in light, all white in dark). */
 export function Logo({ size = 32, wordSize = 16 }: { size?: number; wordSize?: number }) {
   return (
     <span className="flex items-center gap-[11px]">
       <LogoMark size={size} />
       <span style={{ fontSize: wordSize, fontWeight: 700, letterSpacing: "-.02em" }} className="text-[var(--ink)]">
-        F<span className="text-[var(--mut)]">DM</span>
+        FDM
       </span>
     </span>
   );

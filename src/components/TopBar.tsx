@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Search, Settings as SettingsIcon, Bell, Minus, Square, X } from "lucide-react";
+import { useApp } from "../store/app";
 import { useSearch } from "../store/search";
 import { useNotifications, unreadCount } from "../store/notifications";
 import { useUI } from "../store/ui";
+import { Logo } from "./ui/Logo";
 
 const appWindow = getCurrentWindow();
 
 export function TopBar() {
+  const showHome = useApp((s) => s.showHome);
   const openSettings = useUI((s) => s.openSettings);
   const q = useSearch((s) => s.q);
   const setQ = useSearch((s) => s.set);
@@ -26,7 +29,10 @@ export function TopBar() {
 
   return (
     <header data-tauri-drag-region className="flex h-14 shrink-0 select-none items-center gap-3 bg-transparent pl-4 pr-2">
-      {/* The logo lives once, in the nav rail. This left area is just drag space. */}
+      {/* Brand — the single logo, home button. */}
+      <button onClick={showHome} aria-label="Home" data-tip="Dashboard" className="shrink-0">
+        <Logo size={30} wordSize={15} />
+      </button>
 
       {/* Search */}
       <div className="mx-auto flex w-full max-w-xl items-center gap-2 rounded-[11px] border border-[var(--line)] bg-[var(--card)] px-3.5 py-2 text-sm">

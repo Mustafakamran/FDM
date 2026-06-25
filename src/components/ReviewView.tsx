@@ -6,8 +6,7 @@ import { useReview, fileKey, type FileReview } from "../store/review";
 import { useAccountMeta, prettyLabel } from "../store/account-meta";
 import { useToasts } from "../store/toast";
 import { writeBinaryFile } from "../lib/tauri/commands";
-import { streamUrl, hlsMasterUrl, sourceParams, isPlayable, timecode } from "../lib/review";
-import { streamMode } from "../lib/tauri/commands";
+import { streamUrl, isPlayable, timecode } from "../lib/review";
 import { ReviewPlayer } from "./ReviewPlayer";
 import { Button } from "./ui";
 
@@ -49,26 +48,16 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
     setErr("");
     setDiag("");
     setNoCors(false);
-    // Build the direct /media URL, then ask the backend whether this clip is
-    // already directly playable (H.264/AAC). If so, we DON'T transcode, the
-    // player streams /media directly (instant, no ffmpeg, no load lag). Only when
-    // it actually needs transcoding (ProRes/HEVC/VP9/etc.) do we hand it the HLS
-    // master URL. The player still falls back to direct on any HLS failure.
+    // DIRECT NATIVE PLAYBACK ONLY — no transcoding, no ffmpeg, no HLS.
+    // We hand the player the direct /media URL and let the browser stream the
+    // file over HTTP range requests, exactly like watching it on Drive/Dropbox
+    // inside their web UI. hlsUrl stays null, so ReviewPlayer uses <video src>.
+    // (Pro codecs like ProRes/RAW can't decode in ANY browser; those surface the
+    // "download to review" message — the same thing a provider's preview shows.)
     streamUrl(accountId, target)
       .then(async (u) => {
         if (!alive) return;
         setUrl(u);
-        let mode: "direct" | "hls" = "hls";
-        try {
-          mode = await streamMode(sourceParams(accountId, target));
-        } catch {
-          mode = "hls";
-        }
-        if (!alive) return;
-        if (mode === "hls") {
-          setHlsUrl(await hlsMasterUrl(accountId, target));
-        }
-        // else leave hlsUrl null → ReviewPlayer uses the direct /media source.
         // Background-probe the direct /media URL only to capture a real error
         // message we can surface IF playback fails, never block playback on it.
         fetch(u)

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Plus, FolderOpen, Download, AlertCircle, Globe, Trash2, Loader2, Link as LinkIcon, Sun, Moon } from "lucide-react";
+import { Plus, Home, FolderOpen, Download, AlertCircle, Globe, Trash2, Loader2, Link as LinkIcon, Sun, Moon } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useApp } from "../store/app";
 import { useTransfers } from "../store/transfers";
@@ -8,7 +8,6 @@ import { useAccountMeta, prettyLabel } from "../store/account-meta";
 import { useIndex } from "../store/index-store";
 import { useTheme } from "../store/theme";
 import { ProviderIcon, providerName } from "./icons";
-import { Logo } from "./ui/Logo";
 import { Skeleton } from "./ui";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { AddLinkDialog } from "./AddLinkDialog";
@@ -32,6 +31,7 @@ export function Sidebar() {
   const onWeb = view.kind === "downloads" && !!view.web;
   const onDownloads = view.kind === "downloads" && !view.web;
   const onFiles = view.kind === "browse";
+  const onHome = view.kind === "home";
   const jobs = useTransfers((s) => s.jobs);
   const queue = useTransfers((s) => s.queue);
   const storage = useStorage((s) => s.byAccount);
@@ -72,15 +72,9 @@ export function Sidebar() {
 
   return (
     <aside className="flex w-[236px] shrink-0 flex-col overflow-hidden rounded-[14px] border border-[var(--line)] bg-[var(--card)]">
-      {/* Brand — the one and only logo; doubles as a home button. */}
-      <div className="px-[18px] pb-[18px] pt-5">
-        <button onClick={() => setView({ kind: "accounts" })} aria-label="Home" data-tip="Accounts overview">
-          <Logo />
-        </button>
-      </div>
-
-      {/* Primary nav */}
-      <div className="flex flex-col gap-0.5 px-3">
+      {/* Primary nav (the brand lives in the top bar now). */}
+      <div className="flex flex-col gap-0.5 px-3 pt-4">
+        <NavItem icon={<Home size={16} />} label="Home" active={onHome} onClick={() => setView({ kind: "home" })} />
         <NavItem icon={<FolderOpen size={16} />} label="Files" active={onFiles} onClick={goFiles} />
         <NavItem icon={<Download size={16} />} label="Downloads" active={onDownloads} onClick={() => showDownloads("active")} badge={counts.downloading || undefined} />
         <NavItem icon={<Globe size={16} />} label="Web Downloads" active={onWeb} onClick={() => showWebDownloads()} badge={counts.web || undefined} />

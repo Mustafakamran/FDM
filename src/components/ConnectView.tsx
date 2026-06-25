@@ -13,9 +13,7 @@ export function ConnectView() {
       <Card className="flex max-w-md flex-col items-center gap-5 px-10 py-14 text-center">
         <LogoMark size={64} />
         <div>
-          <p className="text-[20px] font-bold tracking-[-0.02em] text-[var(--ink)]">
-            F<span className="text-[var(--mut)]">DM</span>
-          </p>
+          <p className="text-[20px] font-bold tracking-[-0.02em] text-[var(--ink)]">FDM</p>
           <p className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--faint)]">Fast Download Manager</p>
           <p className="mt-3 max-w-sm text-[13.5px] leading-relaxed text-[var(--mut)]">
             Connect a Google Drive or Dropbox account to browse and download the footage shared with you.
