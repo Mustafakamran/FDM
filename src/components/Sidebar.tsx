@@ -17,7 +17,7 @@ import { laneOf } from "../lib/lane";
 import type { Provider } from "../lib/tauri/commands";
 
 export function Sidebar() {
-  const { view, accounts, accountsLoaded, selectAccount, removeAccount, showDownloads, showWebDownloads } = useApp(
+  const { view, accounts, accountsLoaded, selectAccount, removeAccount, showDownloads, showWebDownloads, setView } = useApp(
     useShallow((s) => ({
       view: s.view,
       accounts: s.accounts,
@@ -26,6 +26,7 @@ export function Sidebar() {
       removeAccount: s.removeAccount,
       showDownloads: s.showDownloads,
       showWebDownloads: s.showWebDownloads,
+      setView: s.setView,
     })),
   );
   const onWeb = view.kind === "downloads" && !!view.web;
@@ -71,9 +72,11 @@ export function Sidebar() {
 
   return (
     <aside className="flex w-[236px] shrink-0 flex-col overflow-hidden rounded-[14px] border border-[var(--line)] bg-[var(--card)]">
-      {/* Brand */}
-      <div className="flex items-center gap-[11px] px-[18px] pb-[18px] pt-5">
-        <Logo />
+      {/* Brand — the one and only logo; doubles as a home button. */}
+      <div className="px-[18px] pb-[18px] pt-5">
+        <button onClick={() => setView({ kind: "accounts" })} aria-label="Home" data-tip="Accounts overview">
+          <Logo />
+        </button>
       </div>
 
       {/* Primary nav */}
@@ -185,39 +188,40 @@ export function Sidebar() {
               </div>
             );
           })}
-
-          {/* Connect account */}
-          <div className="relative mt-1">
-            <button
-              onClick={() => setMenuOpen((o) => !o)}
-              className="flex w-full items-center justify-center gap-1.5 rounded-[11px] border border-dashed border-[var(--line2)] py-2.5 text-xs font-semibold text-[var(--mut)] hover:border-[var(--acc)] hover:text-[var(--ink)]"
-            >
-              <Plus size={14} /> Connect account
-            </button>
-            {menuOpen && (
-              <>
-                <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
-                <div className="animate-pop absolute bottom-[44px] left-0 right-0 z-40 overflow-hidden rounded-[10px] border border-[var(--line2)] bg-[var(--card)] py-1 shadow-[var(--shadow-lg)]">
-                  {(["drive", "dropbox"] as Provider[]).map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => { setAddProvider(p); setMenuOpen(false); }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]"
-                    >
-                      <ProviderIcon provider={p} size={15} /> {providerName(p)}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => { setAddLink(true); setMenuOpen(false); }}
-                    className="flex w-full items-center gap-2 border-t border-[var(--line)] px-3 py-2 text-left text-[13px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]"
-                  >
-                    <LinkIcon size={15} /> Shared link
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
         </div>
+      </div>
+
+      {/* Connect account — OUTSIDE the scrolling list so its upward-opening menu
+          isn't clipped by the list's overflow (that was hiding the Drive item). */}
+      <div className="relative shrink-0 px-3 pb-2">
+        <button
+          onClick={() => setMenuOpen((o) => !o)}
+          className="flex w-full items-center justify-center gap-1.5 rounded-[11px] border border-dashed border-[var(--line2)] py-2.5 text-xs font-semibold text-[var(--mut)] hover:border-[var(--acc)] hover:text-[var(--ink)]"
+        >
+          <Plus size={14} /> Connect account
+        </button>
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
+            <div className="animate-pop absolute bottom-[46px] left-3 right-3 z-40 overflow-hidden rounded-[10px] border border-[var(--line2)] bg-[var(--card)] py-1 shadow-[var(--shadow-lg)]">
+              {(["drive", "dropbox"] as Provider[]).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => { setAddProvider(p); setMenuOpen(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]"
+                >
+                  <ProviderIcon provider={p} size={15} /> {providerName(p)}
+                </button>
+              ))}
+              <button
+                onClick={() => { setAddLink(true); setMenuOpen(false); }}
+                className="flex w-full items-center gap-2 border-t border-[var(--line)] px-3 py-2 text-left text-[13px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]"
+              >
+                <LinkIcon size={15} /> Shared link
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Footer: speed + theme toggle */}
