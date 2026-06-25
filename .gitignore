@@ -9,3 +9,7 @@ src-tauri/binaries/
 *.key
 UPDATER_KEYS.txt
 extension.zip
+
+# Local design bundle from Claude Design (icons already imported to src-tauri/icons)
+Claude-Design/
+claude-design/

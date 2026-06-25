@@ -386,6 +386,29 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
         <button className="rounded-[8px] border border-[var(--border)] p-1.5 text-[var(--text-3)] hover:text-[var(--text)] disabled:opacity-50" onClick={() => useIndex.getState().recrawl(account)} disabled={showCrawl} aria-label="Re-index" title="Re-index (full refresh, picks up new/changed files)"><RefreshCw size={15} /></button>
       </div>
 
+      {/* Section pills — All Files / Recent / Starred / Shared (moved here from the
+          sidebar to match the redesign; each navigates the current account). */}
+      {!q.trim() && (
+        <div className="flex items-center gap-1.5 px-6 pb-3">
+          {(Object.keys(SECTION_TITLE) as Section[]).map((k) => {
+            const on = section === k;
+            return (
+              <button
+                key={k}
+                onClick={() => setView({ kind: "browse", accountId: account.id, section: k, path: "" })}
+                className={`h-8 rounded-full border px-[15px] text-[12.5px] font-semibold ${
+                  on
+                    ? "border-[var(--acc)] bg-[var(--acc)] text-[var(--onacc)]"
+                    : "border-[var(--line)] bg-[var(--card)] text-[var(--mut)] hover:border-[var(--line2)]"
+                }`}
+              >
+                {SECTION_TITLE[k]}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto px-6 pb-2" data-testid="file-list">
         {status === "error" && (
@@ -467,6 +490,14 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                         {/* Fixed action cluster — reserved width (opacity, not display),
                             so revealing it on hover never shifts the layout. */}
                         <div className="flex shrink-0 items-center gap-0.5">
+                          {!item.IsDir && isVideo(item.Name) && (
+                            <RowAction onClick={() => openReview(account.id, reviewTarget(item))} tip="Open in review" label={`Review ${item.Name}`}>
+                              <Play size={14} />
+                            </RowAction>
+                          )}
+                          <RowAction onClick={() => void enqueueItems([item])} tip="Download" label={`Download ${item.Name}`} green>
+                            <Download size={14} />
+                          </RowAction>
                           {item.IsDir && (
                             <RowAction
                               onClick={() => indexFolder(item.Path)}
@@ -515,7 +546,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             >
               <Trash2 size={16} /> Delete
             </Button>
-            <Button variant="primary" onClick={download}><Download size={16} /> Download</Button>
+            <Button variant="download" onClick={download}><Download size={16} /> Download</Button>
           </div>
         </div>
       )}
@@ -560,6 +591,7 @@ function RowAction({
   label,
   active,
   danger,
+  green,
   children,
 }: {
   onClick: () => void;
@@ -568,18 +600,18 @@ function RowAction({
   label: string;
   active?: boolean;
   danger?: boolean;
+  green?: boolean;
   children: ReactNode;
 }) {
+  const hover = danger ? "hover:text-[var(--err)]" : green ? "hover:text-[var(--dl)]" : "hover:text-[var(--acc)]";
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       data-tip={tip}
       aria-label={label}
-      className={`flex h-7 w-7 items-center justify-center rounded-[6px] transition-opacity hover:bg-[var(--hover)] disabled:opacity-40 ${
-        active
-          ? "text-[var(--accent)] opacity-100"
-          : `text-[var(--text-3)] opacity-0 group-hover:opacity-100 ${danger ? "hover:text-[var(--error)]" : "hover:text-[var(--accent)]"}`
+      className={`flex h-7 w-7 items-center justify-center rounded-[6px] transition-opacity hover:bg-[var(--soft)] disabled:opacity-40 ${
+        active ? "text-[var(--acc)] opacity-100" : `text-[var(--faint)] opacity-0 group-hover:opacity-100 ${hover}`
       }`}
     >
       {children}

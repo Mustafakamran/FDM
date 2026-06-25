@@ -17,7 +17,10 @@ export function AppShell() {
   const browseAccount = view.kind === "browse" ? accounts.find((a) => a.id === view.accountId) : undefined;
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden rounded-[var(--window-radius)] border border-[var(--border)] bg-[var(--bg)]">
+    <div
+      className="flex h-screen flex-col overflow-hidden rounded-[var(--window-radius)] border border-[var(--border)]"
+      style={{ background: "var(--win)" }}
+    >
       <TopBar />
       <UpdateBanner />
       <ToastHost />

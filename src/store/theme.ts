@@ -19,14 +19,15 @@ function load(): Theme {
 interface ThemeState {
   theme: Theme;
   toggle: () => void;
+  setTheme: (t: Theme) => void;
 }
 
 export const useTheme = create<ThemeState>((set, get) => ({
   theme: load(),
-  toggle: () => {
-    const next: Theme = get().theme === "dark" ? "light" : "dark";
-    localStorage.setItem(KEY, next);
-    apply(next);
-    set({ theme: next });
+  toggle: () => get().setTheme(get().theme === "dark" ? "light" : "dark"),
+  setTheme: (t) => {
+    localStorage.setItem(KEY, t);
+    apply(t);
+    set({ theme: t });
   },
 }));

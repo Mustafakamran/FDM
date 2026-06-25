@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, ReactNode } from "react";
 
-type Variant = "primary" | "ghost" | "danger";
+type Variant = "primary" | "ghost" | "danger" | "download";
 
 const variants: Record<Variant, string> = {
   primary:
@@ -8,6 +8,9 @@ const variants: Record<Variant, string> = {
   ghost:
     "bg-transparent text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)] active:translate-y-px",
   danger: "bg-transparent text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--error)]",
+  // Green is reserved for downloads (the design's signature semantic).
+  download:
+    "bg-[var(--dl)] font-semibold text-white shadow-[0_4px_14px_rgba(34,197,94,.28)] hover:brightness-110 active:translate-y-px",
 };
 
 export function Button({

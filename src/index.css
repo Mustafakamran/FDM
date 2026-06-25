@@ -1,65 +1,130 @@
 @import "tailwindcss";
 @config "../tailwind.config.js";
 
-/* ── Design tokens: black base, white accent (dark default) ───────────── */
+/* JetBrains Mono — the design's mono voice (sizes, counts, code-like labels). */
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+/* ─────────────────────────────────────────────────────────────────────────
+   FetchDM Studio design tokens.
+
+   Two ideas drive the palette:
+   1. A MONOCHROME accent that flips with the theme — near-black ink in light,
+      near-white in dark. (`--acc`/`--accent` are the same token; every primary
+      action inherits it, so the UI reads black-on-white or white-on-black.)
+   2. Color is reserved for meaning only: GREEN (`--dl`/`--success`) for
+      downloads + speed, RED (`--err`/`--error`) for delete/cancel.
+
+   New design names (--ink/--mut/--faint/--soft/--line/--line2/--acc/--onacc/
+   --dl/--ok/--err/--warn/--accw/--win) are declared alongside the app's legacy
+   names (--text/--surface/--accent/--border/…) mapped to the SAME values, so
+   every existing component re-skins automatically while new code can use the
+   design's native vocabulary.
+   ───────────────────────────────────────────────────────────────────────── */
 :root {
   color-scheme: dark;
 
-  --bg: #000000;
-  --surface: #0e0e10;
-  --card: #161618;
-  --hover: #1f1f22;
-  --border: #262629;
-  --border-strong: #38383c;
+  /* Window: a soft radial backdrop behind the panels, plus the window surface. */
+  --win: radial-gradient(130% 130% at 20% -10%, #1a1c22 0%, #0a0b0e 75%);
+  --bg: #0e0f12;
 
-  --text: #f4f4f6;
-  --text-2: #a0a0a6;
-  --text-3: #66666d;
+  /* Surfaces */
+  --surface: #17181c;
+  --card: #17181c;
+  --soft: #202229;
+  --hover: #202229;
+  --line: #272930;
+  --border: #272930;
+  --line2: #34363d;
+  --border-strong: #34363d;
 
-  --accent: #ffffff;
-  --accent-hover: #e8e8ea;
-  --accent-ink: #000000;
-  --accent-weak: rgba(255, 255, 255, 0.1);
-  --accent-glow: rgba(255, 255, 255, 0.14);
+  /* Text */
+  --ink: #f2f3f5;
+  --text: #f2f3f5;
+  --mut: #9aa1ad;
+  --text-2: #9aa1ad;
+  --faint: #6b7280;
+  --text-3: #6b7280;
 
-  --window-radius: 14px;
+  /* Monochrome accent (flips per theme) */
+  --acc: #f2f3f5;
+  --accent: #f2f3f5;
+  --acc-d: #ffffff;
+  --accent-hover: #ffffff;
+  --onacc: #15161a;
+  --accent-ink: #15161a;
+  --accw: rgba(242, 243, 245, 0.1);
+  --accent-weak: rgba(242, 243, 245, 0.1);
+  --accent-glow: rgba(242, 243, 245, 0.14);
 
-  --success: #3fb950;
-  --warning: #d29922;
-  --error: #f85149;
+  /* Meaningful color: green = downloads/speed, red = delete, amber = warn */
+  --ok: #22c55e;
+  --success: #22c55e;
+  --okw: rgba(34, 197, 94, 0.15);
+  --dl: #22c55e;
+  --dlw: rgba(34, 197, 94, 0.15);
+  --warn: #e0a13a;
+  --warning: #e0a13a;
+  --err: #f0616a;
+  --error: #f0616a;
+  --errw: rgba(240, 97, 106, 0.16);
 
-  --radius: 9px;
+  --window-radius: 18px;
+  --radius: 11px;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --mono: var(--font-mono);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+  --shadow: 0 10px 30px rgba(8, 9, 14, 0.4);
+  --shadow-lg: 0 30px 80px rgba(8, 9, 14, 0.55);
 }
 
-/* Light theme (white base, black accent) */
+/* Light theme — accent flips to near-black ink, surfaces go bright. */
 html.light {
   color-scheme: light;
 
-  --bg: #ffffff;
-  --surface: #f6f6f7;
+  --win: radial-gradient(130% 130% at 20% -10%, #eef0f6 0%, #e2e5ee 75%);
+  --bg: #eef0f6;
+
+  --surface: #ffffff;
   --card: #ffffff;
-  --hover: #ededee;
-  --border: #e4e4e7;
-  --border-strong: #d2d2d6;
+  --soft: #f5f6f9;
+  --hover: #f5f6f9;
+  --line: #ebedf1;
+  --border: #ebedf1;
+  --line2: #dfe2e8;
+  --border-strong: #dfe2e8;
 
-  --text: #16161a;
-  --text-2: #5c5f66;
-  --text-3: #8a8d94;
+  --ink: #1a1c23;
+  --text: #1a1c23;
+  --mut: #646b78;
+  --text-2: #646b78;
+  --faint: #9aa1ad;
+  --text-3: #9aa1ad;
 
-  --accent: #16161a;
-  --accent-hover: #2c2c33;
+  --acc: #1a1c23;
+  --accent: #1a1c23;
+  --acc-d: #000000;
+  --accent-hover: #000000;
+  --onacc: #ffffff;
   --accent-ink: #ffffff;
-  --accent-weak: rgba(0, 0, 0, 0.06);
-  --accent-glow: rgba(0, 0, 0, 0.1);
+  --accw: rgba(26, 28, 35, 0.07);
+  --accent-weak: rgba(26, 28, 35, 0.07);
+  --accent-glow: rgba(26, 28, 35, 0.1);
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
-  --shadow: 0 6px 22px rgba(0, 0, 0, 0.12);
-  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.16);
+  --ok: #16a34a;
+  --success: #16a34a;
+  --okw: rgba(22, 163, 74, 0.12);
+  --dl: #16a34a;
+  --dlw: rgba(22, 163, 74, 0.12);
+  --warn: #d9881f;
+  --warning: #d9881f;
+  --err: #e5484d;
+  --error: #e5484d;
+  --errw: rgba(229, 72, 77, 0.12);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow: 0 10px 30px rgba(20, 22, 40, 0.12);
+  --shadow-lg: 0 30px 80px rgba(20, 22, 40, 0.18);
 }
 
 html,
