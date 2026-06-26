@@ -143,6 +143,35 @@ pub fn config_create_args(
     }
 }
 
+/// Make the running rcd daemon pick up an out-of-band config change.
+///
+/// `add_account` / `remove_account` run `rclone config create|delete` as a
+/// SEPARATE process that rewrites the shared `rclone.conf`. The long-lived daemon
+/// still holds the OLD parsed config in memory AND caches each remote's `Fs`
+/// object (with its OLD OAuth token) in the fs cache — so after reconnecting a
+/// Dropbox/Drive account with broader scopes, writes (delete) keep failing with
+/// the stale read-only token until the daemon is told to refresh. `config/setpath`
+/// re-reads the same config file; `fscache/clear` evicts the cached remotes so the
+/// next operation rebuilds each `Fs` from the fresh token. Best-effort + cheap
+/// (localhost rc), and it does NOT cancel in-flight transfers.
+fn reload_daemon(app: &AppHandle) {
+    let conn = match app
+        .state::<RcloneState>()
+        .connection
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+    {
+        Some(c) => c,
+        None => return,
+    };
+    if let Ok(dir) = app.path().app_data_dir() {
+        let path = dir.join("rclone.conf").to_string_lossy().into_owned();
+        let _ = rc_post(&conn, "config/setpath", &serde_json::json!({ "path": path }));
+    }
+    let _ = rc_post(&conn, "fscache/clear", &serde_json::json!({}));
+}
+
 /// List all configured accounts: rclone remotes (drive/dropbox/drivelink) plus
 /// Dropbox shared-links (which have no rclone remote, so they come from the
 /// native link store).
@@ -182,6 +211,8 @@ pub fn remove_account(app: AppHandle, state: tauri::State<RcloneState>, id: Stri
         .clone()
         .ok_or_else(|| "rclone not started".to_string())?;
     rc_post(&conn, "config/delete", &serde_json::json!({ "name": id }))?;
+    // Evict the removed remote's cached Fs so a same-named reconnect can't reuse it.
+    reload_daemon(&app);
     Ok(())
 }
 
@@ -327,6 +358,10 @@ pub async fn add_account(
         let _ = oauth.0.lock().unwrap_or_else(|e| e.into_inner()).take();
 
         if code == Some(0) {
+            // The daemon is a separate process and won't see the freshly-written
+            // token/scopes until told to refresh — without this, a reconnect to
+            // gain delete permission has no effect.
+            reload_daemon(&app);
             return parse_remote(&remote).ok_or_else(|| format!("invalid remote name: {remote}"));
         }
 
