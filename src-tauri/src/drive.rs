@@ -78,7 +78,11 @@ fn refresh_at(endpoint: &str, client_id: &str, client_secret: &str, refresh_toke
 pub(crate) fn drive_access_token(conn: &RcConnection, account_id: &str) -> Result<String, String> {
     let dump = rc_post(conn, "config/dump", &serde_json::json!({}))?;
     let (token_json, client_id, client_secret) =
-        remote_creds(&dump, account_id).ok_or_else(|| format!("no creds for {account_id}"))?;
+        remote_creds(&dump, account_id).ok_or_else(|| format!(
+            "This account isn't fully authorized (no saved sign-in for {account_id}). \
+             Reconnect it: remove the account and add it again, finish the sign-in in the \
+             browser, and make sure your OAuth client ID + secret are set in Settings."
+        ))?;
     let refresh = refresh_token_from(&token_json).ok_or_else(|| "no refresh token".to_string())?;
     refresh_at("https://oauth2.googleapis.com/token", &client_id, &client_secret, &refresh)
 }
@@ -100,7 +104,11 @@ pub fn drive_uploader(
 
     let dump = rc_post(&conn, "config/dump", &serde_json::json!({}))?;
     let (token_json, client_id, client_secret) =
-        remote_creds(&dump, &account_id).ok_or_else(|| format!("no creds for {account_id}"))?;
+        remote_creds(&dump, &account_id).ok_or_else(|| format!(
+            "This account isn't fully authorized (no saved sign-in for {account_id}). \
+             Reconnect it: remove the account and add it again, finish the sign-in in the \
+             browser, and make sure your OAuth client ID + secret are set in Settings."
+        ))?;
     let refresh = refresh_token_from(&token_json).ok_or_else(|| "no refresh token".to_string())?;
     let access = refresh_at("https://oauth2.googleapis.com/token", &client_id, &client_secret, &refresh)?;
 
@@ -128,7 +136,11 @@ pub fn drive_uploader(
 pub fn drive_email(conn: &RcConnection, account_id: &str) -> Result<Option<String>, String> {
     let dump = rc_post(conn, "config/dump", &serde_json::json!({}))?;
     let (token_json, client_id, client_secret) =
-        remote_creds(&dump, account_id).ok_or_else(|| format!("no creds for {account_id}"))?;
+        remote_creds(&dump, account_id).ok_or_else(|| format!(
+            "This account isn't fully authorized (no saved sign-in for {account_id}). \
+             Reconnect it: remove the account and add it again, finish the sign-in in the \
+             browser, and make sure your OAuth client ID + secret are set in Settings."
+        ))?;
     let refresh = refresh_token_from(&token_json).ok_or_else(|| "no refresh token".to_string())?;
     let access = refresh_at("https://oauth2.googleapis.com/token", &client_id, &client_secret, &refresh)?;
 
@@ -157,7 +169,11 @@ pub fn drive_email(conn: &RcConnection, account_id: &str) -> Result<Option<Strin
 pub(crate) fn dropbox_access_token(conn: &RcConnection, account_id: &str) -> Result<String, String> {
     let dump = rc_post(conn, "config/dump", &serde_json::json!({}))?;
     let (token_json, client_id, client_secret) =
-        remote_creds(&dump, account_id).ok_or_else(|| format!("no creds for {account_id}"))?;
+        remote_creds(&dump, account_id).ok_or_else(|| format!(
+            "This account isn't fully authorized (no saved sign-in for {account_id}). \
+             Reconnect it: remove the account and add it again, finish the sign-in in the \
+             browser, and make sure your OAuth client ID + secret are set in Settings."
+        ))?;
     let refresh = refresh_token_from(&token_json).ok_or_else(|| "no refresh token".to_string())?;
     refresh_at("https://api.dropboxapi.com/oauth2/token", &client_id, &client_secret, &refresh)
 }
