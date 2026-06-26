@@ -9,7 +9,7 @@
 //! A global token-bucket enforces an optional bandwidth cap across all workers.
 //! rclone is still used only for listing/index, not the byte transfer.
 
-use crate::download::{account_fs, DownloadItem, NativeHandles};
+use crate::download::{account_fs, build_copy, DownloadItem, NativeHandles};
 use crate::dropbox;
 use crate::provider::{self, Kind};
 use crate::rclone::supervisor::{rc_post, RcConnection};
@@ -800,6 +800,52 @@ fn download_ytdlp(app: &AppHandle, url: &str, dest_dir: &Path, referrer: Option<
     }
 }
 
+/// Fallback download path for accounts WITHOUT native creds in the rclone config
+/// (e.g. a Drive remote connected with rclone's built-in app — it has a token but
+/// no client_id/client_secret for us to refresh with). Instead of the native block
+/// engine, ask the rcd daemon to copy the file/folder to disk: it authenticates
+/// with the remote's own credentials (built-in or custom), and its local backend
+/// sanitizes Windows-illegal names on its own. Progress is read from the job's
+/// stats group; pause/cancel stops the rclone job. Completed files in a folder are
+/// skipped on a re-run (rclone checks the destination), so this still resumes.
+fn download_via_rclone(conn: &RcConnection, account_id: &str, item: &DownloadItem, dest: &str, h: &NativeHandles) -> Result<(), String> {
+    let fs = account_fs(account_id)?;
+    let group = format!("fdm/{}", h.job_id);
+    let (endpoint, mut params) = build_copy(&fs, item, dest);
+    params["_group"] = json!(group);
+    let resp = rc_post(conn, endpoint, &params)?;
+    let jobid = resp
+        .get("jobid")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| "rclone copy did not return a job id".to_string())?;
+
+    loop {
+        if h.cancelled.load(Ordering::SeqCst) {
+            let _ = rc_post(conn, "job/stop", &json!({ "jobid": jobid }));
+            return Err("paused".into());
+        }
+        // Best-effort live byte count from the job's stats group.
+        if let Ok(stats) = rc_post(conn, "core/stats", &json!({ "group": group })) {
+            if let Some(b) = stats.get("bytes").and_then(|v| v.as_i64()) {
+                h.transferred.store(b, Ordering::SeqCst);
+            }
+        }
+        let st = rc_post(conn, "job/status", &json!({ "jobid": jobid }))?;
+        if st.get("finished").and_then(|v| v.as_bool()).unwrap_or(false) {
+            if st.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return Ok(());
+            }
+            let err = st
+                .get("error")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("rclone copy failed");
+            return Err(err.to_string());
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
 /// Worker body for one queued item (a file or a whole folder).
 pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, item: DownloadItem, dest: String, connections: usize, h: NativeHandles) {
     let connections = if connections == 0 { DEFAULT_CONNECTIONS } else { connections };
@@ -815,7 +861,17 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
             return download_ytdlp(&app, &item.id, Path::new(&dest), referrer, &h);
         }
 
-        let auth = Arc::new(Auth::new(&app, conn.clone(), &account_id)?);
+        let auth = match Auth::new(&app, conn.clone(), &account_id) {
+            Ok(a) => Arc::new(a),
+            // No native creds stored for this account (e.g. Drive connected with
+            // rclone's built-in app). Fall back to a daemon-side rclone copy, which
+            // uses the remote's own auth — so the download still works without the
+            // user setting up their own OAuth client.
+            Err(e) if e.contains("no saved sign-in") => {
+                return download_via_rclone(&conn, &account_id, &item, &dest, &h);
+            }
+            Err(e) => return Err(e),
+        };
         let client = reqwest::blocking::Client::builder()
             .connect_timeout(Duration::from_secs(30))
             // Per-request (one 8 MiB block) deadline so a stalled socket errors and
