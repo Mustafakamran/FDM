@@ -9,6 +9,7 @@ pub mod ingest;
 pub mod locate;
 pub mod provider;
 pub mod rclone;
+pub mod search;
 pub mod secrets;
 pub mod stream;
 pub mod transfer;
@@ -92,6 +93,8 @@ pub fn run() {
             index::index_get,
             index::index_status,
             index::index_remove,
+            search::account_search,
+            search::account_recent,
         ])
         .setup(|app| {
             // CRITICAL: the setup closure runs on the main thread BEFORE Tauri's

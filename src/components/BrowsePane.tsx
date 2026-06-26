@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, FolderSearch, FolderOpen, Folder, FileSearch, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
 import { isVideo, extOf } from "../lib/review";
 import { useIndex } from "../store/index-store";
@@ -14,7 +15,7 @@ import { ProviderIcon } from "./icons";
 import { Button, Skeleton } from "./ui";
 import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
 import { fileType } from "../lib/file-types";
-import { recentFiles, itemAt } from "../lib/account-index";
+import { itemAt } from "../lib/account-index";
 import { IndexProgress } from "./IndexProgress";
 import { formatBytes, formatDate } from "../lib/format";
 import { sortItems, DEFAULT_SORT, type SortField, type SortState } from "../lib/sort";
@@ -76,16 +77,47 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     }
   }, [sort]);
 
-  // Index ONLY for views that genuinely need a precomputed tree — Recent, Starred,
-  // Search. Plain folder browsing must NOT trigger a crawl: Drive accounts surface
-  // the entire "Shared with me" tree (tens of TB of client footage), and auto-
-  // crawling it on every account open is what made indexing balloon past the
-  // account's own quota. Folder browse is live; folder sizes are on demand.
+  // Live, server-side Search + Recent — the "like the web" path. We NEVER crawl an
+  // account into a local index automatically (Drive's "Shared with me" alone is
+  // tens of TB). Search asks the provider directly (Drive files.list / Dropbox
+  // search_v2); Recent uses Drive's modifiedTime sort. Results return in a blink
+  // regardless of account size. (Indexing is now opt-in only, via Re-index.)
+  const [serverItems, setServerItems] = useState<RcItem[]>(EMPTY);
+  const [serverState, setServerState] = useState<"idle" | "loading" | "error" | "dropbox-recent">("idle");
   useEffect(() => {
-    if (section === "recent" || section === "starred" || q.trim()) {
-      void useIndex.getState().ensure(account);
+    const searching = q.trim().length > 0;
+    const recent = section === "recent" && !searching;
+    if (!searching && !recent) {
+      setServerItems(EMPTY);
+      setServerState("idle");
+      return;
     }
-  }, [account, section, q]);
+    if (recent && account.provider === "dropbox") {
+      // Dropbox has no cheap "recent" endpoint — point the user at Search instead.
+      setServerItems(EMPTY);
+      setServerState("dropbox-recent");
+      return;
+    }
+    let alive = true;
+    setServerState("loading");
+    const call = searching
+      ? invoke<RcItem[]>("account_search", { accountId: account.id, query: q.trim() })
+      : invoke<RcItem[]>("account_recent", { accountId: account.id });
+    call
+      .then((res) => {
+        if (!alive) return;
+        setServerItems(res ?? EMPTY);
+        setServerState("idle");
+      })
+      .catch(() => {
+        if (!alive) return;
+        setServerItems(EMPTY);
+        setServerState("error");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [q, section, account.id, account.provider]);
 
   const index = entry?.index ?? null;
   const status = entry?.status ?? "idle";
@@ -188,22 +220,17 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   useEffect(() => setSelected(new Set()), [section, path, q]);
 
   const base: RcItem[] = useMemo(() => {
-    // Search + Recent + Starred come from the background index (when it's ready).
-    if (q.trim()) {
-      if (!index) return EMPTY;
-      const needle = q.toLowerCase();
-      return Object.values(index.tree).flat().filter((i) => i.Name.toLowerCase().includes(needle));
-    }
-    if (section === "recent") return index ? recentFiles(index) : EMPTY;
+    // Search + Recent are LIVE server-side queries (no crawl). Starred reads from
+    // an index ONLY if one was already built on demand (never auto-crawled).
+    if (q.trim()) return serverItems;
+    if (section === "recent") return serverItems;
     if (section === "starred") return index ? (starred.map((p) => itemAt(index, p)).filter(Boolean) as RcItem[]) : EMPTY;
     // all / shared: the LIVE listing is the source of truth (instant). If it's
-    // empty or failed, fall back to the background index so folders still show.
+    // empty or failed, fall back to an already-built index so folders still show.
     if (liveItems && liveItems.length) return liveItems;
-    // Fall back to the index ONLY if one already exists (from Recent/Search) — we
-    // never force a full crawl here; that would hammer huge accounts.
     if (indexItems && indexItems.length) return indexItems;
     return liveItems ?? EMPTY;
-  }, [index, q, section, starred, indexItems, liveItems]);
+  }, [index, q, section, starred, indexItems, liveItems, serverItems]);
 
   const items = useMemo(() => {
     return sortItems(base, sort, { sizeOf, dateOf });
@@ -268,7 +295,14 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const showCrawl = status === "crawling" || status === "loading";
   // Folder views spin only while the LIVE listing is loading; Recent/Starred/Search
   // spin while their background index is still building.
-  const spinner = folderView ? liveLoading && items.length === 0 : !index && status !== "error";
+  // Search + Recent spin on the live server query; folder views on the live list;
+  // Starred never spins (it reads an already-built index or shows empty).
+  const onServerQuery = q.trim().length > 0 || section === "recent";
+  const spinner = onServerQuery
+    ? serverState === "loading"
+    : folderView
+      ? liveLoading && items.length === 0
+      : false;
 
   const SORTS: { key: SortField; label: string }[] = [
     { key: "name", label: "Name" },
@@ -420,6 +454,14 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
 
         {spinner ? (
           <FileListSkeleton />
+        ) : serverState === "error" ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-sm text-[var(--mut)]">
+            <AlertCircle size={18} className="text-[var(--err)]" /> Couldn’t search this account. Check the connection and try again.
+          </div>
+        ) : serverState === "dropbox-recent" ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-sm text-[var(--mut)]">
+            Recent isn’t available for Dropbox. Use <span className="font-semibold text-[var(--ink)]">Search</span> or browse <span className="font-semibold text-[var(--ink)]">All Files</span>.
+          </div>
         ) : items.length === 0 ? (
           <EmptyState q={q} section={section} />
         ) : grid ? (
