@@ -422,10 +422,59 @@ fn parse_size(v: &Value) -> i64 {
     v.get("Size").and_then(|x| x.as_i64()).unwrap_or(-1)
 }
 
+/// Join a provider-supplied relative path onto `root`, making each component legal
+/// on the LOCAL filesystem. Dropbox/Drive permit names that are illegal on Windows
+/// (`<>:"|?*`, control chars, trailing dots/spaces, reserved device names like
+/// CON/NUL/COM1). Creating such a file on Windows fails with "The parameter is
+/// incorrect" (os error 87) / ERROR_INVALID_NAME (123), which previously aborted a
+/// whole folder download partway through. Sanitizing every component lets all files
+/// land (with a safe name) regardless of the source naming.
+fn safe_join(root: &Path, rel: &str) -> PathBuf {
+    let mut out = root.to_path_buf();
+    for comp in rel.split(['/', '\\']) {
+        match comp {
+            "" | "." => continue,
+            ".." => out.push("__"), // never let a provider path escape the dest root
+            c => out.push(sanitize_component(c)),
+        }
+    }
+    out
+}
+
+/// Make a single path component safe for the local filesystem (see `safe_join`).
+fn sanitize_component(name: &str) -> String {
+    let mut s: String = name
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '|' | '?' | '*' | '/' | '\\' => '_',
+            c if (c as u32) < 0x20 => '_',
+            c => c,
+        })
+        .collect();
+    // Windows silently strips trailing spaces/dots, which breaks create + rename.
+    let trimmed = s.trim_end_matches([' ', '.']);
+    if trimmed.len() != s.len() {
+        s = trimmed.to_string();
+    }
+    if s.is_empty() {
+        return "_".into();
+    }
+    // Reserved DOS device names (any extension) can't be a filename on Windows.
+    let stem = s.split('.').next().unwrap_or(&s).to_ascii_uppercase();
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if RESERVED.contains(&stem.as_str()) {
+        return format!("_{s}");
+    }
+    s
+}
+
 /// Enumerate the files under a folder selection into per-file tasks.
 fn enumerate_folder(app: &AppHandle, conn: &RcConnection, account_id: &str, item: &DownloadItem, dest_root: &Path) -> Result<Vec<FileTask>, String> {
     let mut tasks = Vec::new();
-    let folder_dest = dest_root.join(&item.name);
+    let folder_dest = safe_join(dest_root, &item.name);
 
     if account_id.starts_with("dropboxlink_") {
         let entries = dropbox::list_entries(app, conn, account_id)?;
@@ -439,7 +488,7 @@ fn enumerate_folder(app: &AppHandle, conn: &RcConnection, account_id: &str, item
                 continue;
             }
             let rel = p.strip_prefix(&prefix).unwrap_or(p);
-            tasks.push(FileTask { fid: String::new(), path: p.to_string(), size: parse_size(e), dest: folder_dest.join(rel) });
+            tasks.push(FileTask { fid: String::new(), path: p.to_string(), size: parse_size(e), dest: safe_join(&folder_dest, rel) });
         }
         return Ok(tasks);
     }
@@ -474,7 +523,7 @@ fn enumerate_folder(app: &AppHandle, conn: &RcConnection, account_id: &str, item
             fid: e.get("ID").and_then(|x| x.as_str()).unwrap_or("").to_string(),
             path: full,
             size,
-            dest: folder_dest.join(&rel_under),
+            dest: safe_join(&folder_dest, &rel_under),
         });
     }
     Ok(tasks)
@@ -784,7 +833,7 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
             }
             enumerate_folder(&app, &conn, &account_id, &item, dest_root)?
         } else {
-            vec![FileTask { fid: item.id.clone(), path: item.path.clone(), size: item.size, dest: dest_root.join(&item.name) }]
+            vec![FileTask { fid: item.id.clone(), path: item.path.clone(), size: item.size, dest: safe_join(dest_root, &item.name) }]
         };
 
         // Seed progress with whatever is already on disk (resume).
@@ -822,6 +871,34 @@ mod tests {
     fn part_and_meta_paths() {
         assert_eq!(part_path(Path::new("/d/clip.mxf")), PathBuf::from("/d/clip.mxf.fdmpart"));
         assert_eq!(meta_path(Path::new("/d/clip.mxf")), PathBuf::from("/d/clip.mxf.fdmmeta"));
+    }
+
+    #[test]
+    fn sanitize_handles_windows_illegal_names() {
+        // Illegal characters → underscore.
+        assert_eq!(sanitize_component("a:b?c*d|e\"f<g>h"), "a_b_c_d_e_f_g_h");
+        // Trailing dots/spaces stripped (Windows strips them silently).
+        assert_eq!(sanitize_component("name. "), "name");
+        assert_eq!(sanitize_component("folder..."), "folder");
+        // Reserved device names get prefixed (with or without extension).
+        assert_eq!(sanitize_component("CON"), "_CON");
+        assert_eq!(sanitize_component("nul.txt"), "_nul.txt");
+        assert_eq!(sanitize_component("COM1"), "_COM1");
+        // Ordinary names untouched.
+        assert_eq!(sanitize_component("Rick & Cheryl's Wedding.mp4"), "Rick & Cheryl's Wedding.mp4");
+        // Empty / dot-only components collapse to a placeholder.
+        assert_eq!(sanitize_component("   "), "_");
+    }
+
+    #[test]
+    fn safe_join_sanitizes_each_component_and_blocks_escape() {
+        let root = Path::new("/dl");
+        // A nested path with an illegal segment lands fully sanitized under root.
+        assert_eq!(safe_join(root, "Aaron/clip:1?.mp4"), PathBuf::from("/dl/Aaron/clip_1_.mp4"));
+        // ".." can't escape the destination root.
+        assert_eq!(safe_join(root, "../etc/passwd"), PathBuf::from("/dl/__/etc/passwd"));
+        // Empty + "." segments are skipped.
+        assert_eq!(safe_join(root, "a//./b"), PathBuf::from("/dl/a/b"));
     }
 
     #[test]
