@@ -322,6 +322,13 @@ interface TransfersState {
    * not state that needs to survive a restart.
    */
   speedHistory: Record<number, number[]>;
+  /**
+   * Rolling window of combined speed across every active job (both lanes),
+   * for the "all downloads" graph. The lane gate (decideLanes) auto-pauses
+   * secondary whenever primary is busy, so in practice this equals whichever
+   * lane's screen you're looking at — no need to track it per lane.
+   */
+  totalSpeedHistory: number[];
   concurrency: number;
   secondaryConcurrency: number;
   dockOpen: boolean;
@@ -353,6 +360,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
   queue: restoreQueue(),
   inflight: [],
   speedHistory: {},
+  totalSpeedHistory: [],
   concurrency: loadConcurrency(),
   secondaryConcurrency: loadSecondaryConcurrency(),
   dockOpen: true,
@@ -503,12 +511,18 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     const prevHistory = get().speedHistory;
     if (stillInflight.length > 0 || Object.keys(prevHistory).length > 0) {
       const nextHistory: Record<number, number[]> = {};
+      let total = 0;
       for (const inf of stillInflight) {
         const job = jobs.find((j) => j.jobId === inf.jobId)!;
         const prev = prevHistory[inf.jobId] ?? [];
-        nextHistory[inf.jobId] = [...prev, Math.max(0, job.speed)].slice(-SPEED_HISTORY_LENGTH);
+        const speed = Math.max(0, job.speed);
+        nextHistory[inf.jobId] = [...prev, speed].slice(-SPEED_HISTORY_LENGTH);
+        total += speed;
       }
-      set({ speedHistory: nextHistory });
+      set((s) => ({
+        speedHistory: nextHistory,
+        totalSpeedHistory: [...s.totalSpeedHistory, total].slice(-SPEED_HISTORY_LENGTH),
+      }));
     }
     // Short-circuit on a byte-for-byte idle tick: skip BOTH the localStorage
     // write and the in-memory set() (per inflightEqual, which compares jobId +

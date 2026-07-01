@@ -10,6 +10,7 @@ import { formatBytes, formatSpeed, formatEta } from "../lib/format";
 import { categoryFor, CATEGORIES, type Category } from "../lib/categories";
 import { UrlDownload } from "./UrlDownload";
 import { DownloadDetail } from "./DownloadDetail";
+import { SpeedGraph } from "./ui/SpeedGraph";
 import type { JobStatus } from "../lib/tauri/commands";
 
 /** Category filter: "All" plus every category. */
@@ -47,6 +48,10 @@ export function GeneralDownloads({ filter, detail }: { filter: Category | "All";
 
   const jobs = useTransfers((s) => s.jobs);
   const queue = useTransfers((s) => s.queue);
+  // Reused as-is from the primary Downloads screen: the lane gate auto-pauses
+  // secondary whenever primary is busy, so this combined total already tracks
+  // whichever lane is actually transferring.
+  const totalSpeedHistory = useTransfers((s) => s.totalSpeedHistory);
   const { cancel, pause, resumePaused, removeQueued, enqueue } = useTransfers(
     useShallow((s) => ({
       cancel: s.cancel,
@@ -80,6 +85,7 @@ export function GeneralDownloads({ filter, detail }: { filter: Category | "All";
   const active = webActive.filter((j) => match(j.name));
   const queued = webQueue.filter((q) => match(q.item.name));
   const hist = webHistory.filter((h) => match(h.name, h.category));
+  const totalSpeed = active.reduce((s, j) => s + Math.max(0, j.speed), 0);
 
   // Detail panel takes over the whole view when a download is pinned.
   if (detail) return <DownloadDetail id={detail} />;
@@ -120,6 +126,18 @@ export function GeneralDownloads({ filter, detail }: { filter: Category | "All";
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-6 pb-4">
+        {active.length > 0 && (
+          <div className="mb-4 rounded-[9px] border border-[var(--border)] bg-[var(--card)] p-4">
+            <div className="mb-2 flex items-center justify-between text-[11px] font-semibold tracking-wide text-[var(--text-3)]">
+              <span>COMBINED SPEED</span>
+              <span className="tnum text-[13px] font-semibold text-[var(--dl)]">{formatSpeed(totalSpeed)}</span>
+            </div>
+            <div className="h-14">
+              <SpeedGraph samples={totalSpeedHistory} />
+            </div>
+          </div>
+        )}
+
         {(active.length > 0 || queued.length > 0) && (
           <div className="mb-4">
             <div className="mb-2 text-xs font-semibold tracking-wide text-[var(--text-3)]">IN PROGRESS</div>
