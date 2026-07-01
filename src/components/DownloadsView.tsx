@@ -70,12 +70,11 @@ function PrimaryDownloads({ filter }: { filter: DownloadFilter }) {
   // trigger a re-render on their own.
   const jobs = useTransfers((s) => s.jobs);
   const queue = useTransfers((s) => s.queue);
-  // Live per-job + combined speed graphs — this view is only mounted while the
-  // user is actually looking at Downloads, so a re-render every 1s tick (to
-  // grow the charts) is exactly the point, not a perf concern like it would be
-  // for something rendered everywhere (e.g. the floating dock).
+  // Live per-job speed graph — this view is only mounted while the user is
+  // actually looking at Downloads, so a re-render every 1s tick (to grow the
+  // chart) is exactly the point, not a perf concern like it would be for
+  // something rendered everywhere (e.g. the floating dock).
   const speedHistory = useTransfers((s) => s.speedHistory);
-  const totalSpeedHistory = useTransfers((s) => s.totalSpeedHistory);
   const { cancel, pause, resumePaused, removeQueued, enqueue } = useTransfers(
     useShallow((s) => ({
       cancel: s.cancel,
@@ -147,18 +146,6 @@ function PrimaryDownloads({ filter }: { filter: DownloadFilter }) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-7 pb-6 pt-5">
-        {showActive && active.length > 0 && (
-          <div className="mb-5 rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4">
-            <div className="mb-2 flex items-center justify-between text-[11px] font-semibold tracking-[0.06em] text-[var(--faint)]">
-              <span>COMBINED SPEED</span>
-              <span className="tnum text-[13px] font-semibold text-[var(--dl)]">{formatSpeed(totalSpeed)}</span>
-            </div>
-            <div className="h-16">
-              <SpeedGraph samples={totalSpeedHistory} />
-            </div>
-          </div>
-        )}
-
         {showActive && (active.length > 0 || primaryQueue.length > 0) && (
           <div className="mb-6">
             <div className="mb-3 font-mono text-[11px] font-semibold tracking-[0.06em] text-[var(--faint)]">IN PROGRESS</div>
