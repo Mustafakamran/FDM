@@ -11,6 +11,7 @@ pub mod provider;
 pub mod rclone;
 pub mod search;
 pub mod secrets;
+pub mod speedtest;
 pub mod stream;
 pub mod transfer;
 pub mod wetransfer;
@@ -61,6 +62,7 @@ pub fn run() {
         .manage(stream::StreamState::default())
         .manage(hls::HlsState::default())
         .manage(bdm::BdmState::default())
+        .manage(speedtest::SpeedTestState::default())
         .invoke_handler(tauri::generate_handler![
             rc_call,
             write_binary_file,
@@ -95,6 +97,8 @@ pub fn run() {
             index::index_remove,
             search::account_search,
             search::account_recent,
+            speedtest::start_speed_test,
+            speedtest::cancel_speed_test,
         ])
         .setup(|app| {
             // CRITICAL: the setup closure runs on the main thread BEFORE Tauri's

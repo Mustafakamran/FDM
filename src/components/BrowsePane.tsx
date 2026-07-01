@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, FolderSearch, FolderOpen, Folder, FileSearch, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
 import { isVideo, extOf } from "../lib/review";
 import { useIndex } from "../store/index-store";
-import { useBrowse, browseKey } from "../store/browse";
+import { useBrowse, browseKey, browseSearchKey, browseRecentKey } from "../store/browse";
 import { useTransfers } from "../store/transfers";
 import { useToasts } from "../store/toast";
 import { useStarred } from "../store/starred";
@@ -80,44 +79,31 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   // Live, server-side Search + Recent — the "like the web" path. We NEVER crawl an
   // account into a local index automatically (Drive's "Shared with me" alone is
   // tens of TB). Search asks the provider directly (Drive files.list / Dropbox
-  // search_v2); Recent uses Drive's modifiedTime sort. Results return in a blink
-  // regardless of account size. (Indexing is now opt-in only, via Re-index.)
-  const [serverItems, setServerItems] = useState<RcItem[]>(EMPTY);
-  const [serverState, setServerState] = useState<"idle" | "loading" | "error" | "dropbox-recent">("idle");
+  // search_v2); Recent uses Drive's modifiedTime sort. The store debounces the
+  // outbound request and caches results per query, so typing fast doesn't fire
+  // a request per keystroke and re-visiting a query is instant.
+  const searching = q.trim().length > 0;
+  const showingRecent = section === "recent" && !searching;
+  const dropboxRecent = showingRecent && account.provider === "dropbox";
+  const resultKey = searching ? browseSearchKey(account.id, q.trim()) : browseRecentKey(account.id);
+  const serverItems = useBrowse((s) => (searching || showingRecent ? s.searchResults[resultKey] : undefined)) ?? EMPTY;
+  const serverResultLoading = useBrowse((s) => s.searchLoading[resultKey]) ?? false;
+  const serverResultError = useBrowse((s) => s.searchErrors[resultKey]);
+  const serverState: "idle" | "loading" | "error" | "dropbox-recent" = !(searching || showingRecent)
+    ? "idle"
+    : dropboxRecent
+      ? "dropbox-recent"
+      : serverResultError
+        ? "error"
+        : serverResultLoading
+          ? "loading"
+          : "idle";
+
   useEffect(() => {
-    const searching = q.trim().length > 0;
-    const recent = section === "recent" && !searching;
-    if (!searching && !recent) {
-      setServerItems(EMPTY);
-      setServerState("idle");
-      return;
-    }
-    if (recent && account.provider === "dropbox") {
-      // Dropbox has no cheap "recent" endpoint — point the user at Search instead.
-      setServerItems(EMPTY);
-      setServerState("dropbox-recent");
-      return;
-    }
-    let alive = true;
-    setServerState("loading");
-    const call = searching
-      ? invoke<RcItem[]>("account_search", { accountId: account.id, query: q.trim() })
-      : invoke<RcItem[]>("account_recent", { accountId: account.id });
-    call
-      .then((res) => {
-        if (!alive) return;
-        setServerItems(res ?? EMPTY);
-        setServerState("idle");
-      })
-      .catch(() => {
-        if (!alive) return;
-        setServerItems(EMPTY);
-        setServerState("error");
-      });
-    return () => {
-      alive = false;
-    };
-  }, [q, section, account.id, account.provider]);
+    if (dropboxRecent) return;
+    if (searching) useBrowse.getState().search(account, q.trim());
+    else if (showingRecent) useBrowse.getState().recent(account);
+  }, [q, searching, showingRecent, dropboxRecent, account]);
 
   const index = entry?.index ?? null;
   const status = entry?.status ?? "idle";

@@ -30,6 +30,8 @@ let pumping = false;
 // still persists immediately and resets the counter.
 let inflightPersistTick = 0;
 const INFLIGHT_PERSIST_EVERY_N_TICKS = 3;
+/** Rolling window length (in 1s ticks) kept per job for the live speed graph. */
+const SPEED_HISTORY_LENGTH = 40;
 let seq = 0;
 const nextId = () => `q${Date.now()}_${++seq}`;
 // Job ids paused by the user OR auto-paused by the lane gate — so refresh
@@ -314,6 +316,12 @@ interface TransfersState {
   jobs: JobStatus[];
   queue: QueueItem[];
   inflight: InflightItem[];
+  /**
+   * Rolling window of recent speed samples per jobId, for the live per-download
+   * graph. Purely in-memory (not persisted) — it's a "right now" visualization,
+   * not state that needs to survive a restart.
+   */
+  speedHistory: Record<number, number[]>;
   concurrency: number;
   secondaryConcurrency: number;
   dockOpen: boolean;
@@ -344,6 +352,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
   jobs: [],
   queue: restoreQueue(),
   inflight: [],
+  speedHistory: {},
   concurrency: loadConcurrency(),
   secondaryConcurrency: loadSecondaryConcurrency(),
   dockOpen: true,
@@ -484,6 +493,22 @@ export const useTransfers = create<TransfersState>((set, get) => ({
       if (!job) continue; // cleared from tracking
       if (job.finished || job.cancelled) continue; // done — leaves the in-flight set
       stillInflight.push({ ...inf, bytes: job.bytes, stats: accrueStats(inf.stats, job.speed, now) });
+    }
+
+    // Live per-download speed graph: a fixed-size rolling sample buffer per
+    // jobId, refreshed every tick regardless of the throttling below — it's
+    // pure in-memory state (never persisted), so there's no disk-write cost,
+    // only a render cost, and only a component that actually reads
+    // speedHistory[jobId] (the open detail panel) re-renders on it.
+    const prevHistory = get().speedHistory;
+    if (stillInflight.length > 0 || Object.keys(prevHistory).length > 0) {
+      const nextHistory: Record<number, number[]> = {};
+      for (const inf of stillInflight) {
+        const job = jobs.find((j) => j.jobId === inf.jobId)!;
+        const prev = prevHistory[inf.jobId] ?? [];
+        nextHistory[inf.jobId] = [...prev, Math.max(0, job.speed)].slice(-SPEED_HISTORY_LENGTH);
+      }
+      set({ speedHistory: nextHistory });
     }
     // Short-circuit on a byte-for-byte idle tick: skip BOTH the localStorage
     // write and the in-memory set() (per inflightEqual, which compares jobId +

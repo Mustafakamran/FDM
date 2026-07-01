@@ -19,6 +19,7 @@ import { fileType } from "../lib/file-types";
 import { laneOf } from "../lib/lane";
 import { formatBytes, formatSpeed } from "../lib/format";
 import type { JobStatus } from "../lib/tauri/commands";
+import { SpeedGraph } from "./ui/SpeedGraph";
 
 /** ms → "1h 02m 03s", "3m 20s", "12s", "<1s", or "—". */
 export function formatDuration(ms: number | undefined): string {
@@ -158,6 +159,9 @@ export function DownloadDetail({ id }: { id: string }) {
   const liveJob = jobs.find((j) => j.jobId === jobId && !j.finished && !j.cancelled);
   const inf = inflight.find((i) => i.jobId === jobId);
   const histEntry = history.find((h) => h.jobId === jobId);
+  // Narrow selector: only THIS panel re-renders on every 1s speed sample, not
+  // the whole downloads list.
+  const speedHistory = useTransfers((s) => (liveJob ? s.speedHistory[jobId] : undefined));
 
   const detail = liveJob ? fromJob(liveJob, inf) : histEntry ? fromHistory(histEntry) : null;
 
@@ -199,6 +203,18 @@ export function DownloadDetail({ id }: { id: string }) {
             </div>
           </div>
         </div>
+
+        {detail.status === "active" && (
+          <div className="mb-4 rounded-[10px] border border-[var(--border)] bg-[var(--card)] p-4">
+            <div className="mb-2 flex items-center justify-between text-xs font-medium uppercase tracking-wide text-[var(--text-3)]">
+              <span>Live speed</span>
+              <span className="tnum text-[13px] font-semibold text-[var(--dl)]">
+                {liveJob ? formatSpeed(liveJob.speed) : "·"}
+              </span>
+            </div>
+            <SpeedGraph samples={speedHistory ?? []} />
+          </div>
+        )}
 
         <div className="rounded-[10px] border border-[var(--border)] bg-[var(--card)] px-4">
           <Field Icon={HardDrive} label="Size" value={formatBytes(detail.size)} mono />

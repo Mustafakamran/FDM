@@ -211,3 +211,18 @@ export function bdmSetConfig(
 ): Promise<void> {
   return invoke("bdm_set_config", { enabled, portalUrl, machine, destRoot, apiKey });
 }
+
+/**
+ * Start a network speed test (downloads from a public CDN endpoint for a
+ * fixed window). Fire-and-forget: progress/result arrive via the
+ * "speedtest-ping" / "speedtest-progress" / "speedtest-done" /
+ * "speedtest-error" / "speedtest-cancelled" events.
+ */
+export function startSpeedTest(): Promise<void> {
+  return invoke("start_speed_test");
+}
+
+/** Stop an in-progress speed test. */
+export function cancelSpeedTest(): Promise<void> {
+  return invoke("cancel_speed_test");
+}

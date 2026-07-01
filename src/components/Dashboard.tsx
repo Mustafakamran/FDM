@@ -8,6 +8,7 @@ import { useIndex } from "../store/index-store";
 import { useAccountMeta, prettyLabel } from "../store/account-meta";
 import { ProviderIcon, providerName } from "./icons";
 import { formatBytes, formatSpeed } from "../lib/format";
+import { SpeedTestCard } from "./SpeedTestCard";
 
 /** At-a-glance landing: accounts, storage, live downloads, indexed files. */
 export function Dashboard() {
@@ -100,6 +101,11 @@ export function Dashboard() {
             })}
           </div>
         )}
+      </Section>
+
+      {/* Connection speed */}
+      <Section title="Connection">
+        <SpeedTestCard />
       </Section>
 
       {/* Accounts */}
