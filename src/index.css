@@ -141,6 +141,131 @@ html.light {
   --shadow-lg: 0 30px 80px rgba(20, 22, 40, 0.18);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Accent color presets. "Mono" (the default — no override needed, it's just
+   the :root/html.light values above) is the app's original monochrome
+   accent. These give the user a real color instead, applied via
+   `data-accent` on <html> (see store/theme.ts). Each needs distinct light
+   and dark values to stay readable against each background, so every preset
+   below is defined twice. --onacc/--accent-ink stay white for all of these —
+   they're vivid enough that white text reads fine in both themes, unlike
+   Mono which must flip black/white with the theme itself.
+   ───────────────────────────────────────────────────────────────────────── */
+:root[data-accent="blue"] {
+  --acc: #5b9cf6;
+  --accent: #5b9cf6;
+  --acc-d: #7fb0ff;
+  --accent-hover: #7fb0ff;
+  --onacc: #ffffff;
+  --accent-ink: #ffffff;
+  --accw: rgba(91, 156, 246, 0.14);
+  --accent-weak: rgba(91, 156, 246, 0.14);
+  --accent-glow: rgba(91, 156, 246, 0.28);
+}
+html.light[data-accent="blue"] {
+  --acc: #2563eb;
+  --accent: #2563eb;
+  --acc-d: #1e50d8;
+  --accent-hover: #1e50d8;
+  --onacc: #ffffff;
+  --accent-ink: #ffffff;
+  --accw: rgba(37, 99, 235, 0.1);
+  --accent-weak: rgba(37, 99, 235, 0.1);
+  --accent-glow: rgba(37, 99, 235, 0.2);
+}
+
+:root[data-accent="purple"] {
+  --acc: #a78bfa;
+  --accent: #a78bfa;
+  --acc-d: #bda6fd;
+  --accent-hover: #bda6fd;
+  --onacc: #ffffff;
+  --accent-ink: #ffffff;
+  --accw: rgba(167, 139, 250, 0.14);
+  --accent-weak: rgba(167, 139, 250, 0.14);
+  --accent-glow: rgba(167, 139, 250, 0.28);
+}
+html.light[data-accent="purple"] {
+  --acc: #7c3aed;
+  --accent: #7c3aed;
+  --acc-d: #6d28d9;
+  --accent-hover: #6d28d9;
+  --onacc: #ffffff;
+  --accent-ink: #ffffff;
+  --accw: rgba(124, 58, 237, 0.1);
+  --accent-weak: rgba(124, 58, 237, 0.1);
+  --accent-glow: rgba(124, 58, 237, 0.2);
+}
+
+:root[data-accent="rose"] {
+  --acc: #fb7185;
+  --accent: #fb7185;
+  --acc-d: #fd8a9c;
+  --accent-hover: #fd8a9c;
+  --onacc: #ffffff;
+  --accent-ink: #ffffff;
+  --accw: rgba(251, 113, 133, 0.14);
+  --accent-weak: rgba(251, 113, 133, 0.14);
+  --accent-glow: rgba(251, 113, 133, 0.28);
+}
+html.light[data-accent="rose"] {
+  --acc: #e11d48;
+  --accent: #e11d48;
+  --acc-d: #be123c;
+  --accent-hover: #be123c;
+  --onacc: #ffffff;
+  --accent-ink: #ffffff;
+  --accw: rgba(225, 29, 72, 0.1);
+  --accent-weak: rgba(225, 29, 72, 0.1);
+  --accent-glow: rgba(225, 29, 72, 0.2);
+}
+
+:root[data-accent="orange"] {
+  --acc: #fb923c;
+  --accent: #fb923c;
+  --acc-d: #fdab6b;
+  --accent-hover: #fdab6b;
+  --onacc: #ffffff;
+  --accent-ink: #ffffff;
+  --accw: rgba(251, 146, 60, 0.14);
+  --accent-weak: rgba(251, 146, 60, 0.14);
+  --accent-glow: rgba(251, 146, 60, 0.28);
+}
+html.light[data-accent="orange"] {
+  --acc: #ea580c;
+  --accent: #ea580c;
+  --acc-d: #c2410c;
+  --accent-hover: #c2410c;
+  --onacc: #ffffff;
+  --accent-ink: #ffffff;
+  --accw: rgba(234, 88, 12, 0.1);
+  --accent-weak: rgba(234, 88, 12, 0.1);
+  --accent-glow: rgba(234, 88, 12, 0.2);
+}
+
+:root[data-accent="teal"] {
+  --acc: #2dd4bf;
+  --accent: #2dd4bf;
+  --acc-d: #52e0cd;
+  --accent-hover: #52e0cd;
+  --onacc: #ffffff;
+  --accent-ink: #ffffff;
+  --accw: rgba(45, 212, 191, 0.14);
+  --accent-weak: rgba(45, 212, 191, 0.14);
+  --accent-glow: rgba(45, 212, 191, 0.28);
+}
+html.light[data-accent="teal"] {
+  --acc: #0d9488;
+  --accent: #0d9488;
+  --acc-d: #0f766e;
+  --accent-hover: #0f766e;
+  --onacc: #ffffff;
+  --accent-ink: #ffffff;
+  --accw: rgba(13, 148, 136, 0.1);
+  --accent-weak: rgba(13, 148, 136, 0.1);
+  --accent-glow: rgba(13, 148, 136, 0.2);
+}
+
 html,
 body,
 #root {

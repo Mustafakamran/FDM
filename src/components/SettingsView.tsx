@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, Check, RefreshCw, Download, Loader2, Layers, Copy, Puzzle } from "lucide-react";
+import { FolderOpen, Check, RefreshCw, Download, Loader2, Layers, Copy, Puzzle, Sun, Moon, Palette } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
 import { getSecret, setSecret, SECRET_KEYS, bdmGetConfig, bdmSetConfig, ingestToken, prepareExtension, revealPath } from "../lib/tauri/commands";
@@ -7,10 +7,29 @@ import { Button, TextField, Card } from "./ui";
 import { useToasts } from "../store/toast";
 import { useTransfers } from "../store/transfers";
 import { useUpdater } from "../store/updater";
+import { useTheme, ACCENTS, type Accent } from "../store/theme";
 import { loadDlSettings, saveDlSettings, type DlSettings } from "../lib/dl-settings";
 import { getAskWhereToSave, setAskWhereToSave } from "../lib/ask-where";
 import { FOLDER_KEY } from "../lib/ingest";
 import { loadRaw, saveRaw } from "../lib/persisted";
+
+/** Swatch color shown for each accent preset (the dark-mode shade — reads fine on either background at swatch size). */
+const ACCENT_SWATCH: Record<Accent, string> = {
+  mono: "linear-gradient(135deg, #f2f3f5 50%, #1a1c23 50%)",
+  blue: "#5b9cf6",
+  purple: "#a78bfa",
+  rose: "#fb7185",
+  orange: "#fb923c",
+  teal: "#2dd4bf",
+};
+const ACCENT_LABEL: Record<Accent, string> = {
+  mono: "Mono",
+  blue: "Blue",
+  purple: "Purple",
+  rose: "Rose",
+  orange: "Orange",
+  teal: "Teal",
+};
 
 /** Fixed loopback port the ingest server binds (shared with the extension). */
 const INGEST_PORT = 53713;
@@ -27,6 +46,10 @@ const TABS: { key: Tab; label: string }[] = [
 
 export function SettingsView() {
   const [tab, setTab] = useState<Tab>("general");
+  const theme = useTheme((s) => s.theme);
+  const setTheme = useTheme((s) => s.setTheme);
+  const accent = useTheme((s) => s.accent);
+  const setAccent = useTheme((s) => s.setAccent);
   const [googleId, setGoogleId] = useState("");
   const [googleSecret, setGoogleSecret] = useState("");
   const [dropboxKey, setDropboxKey] = useState("");
@@ -185,6 +208,43 @@ export function SettingsView() {
 
       {tab === "general" && (
         <div className="flex flex-col gap-4">
+          <Card className="p-5">
+            <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
+              <Palette size={16} /> Appearance
+            </h2>
+            <p className="mb-4 text-xs text-[var(--text-3)]">Theme and accent color.</p>
+            <div className="flex items-center gap-1 rounded-[11px] bg-[var(--surface)] p-1" style={{ width: "fit-content" }}>
+              <button
+                onClick={() => setTheme("light")}
+                className={`flex h-[30px] items-center justify-center gap-1.5 rounded-[8px] px-4 text-[12px] font-semibold ${theme === "light" ? "bg-[var(--card)] text-[var(--ink)] shadow-[var(--shadow-sm)]" : "text-[var(--faint)] hover:text-[var(--mut)]"}`}
+              >
+                <Sun size={13} /> Light
+              </button>
+              <button
+                onClick={() => setTheme("dark")}
+                className={`flex h-[30px] items-center justify-center gap-1.5 rounded-[8px] px-4 text-[12px] font-semibold ${theme === "dark" ? "bg-[var(--card)] text-[var(--ink)] shadow-[var(--shadow-sm)]" : "text-[var(--faint)] hover:text-[var(--mut)]"}`}
+              >
+                <Moon size={13} /> Dark
+              </button>
+            </div>
+            <div className="mt-4 flex items-center gap-2.5">
+              {ACCENTS.map((a) => (
+                <button
+                  key={a}
+                  onClick={() => setAccent(a)}
+                  aria-label={`${ACCENT_LABEL[a]} accent`}
+                  data-tip={ACCENT_LABEL[a]}
+                  className={`relative flex h-8 w-8 items-center justify-center rounded-full ring-2 ring-offset-2 ring-offset-[var(--card)] transition-shadow ${
+                    accent === a ? "ring-[var(--acc)]" : "ring-transparent hover:ring-[var(--line2)]"
+                  }`}
+                >
+                  <span className="h-6 w-6 rounded-full" style={{ background: ACCENT_SWATCH[a] }} />
+                  {accent === a && <Check size={12} className="absolute text-white mix-blend-difference" />}
+                </button>
+              ))}
+            </div>
+          </Card>
+
           <Card className="p-5">
             <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Default download folder</h2>
             <p className="mb-4 text-xs text-[var(--text-3)]">
