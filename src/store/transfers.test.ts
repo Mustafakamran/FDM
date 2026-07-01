@@ -154,7 +154,7 @@ describe("refresh no-op short-circuit", () => {
     setSpy.mockRestore();
   });
 
-  it("a tick with changed bytes DOES update state and persist", async () => {
+  it("a tick with changed bytes updates in-memory state immediately", async () => {
     useTransfers.getState().enqueue("drive_x", [item("a")], "/dest");
     await vi.waitFor(() => expect(useTransfers.getState().inflight).toHaveLength(1));
     const jobId = useTransfers.getState().inflight[0].jobId;
@@ -165,8 +165,40 @@ describe("refresh no-op short-circuit", () => {
     listReturns = [job({ jobId, bytes: 750, totalBytes: 1000 })]; // progress moved
     await useTransfers.getState().refresh();
 
+    // The UI-facing state always reflects the latest bytes, tick to tick —
+    // only the localStorage persistence is throttled (see below).
     expect(useTransfers.getState().jobs).not.toBe(jobsBefore);
     expect(useTransfers.getState().inflight[0].bytes).toBe(750);
+  });
+
+  it("throttles the bytes-only localStorage write, then flushes on the Nth tick", async () => {
+    useTransfers.getState().enqueue("drive_x", [item("a")], "/dest");
+    await vi.waitFor(() => expect(useTransfers.getState().inflight).toHaveLength(1));
+    const jobId = useTransfers.getState().inflight[0].jobId;
+    // Job start already persisted bytes: 0 to disk.
+
+    listReturns = [job({ jobId, bytes: 250, totalBytes: 1000 })];
+    await useTransfers.getState().refresh(); // tick 1: throttled
+    listReturns = [job({ jobId, bytes: 500, totalBytes: 1000 })];
+    await useTransfers.getState().refresh(); // tick 2: throttled
+    expect(JSON.parse(localStorage.getItem("download_inflight_v1")!)[0].bytes).toBe(0);
+
+    listReturns = [job({ jobId, bytes: 750, totalBytes: 1000 })];
+    await useTransfers.getState().refresh(); // tick 3: flushes
     expect(JSON.parse(localStorage.getItem("download_inflight_v1")!)[0].bytes).toBe(750);
+  });
+
+  it("persists immediately when a job leaves the in-flight set, regardless of the throttle", async () => {
+    useTransfers.getState().enqueue("drive_x", [item("a")], "/dest");
+    await vi.waitFor(() => expect(useTransfers.getState().inflight).toHaveLength(1));
+    const jobId = useTransfers.getState().inflight[0].jobId;
+    listReturns = [job({ jobId, bytes: 250, totalBytes: 1000 })];
+    await useTransfers.getState().refresh(); // tick 1: throttled, doesn't flush
+
+    listReturns = [job({ jobId, bytes: 1000, totalBytes: 1000, finished: true, success: true })];
+    await useTransfers.getState().refresh(); // job finishes — membership change, persists now
+
+    expect(useTransfers.getState().inflight).toHaveLength(0);
+    expect(JSON.parse(localStorage.getItem("download_inflight_v1")!)).toHaveLength(0);
   });
 });

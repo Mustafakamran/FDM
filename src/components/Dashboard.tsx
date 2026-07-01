@@ -55,7 +55,11 @@ export function Dashboard() {
       </div>
 
       {/* Stat tiles */}
-      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+      {/* App's own min-width is 980px — well past Tailwind's `md` (768) — so a
+          `lg` (1024) gate left this stuck at 2 columns for the entire usable
+          range below 1024px. Step through 3 at the floor, 4 once there's
+          genuinely room. */}
+      <div className="grid grid-cols-2 gap-3.5 md:grid-cols-3 xl:grid-cols-4">
         <Stat icon={<HardDrive size={18} />} label="Connected drives" value={String(accounts.length)} sub={accountProviders(accounts)} />
         <Stat
           icon={<Download size={18} />}
@@ -158,10 +162,10 @@ function Stat({ icon, label, value, sub, accent, onClick }: { icon: ReactNode; l
   return (
     <Comp onClick={onClick} className={`flex flex-col gap-3 rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4 text-left ${onClick ? "hover:border-[var(--line2)]" : ""}`}>
       <span className={`flex h-9 w-9 items-center justify-center rounded-[10px] ${accent ? "bg-[var(--dl)] text-white" : "bg-[var(--accw)] text-[var(--acc)]"}`}>{icon}</span>
-      <div>
-        <div className="tnum text-[24px] font-bold leading-none tracking-[-0.02em] text-[var(--ink)]">{value}</div>
-        <div className="mt-1.5 text-[12.5px] font-medium text-[var(--mut)]">{label}</div>
-        {sub && <div className="mt-0.5 text-[11.5px] text-[var(--faint)]">{sub}</div>}
+      <div className="min-w-0">
+        <div className="tnum truncate text-[24px] font-bold leading-none tracking-[-0.02em] text-[var(--ink)]">{value}</div>
+        <div className="mt-1.5 truncate text-[12.5px] font-medium text-[var(--mut)]">{label}</div>
+        {sub && <div className="mt-0.5 truncate text-[11.5px] text-[var(--faint)]">{sub}</div>}
       </div>
     </Comp>
   );

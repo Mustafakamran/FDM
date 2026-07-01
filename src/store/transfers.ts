@@ -22,6 +22,14 @@ export const HTTP_ACCOUNT_ID = "http";
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let pumping = false;
+// The 1s poll writes fresh byte counts to localStorage every tick while a
+// download is active — a synchronous disk write (WebView2's store on Windows
+// is LevelDB-backed) that can stall the main thread if it lands mid-scan by
+// an AV product. Bytes-only updates are cosmetic resume precision, so they're
+// throttled to every Nth tick; a real membership change (job started/finished)
+// still persists immediately and resets the counter.
+let inflightPersistTick = 0;
+const INFLIGHT_PERSIST_EVERY_N_TICKS = 3;
 let seq = 0;
 const nextId = () => `q${Date.now()}_${++seq}`;
 // Job ids paused by the user OR auto-paused by the lane gate — so refresh
@@ -203,6 +211,14 @@ export function inflightEqual(a: InflightItem[], b: InflightItem[]): boolean {
     if (a[i].jobId !== b[i].jobId || a[i].bytes !== b[i].bytes) return false;
   }
   return true;
+}
+
+/** Whether the tracked job set itself changed (ignoring bytes) — a start/finish. */
+function inflightMembershipEqual(a: InflightItem[], b: InflightItem[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  const bIds = new Set(b.map((i) => i.jobId));
+  return a.every((i) => bIds.has(i.jobId));
 }
 
 /** Active (in-flight) jobs for a lane, by their tracked items. */
@@ -420,6 +436,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
             };
             const nextInflight = [...get().inflight, inf];
             writeJson(INFLIGHT_KEY, nextInflight);
+            inflightPersistTick = 0;
             set((s) => ({ inflight: nextInflight, jobs: [...s.jobs, job] }));
           }
         } catch {
@@ -476,8 +493,15 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     // break the no-op invariant. The finish-time record() folds in one final
     // fresh sample, so the last-committed stats are all it needs.
     if (!inflightEqual(stillInflight, get().inflight)) {
-      writeJson(INFLIGHT_KEY, stillInflight);
+      const membershipChanged = !inflightMembershipEqual(stillInflight, get().inflight);
       set({ inflight: stillInflight });
+      if (membershipChanged) {
+        writeJson(INFLIGHT_KEY, stillInflight);
+        inflightPersistTick = 0;
+      } else if (++inflightPersistTick >= INFLIGHT_PERSIST_EVERY_N_TICKS) {
+        writeJson(INFLIGHT_KEY, stillInflight);
+        inflightPersistTick = 0;
+      }
     }
 
     // pump() drives auto-resume: when the primary lane has drained it clears
@@ -509,6 +533,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     const inflight = get().inflight.filter((i) => i.jobId !== jobId);
     writeJson(QUEUE_KEY, queue);
     writeJson(INFLIGHT_KEY, inflight);
+    inflightPersistTick = 0;
     set({ queue, inflight });
     // Drop the now-stopped job from backend tracking so it leaves the live list.
     await clearFinishedJobs().catch(() => {});
@@ -578,6 +603,7 @@ async function autoPauseSecondaryJob(
   const inflight = get().inflight.filter((i) => i.jobId !== jobId);
   writeJson(QUEUE_KEY, queue);
   writeJson(INFLIGHT_KEY, inflight);
+  inflightPersistTick = 0;
   set({ queue, inflight });
   // Drop the now-stopped job from backend tracking so it leaves the live list.
   await clearFinishedJobs().catch(() => {});

@@ -1,11 +1,18 @@
 import { X, FolderPlus, Bell } from "lucide-react";
 import { useNotifications } from "../store/notifications";
+import { useApp } from "../store/app";
 import { ProviderIcon } from "./icons";
 import { formatBytes, formatDate } from "../lib/format";
 
 export function NotificationsPanel() {
   const { panelOpen, items, togglePanel, clear } = useNotifications();
+  const setView = useApp((s) => s.setView);
   if (!panelOpen) return null;
+
+  const openNotification = (n: (typeof items)[number]) => {
+    setView({ kind: "browse", accountId: n.accountId, section: "all", path: n.path });
+    togglePanel(false);
+  };
 
   return (
     <div className="fixed right-3 top-12 z-[90] flex max-h-[70vh] w-96 flex-col overflow-hidden rounded-[11px] border border-[var(--border-strong)] bg-[var(--card)] shadow-[var(--shadow-lg)]">
@@ -40,7 +47,14 @@ export function NotificationsPanel() {
       ) : (
         <div className="flex flex-col overflow-auto">
           {items.map((n) => (
-            <div key={n.id} className="flex gap-3 border-b border-[var(--border)]/60 px-4 py-3">
+            <div
+              key={n.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => openNotification(n)}
+              onKeyDown={(e) => e.key === "Enter" && openNotification(n)}
+              className="flex cursor-pointer gap-3 border-b border-[var(--border)]/60 px-4 py-3 hover:bg-[var(--hover)]"
+            >
               <span className="mt-0.5 text-[var(--accent)]">
                 <FolderPlus size={16} />
               </span>

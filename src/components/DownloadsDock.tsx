@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, X, Check, AlertCircle, Ban, Clock, Pause, Play, Globe } from "lucide-react";
 import { useTransfers, type QueueItem } from "../store/transfers";
 import { useApp } from "../store/app";
@@ -26,7 +26,7 @@ function LaneBadge({ accountId, labelOf }: { accountId: string; labelOf: LabelOf
   );
 }
 
-function QueueRow({ q, position, labelOf }: { q: QueueItem; position: number; labelOf: LabelOf }) {
+const QueueRow = memo(function QueueRow({ q, position, labelOf }: { q: QueueItem; position: number; labelOf: LabelOf }) {
   const removeQueued = useTransfers((s) => s.removeQueued);
   const resumePaused = useTransfers((s) => s.resumePaused);
   const ft = fileType(q.item.name, q.item.isDir);
@@ -61,7 +61,7 @@ function QueueRow({ q, position, labelOf }: { q: QueueItem; position: number; la
       </button>
     </div>
   );
-}
+});
 
 function pct(j: JobStatus): number {
   if (j.finished && j.success) return 100;
@@ -69,7 +69,29 @@ function pct(j: JobStatus): number {
   return 0;
 }
 
-function Row({ job, labelOf }: { job: JobStatus; labelOf: LabelOf }) {
+// listJobs() returns a freshly-deserialized JobStatus for every job on every
+// 1s tick, even ones that haven't changed — a bare memo() would see a new
+// object reference and re-render anyway. Compare the fields the row actually
+// renders so finished/idle rows skip re-render while active ones still update.
+function jobRowPropsEqual(
+  prev: { job: JobStatus; labelOf: LabelOf },
+  next: { job: JobStatus; labelOf: LabelOf },
+): boolean {
+  return (
+    prev.labelOf === next.labelOf &&
+    prev.job.jobId === next.job.jobId &&
+    prev.job.bytes === next.job.bytes &&
+    prev.job.totalBytes === next.job.totalBytes &&
+    prev.job.speed === next.job.speed &&
+    prev.job.finished === next.job.finished &&
+    prev.job.success === next.job.success &&
+    prev.job.cancelled === next.job.cancelled &&
+    prev.job.error === next.job.error &&
+    prev.job.eta === next.job.eta
+  );
+}
+
+const Row = memo(function Row({ job, labelOf }: { job: JobStatus; labelOf: LabelOf }) {
   const cancel = useTransfers((s) => s.cancel);
   const pause = useTransfers((s) => s.pause);
   const ft = fileType(job.name, false);
@@ -120,7 +142,8 @@ function Row({ job, labelOf }: { job: JobStatus; labelOf: LabelOf }) {
       )}
     </div>
   );
-}
+},
+jobRowPropsEqual);
 
 export function DownloadsDock() {
   // Narrow selectors: subscribe only to the slices this dock renders, not the
