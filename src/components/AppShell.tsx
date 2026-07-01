@@ -11,6 +11,7 @@ import { DownloadsDock } from "./DownloadsDock";
 import { ToastHost } from "./ToastHost";
 import { NotificationsPanel } from "./NotificationsPanel";
 import { SettingsDialog } from "./SettingsDialog";
+import { CommandPalette } from "./CommandPalette";
 import { UpdateBanner } from "./UpdateBanner";
 import { TooltipLayer } from "./ui/Tooltip";
 
@@ -28,6 +29,7 @@ export function AppShell() {
       <ToastHost />
       <NotificationsPanel />
       <SettingsDialog />
+      <CommandPalette />
       <TooltipLayer />
 
       <div className="flex min-h-0 flex-1 gap-2.5 px-2.5 pb-2.5">

@@ -5,9 +5,11 @@ import { useApp } from "../store/app";
 import { useSearch } from "../store/search";
 import { useNotifications, unreadCount } from "../store/notifications";
 import { useUI } from "../store/ui";
+import { usePalette } from "../store/palette";
 import { Logo } from "./ui/Logo";
 
 const appWindow = getCurrentWindow();
+const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform || navigator.userAgent);
 
 export function TopBar() {
   const showHome = useApp((s) => s.showHome);
@@ -17,6 +19,7 @@ export function TopBar() {
   const notifications = useNotifications((s) => s.items);
   const togglePanel = useNotifications((s) => s.togglePanel);
   const unread = unreadCount(notifications);
+  const openPalette = usePalette((s) => s.setOpen);
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -48,6 +51,14 @@ export function TopBar() {
             <X size={14} />
           </button>
         )}
+        <button
+          onClick={() => openPalette(true)}
+          aria-label="Open command palette"
+          data-tip="Jump to anything"
+          className="shrink-0 rounded-[5px] border border-[var(--line)] bg-[var(--soft)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--faint)] hover:text-[var(--mut)]"
+        >
+          {isMac ? "⌘K" : "Ctrl K"}
+        </button>
       </div>
 
       {/* Actions */}

@@ -73,7 +73,7 @@ function SizeCell({ item, folderSize, onCalcSize }: { item: RcItem; folderSize: 
 /** Stable-callback props every row/grid-item shares — identical shape so both
  * FileRow and FileGridItem can take the same object. */
 interface RowActions {
-  toggle: (p: string) => void;
+  toggle: (p: string, shiftKey?: boolean) => void;
   openFolder: (p: string) => void;
   openReview: (item: RcItem) => void;
   download: (item: RcItem) => void;
@@ -101,6 +101,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const displayLabel = accountLabel(useAccountMeta((s) => s.byId[account.id]?.label), account);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const lastToggledPath = useRef<string | null>(null);
   const [grid, setGrid] = useState(false);
   const [sort, setSort] = useState<SortState>(loadSort);
   const [sortOpen, setSortOpen] = useState(false);
@@ -243,12 +244,32 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const allSelected = items.length > 0 && items.every((i) => selected.has(i.Path));
   const totalSelected = items.filter((i) => selected.has(i.Path)).reduce((s, i) => s + sizeOf(i), 0);
 
-  function toggle(p: string) {
+  // Shift+Click selects everything between the last-toggled row and this one
+  // (inclusive) — the conventional Finder/Explorer/Gmail range-select. Only a
+  // ref, not state: it doesn't need to trigger a render on its own.
+  function toggle(p: string, shiftKey?: boolean) {
+    if (shiftKey && lastToggledPath.current) {
+      const paths = items.map((i) => i.Path);
+      const a = paths.indexOf(lastToggledPath.current);
+      const b = paths.indexOf(p);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        const range = paths.slice(lo, hi + 1);
+        setSelected((prev) => {
+          const n = new Set(prev);
+          range.forEach((rp) => n.add(rp));
+          return n;
+        });
+        lastToggledPath.current = p;
+        return;
+      }
+    }
     setSelected((prev) => {
       const n = new Set(prev);
       n.has(p) ? n.delete(p) : n.add(p);
       return n;
     });
+    lastToggledPath.current = p;
   }
 
   // Queue a set of items, prompting once for a destination folder if none is set.
@@ -289,7 +310,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     contextMenu: (x, y, item) => setMenu({ x, y, item }),
   };
   const rowActions = useRef<RowActions>({
-    toggle: (p) => actionsRef.current.toggle(p),
+    toggle: (p, shiftKey) => actionsRef.current.toggle(p, shiftKey),
     openFolder: (p) => actionsRef.current.openFolder(p),
     openReview: (item) => actionsRef.current.openReview(item),
     download: (item) => actionsRef.current.download(item),
@@ -682,7 +703,15 @@ const FileRow = memo(function FileRow({
 
   return (
     <tr onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }} className={`group border-b border-[var(--border)]/60 ${isSelected ? "bg-[var(--card)]" : "hover:bg-[var(--hover)]"}`}>
-      <td className="w-9 py-2.5 pl-1"><input type="checkbox" aria-label={`Select ${item.Name}`} checked={isSelected} onChange={() => actions.toggle(item.Path)} /></td>
+      <td className="w-9 py-2.5 pl-1">
+        <input
+          type="checkbox"
+          aria-label={`Select ${item.Name}`}
+          checked={isSelected}
+          onChange={() => {}}
+          onClick={(e) => actions.toggle(item.Path, e.shiftKey)}
+        />
+      </td>
       <td className="min-w-0 py-1.5 pr-3">
         <div className="flex min-w-0 items-center gap-3">
           {nameCell}
@@ -756,7 +785,14 @@ const FileGridItem = memo(function FileGridItem({
       onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }}
       className={`relative flex flex-col items-center gap-3 rounded-[11px] border p-5 ${isSelected ? "border-[var(--accent)] bg-[var(--card)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
     >
-      <input type="checkbox" aria-label={`Select ${item.Name}`} checked={isSelected} onChange={() => actions.toggle(item.Path)} className="absolute left-3 top-3" />
+      <input
+        type="checkbox"
+        aria-label={`Select ${item.Name}`}
+        checked={isSelected}
+        onChange={() => {}}
+        onClick={(e) => actions.toggle(item.Path, e.shiftKey)}
+        className="absolute left-3 top-3"
+      />
       <button
         className="flex flex-col items-center gap-2 text-center"
         onClick={() => (item.IsDir ? actions.openFolder(item.Path) : isVideo(item.Name) && actions.openReview(item))}
