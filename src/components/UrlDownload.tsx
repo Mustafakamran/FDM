@@ -4,8 +4,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useTransfers } from "../store/transfers";
 import { useToasts } from "../store/toast";
 import { Button } from "./ui";
-
-const FOLDER_KEY = "default_download_folder";
+import { FOLDER_KEY } from "../lib/ingest";
+import { loadRaw, saveRaw } from "../lib/persisted";
 
 /**
  * "Add web download" — a compact button that opens a dropdown with the URL input,
@@ -35,7 +35,7 @@ export function UrlDownload() {
   async function submit() {
     const trimmed = url.trim();
     if (!trimmed) return;
-    let dest = localStorage.getItem(FOLDER_KEY) ?? "";
+    let dest = loadRaw(FOLDER_KEY, "");
     if (!dest) {
       const picked = await open({ directory: true, multiple: false });
       if (typeof picked !== "string") return;
@@ -50,7 +50,7 @@ export function UrlDownload() {
   async function pickFolder() {
     const picked = await open({ directory: true, multiple: false });
     if (typeof picked === "string") {
-      localStorage.setItem(FOLDER_KEY, picked);
+      saveRaw(FOLDER_KEY, picked);
       toast("Download folder set", "success");
     }
   }

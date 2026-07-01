@@ -11,6 +11,7 @@ import { loadDlSettings, toDownloadConfig } from "../lib/dl-settings";
 import { laneOf, type Lane } from "../lib/lane";
 import { useHistory, type JobStats } from "./history";
 import { useToasts } from "./toast";
+import { loadJson, loadRaw, saveJson, saveRaw } from "../lib/persisted";
 
 const CONCURRENCY_KEY = "download_concurrency";
 const SECONDARY_CONCURRENCY_KEY = "download_secondary_concurrency";
@@ -42,12 +43,12 @@ const pausedJobIds = new Set<number>();
 const failedToasted = new Set<number>();
 
 function loadConcurrency(): number {
-  const n = parseInt(localStorage.getItem(CONCURRENCY_KEY) ?? "1", 10);
+  const n = parseInt(loadRaw(CONCURRENCY_KEY, "1"), 10);
   return Number.isFinite(n) && n >= 1 ? n : 1;
 }
 
 function loadSecondaryConcurrency(): number {
-  const n = parseInt(localStorage.getItem(SECONDARY_CONCURRENCY_KEY) ?? "3", 10);
+  const n = parseInt(loadRaw(SECONDARY_CONCURRENCY_KEY, "3"), 10);
   return Number.isFinite(n) && n >= 1 ? n : 3;
 }
 
@@ -124,20 +125,10 @@ export function accrueStats(prev: JobStats | undefined, speed: number, at: numbe
 }
 
 function readJson<T>(key: string): T[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(key) ?? "[]");
-    return Array.isArray(v) ? v : [];
-  } catch {
-    return [];
-  }
+  const v = loadJson<unknown>(key, []);
+  return Array.isArray(v) ? (v as T[]) : [];
 }
-function writeJson(key: string, value: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* ignore quota */
-  }
-}
+const writeJson = (key: string, value: unknown) => saveJson(key, value);
 
 /** Ensure a (possibly persisted) queue item has its derived lane tagged. */
 function withLane<T extends { accountId: string; lane?: Lane }>(q: T): T & { lane: Lane } {
@@ -361,14 +352,14 @@ export const useTransfers = create<TransfersState>((set, get) => ({
 
   setConcurrency: (n) => {
     const concurrency = Math.max(1, Math.floor(n) || 1);
-    localStorage.setItem(CONCURRENCY_KEY, String(concurrency));
+    saveRaw(CONCURRENCY_KEY, String(concurrency));
     set({ concurrency });
     void get().pump();
   },
 
   setSecondaryConcurrency: (n) => {
     const secondaryConcurrency = Math.max(1, Math.floor(n) || 1);
-    localStorage.setItem(SECONDARY_CONCURRENCY_KEY, String(secondaryConcurrency));
+    saveRaw(SECONDARY_CONCURRENCY_KEY, String(secondaryConcurrency));
     set({ secondaryConcurrency });
     void get().pump();
   },

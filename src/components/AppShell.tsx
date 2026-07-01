@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { useApp } from "../store/app";
 import { TopBar } from "./TopBar";
 import { Sidebar } from "./Sidebar";
@@ -14,7 +15,7 @@ import { UpdateBanner } from "./UpdateBanner";
 import { TooltipLayer } from "./ui/Tooltip";
 
 export function AppShell() {
-  const { view, accounts } = useApp();
+  const { view, accounts } = useApp(useShallow((s) => ({ view: s.view, accounts: s.accounts })));
   const browseAccount = view.kind === "browse" ? accounts.find((a) => a.id === view.accountId) : undefined;
 
   return (

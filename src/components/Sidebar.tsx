@@ -4,7 +4,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useApp } from "../store/app";
 import { useTransfers } from "../store/transfers";
 import { useStorage, type Storage } from "../store/storage";
-import { useAccountMeta, prettyLabel, type Meta } from "../store/account-meta";
+import { useAccountMeta, accountLabel, type Meta } from "../store/account-meta";
 import { useIndex, type IndexEntry } from "../store/index-store";
 import { useTheme } from "../store/theme";
 import { ProviderIcon, providerName } from "./icons";
@@ -267,7 +267,7 @@ const AccountTile = memo(function AccountTile({
           <ProviderIcon provider={a.provider} size={17} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[12.5px] font-semibold text-[var(--ink)]">{m?.label ?? prettyLabel(a.label)}</div>
+          <div className="truncate text-[12.5px] font-semibold text-[var(--ink)]">{accountLabel(m?.label, a)}</div>
           <div className="flex items-center gap-1.5 truncate text-[11px] text-[var(--faint)]">
             <span className="truncate" data-tip={m?.email}>
               {providerName(a.provider)}

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { loadRaw, saveRaw } from "../lib/persisted";
 
 export type Theme = "dark" | "light";
 const KEY = "theme";
@@ -10,7 +11,7 @@ function apply(t: Theme) {
 }
 
 function load(): Theme {
-  const t = (localStorage.getItem(KEY) as Theme) || "dark";
+  const t = loadRaw(KEY, "dark");
   const v: Theme = t === "light" ? "light" : "dark";
   apply(v);
   return v;
@@ -26,7 +27,7 @@ export const useTheme = create<ThemeState>((set, get) => ({
   theme: load(),
   toggle: () => get().setTheme(get().theme === "dark" ? "light" : "dark"),
   setTheme: (t) => {
-    localStorage.setItem(KEY, t);
+    saveRaw(KEY, t);
     apply(t);
     set({ theme: t });
   },

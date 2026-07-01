@@ -36,7 +36,7 @@ interface BrowseState {
   searchErrors: Record<string, string | undefined>;
 
   /** Load a folder; returns cached instantly and refreshes in the background. */
-  ensure: (account: Account, path: string, force?: boolean) => Promise<void>;
+  ensure: (account: Account, path: string) => Promise<void>;
   /** Lazily compute + cache a folder's recursive size. */
   computeSize: (account: Account, path: string) => Promise<void>;
   /** Debounced, cached live search (Drive files.list / Dropbox search_v2). */
@@ -54,7 +54,12 @@ export const useBrowse = create<BrowseState>((set, get) => ({
   searchLoading: {},
   searchErrors: {},
 
-  ensure: async (account, path, force = false) => {
+  // `force` doesn't gate any fetch logic below — every call already refreshes
+  // in the background regardless (this returns cached data instantly for
+  // display while a fresh fetch runs; there's nothing left to "force"). It's
+  // kept in the signature purely so a "Retry" button reads as intentional at
+  // the call site.
+  ensure: async (account, path) => {
     const k = key(account.id, path);
     // Dropbox links have no rclone remote — the Rust index is their only source.
     // Don't fall through to a live rclone list (it would hit a missing remote).
@@ -65,9 +70,6 @@ export const useBrowse = create<BrowseState>((set, get) => ({
     const cached = get().listings[k];
     // Show cached immediately; only flip the spinner when we have nothing.
     if (cached === undefined) set((s) => ({ loading: { ...s.loading, [k]: true } }));
-    if (cached !== undefined && !force) {
-      // Background refresh, no spinner.
-    }
     if (inflightList.has(k)) return;
     inflightList.add(k);
     // Retry once after a short delay — the most common failure is the rclone

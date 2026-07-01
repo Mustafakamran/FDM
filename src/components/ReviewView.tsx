@@ -3,7 +3,7 @@ import { ChevronLeft, MessageSquarePlus, Trash2, Check, FileDown, Loader2, Alert
 import { save } from "@tauri-apps/plugin-dialog";
 import { useApp, type ReviewTarget } from "../store/app";
 import { useReview, fileKey, type FileReview } from "../store/review";
-import { useAccountMeta, prettyLabel } from "../store/account-meta";
+import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { useToasts } from "../store/toast";
 import { writeBinaryFile } from "../lib/tauri/commands";
 import { streamUrl, isPlayable, timecode } from "../lib/review";
@@ -20,7 +20,7 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
   const removeComment = useReview((s) => s.removeComment);
   const setStatus = useReview((s) => s.setStatus);
   const toast = useToasts((s) => s.push);
-  const displayLabel = useAccountMeta((s) => s.byId[accountId]?.label) ?? prettyLabel(account?.label ?? "");
+  const displayLabel = accountLabel(useAccountMeta((s) => s.byId[accountId]?.label), { label: account?.label ?? "" });
   const email = useAccountMeta((s) => s.byId[accountId]?.email);
 
   const videoRef = useRef<HTMLVideoElement>(null);

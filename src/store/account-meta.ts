@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { accountEmail } from "../lib/tauri/commands";
+import { loadJson, saveJson } from "../lib/persisted";
 
 const KEY = "account_meta_v1";
 
@@ -8,21 +9,8 @@ export interface Meta {
   email?: string; // signed-in account email
 }
 
-function load(): Record<string, Meta> {
-  try {
-    return JSON.parse(localStorage.getItem(KEY) ?? "{}");
-  } catch {
-    return {};
-  }
-}
-
-function persist(byId: Record<string, Meta>) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(byId));
-  } catch {
-    /* ignore quota */
-  }
-}
+const load = () => loadJson<Record<string, Meta>>(KEY, {});
+const persist = (byId: Record<string, Meta>) => saveJson(KEY, byId);
 
 /** Best-effort display name from a slug when no original label was saved. */
 export function prettyLabel(slug: string): string {
@@ -31,6 +19,17 @@ export function prettyLabel(slug: string): string {
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
+}
+
+/**
+ * An account's display label: the user's original-cased name (`Meta.label`,
+ * set via the Add Account/Link dialog) if one was saved, else a best-effort
+ * reconstruction from the account's slug (`Account.label`, the sanitized
+ * rclone remote name). One place for the fallback so it can't drift across
+ * the several components that show an account's name.
+ */
+export function accountLabel(metaLabel: string | undefined, account: { label: string }): string {
+  return metaLabel ?? prettyLabel(account.label);
 }
 
 const inflight = new Set<string>();

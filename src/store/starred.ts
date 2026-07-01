@@ -1,15 +1,10 @@
 import { create } from "zustand";
 import { useToasts } from "./toast";
+import { loadJson, saveJson } from "../lib/persisted";
 
 const KEY = "starred_v1";
 
-function load(): Record<string, string[]> {
-  try {
-    return JSON.parse(localStorage.getItem(KEY) ?? "{}");
-  } catch {
-    return {};
-  }
-}
+const load = () => loadJson<Record<string, string[]>>(KEY, {});
 
 interface StarState {
   byAccount: Record<string, string[]>;
@@ -28,9 +23,7 @@ export const useStarred = create<StarState>((set, get) => ({
       const cur = prev[accountId] ?? [];
       const next = cur.includes(path) ? cur.filter((p) => p !== path) : [...cur, path];
       const byAccount = { ...prev, [accountId]: next };
-      try {
-        localStorage.setItem(KEY, JSON.stringify(byAccount));
-      } catch {
+      if (!saveJson(KEY, byAccount)) {
         // Revert the optimistic update and tell the user it didn't stick.
         useToasts.getState().push("Couldn't save star, storage full", "error");
         return { byAccount: prev };

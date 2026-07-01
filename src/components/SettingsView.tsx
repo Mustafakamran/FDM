@@ -9,8 +9,8 @@ import { useTransfers } from "../store/transfers";
 import { useUpdater } from "../store/updater";
 import { loadDlSettings, saveDlSettings, type DlSettings } from "../lib/dl-settings";
 import { getAskWhereToSave, setAskWhereToSave } from "../lib/ask-where";
-
-const FOLDER_KEY = "default_download_folder";
+import { FOLDER_KEY } from "../lib/ingest";
+import { loadRaw, saveRaw } from "../lib/persisted";
 
 /** Fixed loopback port the ingest server binds (shared with the extension). */
 const INGEST_PORT = 53713;
@@ -31,7 +31,7 @@ export function SettingsView() {
   const [googleSecret, setGoogleSecret] = useState("");
   const [dropboxKey, setDropboxKey] = useState("");
   const [dropboxSecret, setDropboxSecret] = useState("");
-  const [folder, setFolder] = useState<string>(() => localStorage.getItem(FOLDER_KEY) ?? "");
+  const [folder, setFolder] = useState<string>(() => loadRaw(FOLDER_KEY, ""));
   const [saved, setSaved] = useState<string | null>(null);
   const toast = useToasts((s) => s.push);
   const concurrency = useTransfers((s) => s.concurrency);
@@ -150,7 +150,7 @@ export function SettingsView() {
     const picked = await open({ directory: true, multiple: false });
     if (typeof picked === "string") {
       setFolder(picked);
-      localStorage.setItem(FOLDER_KEY, picked);
+      saveRaw(FOLDER_KEY, picked);
       markSaved("folder", "Default folder set");
     }
   }

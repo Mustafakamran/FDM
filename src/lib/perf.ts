@@ -18,20 +18,16 @@ export const PRESETS: Record<string, PerfSettings> = {
 
 export const DEFAULT_PERF: PerfSettings = PRESETS.Balanced;
 
+import { loadJson, saveJson } from "./persisted";
+
 const KEY = "perf_settings";
 
 export function loadPerf(): PerfSettings {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) return { ...DEFAULT_PERF, ...JSON.parse(raw) };
-  } catch {
-    /* fall through to default */
-  }
-  return DEFAULT_PERF;
+  return { ...DEFAULT_PERF, ...loadJson<Partial<PerfSettings>>(KEY, {}) };
 }
 
 export function savePerf(s: PerfSettings): void {
-  localStorage.setItem(KEY, JSON.stringify(s));
+  saveJson(KEY, s);
 }
 
 /** Map tuning to rclone rc `_config` keys. */

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { useToasts } from "./toast";
+import { loadJson, saveJson } from "../lib/persisted";
 
 export interface ReviewComment {
   id: string;
@@ -18,23 +19,9 @@ const KEY = "reviews_v1";
 export const fileKey = (accountId: string, path: string) => `${accountId}|${path}`;
 const EMPTY: FileReview = { status: "in_progress", comments: [] };
 
-function load(): Record<string, FileReview> {
-  try {
-    return JSON.parse(localStorage.getItem(KEY) ?? "{}");
-  } catch {
-    return {};
-  }
-}
+const load = () => loadJson<Record<string, FileReview>>(KEY, {});
 /** Persist; returns false if the write failed (so callers can revert). */
-function persist(data: Record<string, FileReview>): boolean {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(data));
-    return true;
-  } catch {
-    /* quota, comments are small (no images stored), so this is unlikely */
-    return false;
-  }
-}
+const persist = (data: Record<string, FileReview>) => saveJson(KEY, data);
 
 let seq = 0;
 const cid = () => `c${Date.now()}_${++seq}`;

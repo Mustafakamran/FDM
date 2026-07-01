@@ -5,7 +5,7 @@ import { useStorage } from "../store/storage";
 import { useTransfers } from "../store/transfers";
 import { useHistory } from "../store/history";
 import { useIndex } from "../store/index-store";
-import { useAccountMeta, prettyLabel } from "../store/account-meta";
+import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { ProviderIcon, providerName } from "./icons";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { SpeedTestCard } from "./SpeedTestCard";
@@ -130,7 +130,7 @@ export function Dashboard() {
                       <ProviderIcon provider={a.provider} size={19} />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[14px] font-semibold text-[var(--ink)]">{meta[a.id]?.label ?? prettyLabel(a.label)}</div>
+                      <div className="truncate text-[14px] font-semibold text-[var(--ink)]">{accountLabel(meta[a.id]?.label, a)}</div>
                       <div className="truncate text-[12px] text-[var(--faint)]">{providerName(a.provider)}{meta[a.id]?.email ? ` · ${meta[a.id]?.email}` : ""}</div>
                     </div>
                     <ArrowRight size={16} className="text-[var(--faint)] opacity-0 transition-opacity group-hover:opacity-100" />

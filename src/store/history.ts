@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { JobStatus, DownloadItem } from "../lib/tauri/commands";
 import { categoryFor, type Category } from "../lib/categories";
+import { loadJson, saveJson } from "../lib/persisted";
 
 const KEY = "download_history_v1";
 const CAP = 500;
@@ -84,20 +85,8 @@ export function computeFinishStats(
   };
 }
 
-function load(): HistoryEntry[] {
-  try {
-    return JSON.parse(localStorage.getItem(KEY) ?? "[]");
-  } catch {
-    return [];
-  }
-}
-function persist(items: HistoryEntry[]) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(items.slice(0, CAP)));
-  } catch {
-    /* ignore quota */
-  }
-}
+const load = () => loadJson<HistoryEntry[]>(KEY, []);
+const persist = (items: HistoryEntry[]) => saveJson(KEY, items.slice(0, CAP));
 
 interface HistoryState {
   items: HistoryEntry[];

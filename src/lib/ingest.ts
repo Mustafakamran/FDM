@@ -4,6 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { useTransfers, filenameFromUrl, HTTP_ACCOUNT_ID } from "../store/transfers";
 import { useToasts } from "../store/toast";
 import { getAskWhereToSave } from "./ask-where";
+import { loadRaw } from "./persisted";
 import type { DownloadItem } from "./tauri/commands";
 
 /**
@@ -107,7 +108,7 @@ export function itemForUrl(
  * available (the engine then prompts / errors).
  */
 export async function resolveDest(): Promise<string> {
-  const configured = localStorage.getItem(FOLDER_KEY);
+  const configured = loadRaw(FOLDER_KEY, "");
   if (configured) return configured;
   try {
     return await downloadDir();

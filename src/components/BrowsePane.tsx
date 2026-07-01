@@ -9,7 +9,7 @@ import { useTransfers } from "../store/transfers";
 import { useToasts } from "../store/toast";
 import { useStarred } from "../store/starred";
 import { useSearch } from "../store/search";
-import { useAccountMeta, prettyLabel } from "../store/account-meta";
+import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { ProviderIcon } from "./icons";
 import { Button, Skeleton } from "./ui";
 import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
@@ -21,25 +21,19 @@ import { sortItems, DEFAULT_SORT, type SortField, type SortState } from "../lib/
 import type { RcItem } from "../lib/rc/browse";
 import { deleteItem } from "../lib/tauri/commands";
 import type { Account, DownloadItem } from "../lib/tauri/commands";
+import { FOLDER_KEY } from "../lib/ingest";
+import { loadJson, loadRaw, saveJson } from "../lib/persisted";
 
-const FOLDER_KEY = "default_download_folder";
 const SORT_KEY = "browse_sort";
 const EMPTY: RcItem[] = [];
 const EMPTY_STARS: string[] = [];
 
 /** Restore the persisted sort (field + direction + folders-first), falling back to the default. */
 function loadSort(): SortState {
-  try {
-    const raw = localStorage.getItem(SORT_KEY);
-    if (raw) {
-      const p = JSON.parse(raw) as Partial<SortState>;
-      const field: SortField[] = ["name", "size", "modified", "type"];
-      if (field.includes(p.field as SortField) && (p.dir === "asc" || p.dir === "desc")) {
-        return { field: p.field as SortField, dir: p.dir, foldersFirst: p.foldersFirst !== false };
-      }
-    }
-  } catch {
-    /* corrupt value — ignore and use default */
+  const p = loadJson<Partial<SortState>>(SORT_KEY, {});
+  const fields: SortField[] = ["name", "size", "modified", "type"];
+  if (fields.includes(p.field as SortField) && (p.dir === "asc" || p.dir === "desc")) {
+    return { field: p.field as SortField, dir: p.dir, foldersFirst: p.foldersFirst !== false };
   }
   return DEFAULT_SORT;
 }
@@ -104,7 +98,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const q = useSearch((s) => s.q);
   const starred = useStarred((s) => s.byAccount[account.id]) ?? EMPTY_STARS;
   const toggleStar = useStarred((s) => s.toggle);
-  const displayLabel = useAccountMeta((s) => s.byId[account.id]?.label) ?? prettyLabel(account.label);
+  const displayLabel = accountLabel(useAccountMeta((s) => s.byId[account.id]?.label), account);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [grid, setGrid] = useState(false);
@@ -113,11 +107,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
 
   // Persist sort field + direction + folders-first so it sticks across sessions.
   useEffect(() => {
-    try {
-      localStorage.setItem(SORT_KEY, JSON.stringify(sort));
-    } catch {
-      /* storage unavailable — non-fatal */
-    }
+    saveJson(SORT_KEY, sort);
   }, [sort]);
 
   // Live, server-side Search + Recent — the "like the web" path. We NEVER crawl an
@@ -264,7 +254,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   // Queue a set of items, prompting once for a destination folder if none is set.
   async function enqueueItems(its: RcItem[]) {
     if (its.length === 0) return;
-    let dest = localStorage.getItem(FOLDER_KEY) ?? "";
+    let dest = loadRaw(FOLDER_KEY, "");
     if (!dest) {
       const picked = await open({ directory: true, multiple: false });
       if (typeof picked !== "string") return;
@@ -366,7 +356,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
         <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-5 py-2.5 text-sm text-[var(--error)]">
           <AlertCircle size={15} className="shrink-0" />
           <span className="min-w-0 flex-1 truncate" title={liveError}>Couldn’t list this folder: {liveError}</span>
-          <button className="shrink-0 underline hover:text-[var(--text)]" onClick={() => void useBrowse.getState().ensure(account, path, true)}>Retry</button>
+          <button className="shrink-0 underline hover:text-[var(--text)]" onClick={() => void useBrowse.getState().ensure(account, path)}>Retry</button>
         </div>
       )}
 
