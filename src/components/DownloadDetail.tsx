@@ -13,9 +13,10 @@ import {
 } from "lucide-react";
 import { useApp } from "../store/app";
 import { useHistory, type HistoryEntry } from "../store/history";
-import { useTransfers } from "../store/transfers";
+import { useTransfers, type InflightItem } from "../store/transfers";
 import { categoryFor, type Category } from "../lib/categories";
 import { fileType } from "../lib/file-types";
+import { laneOf } from "../lib/lane";
 import { formatBytes, formatSpeed } from "../lib/format";
 import type { JobStatus } from "../lib/tauri/commands";
 
@@ -100,14 +101,28 @@ interface Detail {
   avgSpeed?: number;
 }
 
-function fromJob(j: JobStatus): Detail {
+function fromJob(j: JobStatus, inf?: InflightItem): Detail {
+  // Live info while downloading: start time + duration from the store's stats,
+  // average speed from bytes/elapsed, source URL (web downloads carry it as the
+  // item id). So the detail panel shows the same fields mid-flight, not only once
+  // the download finishes.
+  const startedAt = inf?.stats?.startedAt;
+  const durationMs = startedAt ? Date.now() - startedAt : undefined;
+  const elapsed = durationMs ? durationMs / 1000 : 0;
+  const avgSpeed = elapsed > 0 && j.bytes > 0 ? j.bytes / elapsed : undefined;
+  const sourceUrl = laneOf(j.accountId) === "secondary" ? inf?.item?.id || undefined : undefined;
   return {
     name: j.name,
     category: categoryFor(j.name),
     size: j.totalBytes || j.bytes,
     status: "active",
     dest: j.dest,
-    maxSpeed: j.speed > 0 ? j.speed : undefined,
+    sourceUrl,
+    startedAt,
+    durationMs,
+    avgSpeed,
+    maxSpeed: inf?.stats?.peakSpeed || (j.speed > 0 ? j.speed : undefined),
+    minSpeed: inf?.stats?.minSpeed,
   };
 }
 
@@ -136,13 +151,15 @@ function fromHistory(h: HistoryEntry): Detail {
 export function DownloadDetail({ id }: { id: string }) {
   const back = useApp((s) => s.openWebDownloadDetail);
   const jobs = useTransfers((s) => s.jobs);
+  const inflight = useTransfers((s) => s.inflight);
   const history = useHistory((s) => s.items);
 
   const jobId = id.startsWith("j") ? Number(id.slice(1)) : Number(id);
   const liveJob = jobs.find((j) => j.jobId === jobId && !j.finished && !j.cancelled);
+  const inf = inflight.find((i) => i.jobId === jobId);
   const histEntry = history.find((h) => h.jobId === jobId);
 
-  const detail = liveJob ? fromJob(liveJob) : histEntry ? fromHistory(histEntry) : null;
+  const detail = liveJob ? fromJob(liveJob, inf) : histEntry ? fromHistory(histEntry) : null;
 
   if (!detail) {
     return (

@@ -91,7 +91,7 @@ function Row({ job, labelOf }: { job: JobStatus; labelOf: LabelOf }) {
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--hover)]">
           <div
             className="h-full rounded-full transition-[width] duration-500"
-            style={{ width: `${p}%`, backgroundColor: job.cancelled ? "var(--text-3)" : job.finished && !job.success ? "var(--error)" : "var(--accent)" }}
+            style={{ width: `${p}%`, backgroundColor: job.cancelled ? "var(--text-3)" : job.finished && !job.success ? "var(--err)" : "var(--dl)" }}
           />
         </div>
         <span className="tnum w-44 shrink-0 text-right text-xs text-[var(--text-3)]">
@@ -163,7 +163,7 @@ export function DownloadsDock() {
       <div className="flex items-center gap-4 border-t border-[var(--border)] px-6 py-2.5">
         <span className="shrink-0 text-sm text-[var(--text-2)]">Total Progress</span>
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--hover)]">
-          <div className="h-full rounded-full bg-[var(--accent)] transition-[width]" style={{ width: `${totalPct}%` }} />
+          <div className="h-full rounded-full bg-[var(--dl)] transition-[width]" style={{ width: `${totalPct}%` }} />
         </div>
         <span className="tnum shrink-0 text-sm text-[var(--text-2)]">{formatBytes(doneBytes)} / {formatBytes(totalBytes)}</span>
       </div>

@@ -245,7 +245,7 @@ fn fetch_block(auth: &Auth, client: &reqwest::blocking::Client, t: &FileTask, of
             Err(e) => {
                 attempt += 1;
                 if attempt >= MAX_BLOCK_ATTEMPTS {
-                    return Err(format!("network error after {attempt} attempts: {e}"));
+                    return Err(net_err("Download", e));
                 }
                 backoff(attempt, h);
                 continue;
@@ -284,7 +284,7 @@ fn fetch_block(auth: &Auth, client: &reqwest::blocking::Client, t: &FileTask, of
             Err(e) => {
                 attempt += 1;
                 if attempt >= MAX_BLOCK_ATTEMPTS {
-                    return Err(format!("read error after {attempt} attempts: {e}"));
+                    return Err(net_err("Download", e));
                 }
                 backoff(attempt, h);
                 continue;
@@ -583,6 +583,31 @@ fn http_follow(
     Err("too many redirects".into())
 }
 
+/// Turn a low-level reqwest/IO error into a human, actionable message (the raw
+/// ones — "error decoding response body", "os error 10054", etc. — mean nothing
+/// to a user). Downloads are resumable, so most messages say "retry to resume".
+fn net_err(context: &str, e: impl std::fmt::Display) -> String {
+    let s = e.to_string();
+    let low = s.to_lowercase();
+    if low.contains("timed out") || low.contains("timeout") {
+        "Timed out — the server stopped responding. Retry to resume where it left off.".into()
+    } else if low.contains("dns") || low.contains("resolve") || low.contains("connect") || low.contains("no route") {
+        "Couldn’t reach the server — check your internet connection, then retry.".into()
+    } else if low.contains("decoding response body")
+        || low.contains("unexpected eof")
+        || low.contains("connection reset")
+        || low.contains("broken pipe")
+        || low.contains("incomplete")
+        || low.contains("closed")
+    {
+        "The connection dropped mid-download. Retry to resume from where it stopped.".into()
+    } else if low.contains("certificate") || low.contains("tls") || low.contains("ssl") {
+        "Secure connection failed (TLS/certificate) — the link may be broken or blocked.".into()
+    } else {
+        format!("{context} failed: {}", s.chars().take(160).collect::<String>())
+    }
+}
+
 /// Stream a generic web (HTTP/HTTPS) URL to `dest`. Unlike the block engine, the
 /// size is usually unknown and the server may not support Range, so we sequentially
 /// stream the body into a `.fdmpart`, resuming via Range when possible and
@@ -611,7 +636,7 @@ fn download_http(url: &str, dest: &Path, headers: &HashMap<String, String>, h: &
     // Resume from any partial via Range.
     let mut offset = len_of(&part);
     let range = if offset > 0 { Some(format!("bytes={offset}-")) } else { None };
-    let mut resp = http_follow(&client, url, ua, referer, cookie, range.as_deref())?;
+    let mut resp = http_follow(&client, url, ua, referer, cookie, range.as_deref()).map_err(|e| net_err("Connection", e))?;
     let status = resp.status();
     // Server ignored our Range (sent 200 not 206) → start over.
     if offset > 0 && status.as_u16() == 200 {
@@ -642,7 +667,7 @@ fn download_http(url: &str, dest: &Path, headers: &HashMap<String, String>, h: &
         if h.cancelled.load(Ordering::SeqCst) {
             return Err("paused".into());
         }
-        let n = resp.read(&mut buf).map_err(|e| e.to_string())?;
+        let n = resp.read(&mut buf).map_err(|e| net_err("Download", e))?;
         if n == 0 {
             break;
         }

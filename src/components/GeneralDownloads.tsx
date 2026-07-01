@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { X, Check, AlertCircle, Ban, Clock, Pause, Play, Globe, Download } from "lucide-react";
+import { X, Check, AlertCircle, Ban, Clock, Pause, Play, Download } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useApp } from "../store/app";
 import { useTransfers, type QueueItem } from "../store/transfers";
@@ -88,43 +88,35 @@ export function GeneralDownloads({ filter, detail }: { filter: Category | "All";
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between px-6 pt-6">
-        <div className="flex items-center gap-2">
-          <Globe size={18} className="text-[var(--accent)]" />
-          <h1 className="text-lg font-semibold text-[var(--text)]">Web Downloads</h1>
+      <div className="flex items-center justify-between px-7 pt-6">
+        <div>
+          <h1 className="text-[24px] font-bold tracking-[-0.025em] text-[var(--ink)]">Web Downloads</h1>
+          <p className="mt-1 text-[13px] text-[var(--mut)]">Grab any direct file URL alongside your Drive/Dropbox transfers.</p>
         </div>
-        {webHistory.length > 0 && (
-          <button
-            onClick={() => clear()}
-            title="Clear download history"
-            className="text-xs text-[var(--text-3)] hover:text-[var(--text)]"
-          >
-            Clear history
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {webHistory.length > 0 && (
+            <button onClick={() => clear()} className="text-xs font-medium text-[var(--faint)] hover:text-[var(--ink)]">Clear history</button>
+          )}
+          <UrlDownload />
+        </div>
       </div>
 
-      {/* URL input moved here from the primary Downloads view. */}
-      <div className="px-6 pt-4">
-        <UrlDownload />
-      </div>
-
-      {/* Category filter tabs. The active category lives on the app view; the
-          parent passes it down as `filter`. */}
-      <div className="flex flex-wrap gap-1 px-6 py-3">
-        {FILTERS.map((f) => (
-          <button
-            key={f}
-            onClick={() => setWebCategory(f)}
-            className={`rounded-[7px] px-3 py-1.5 text-sm ${
-              filter === f
-                ? "bg-[var(--hover)] text-[var(--text)]"
-                : "text-[var(--text-2)] hover:bg-[var(--hover)]"
-            }`}
-          >
-            {f}
-          </button>
-        ))}
+      {/* Category filter pills. */}
+      <div className="flex flex-wrap items-center gap-1.5 px-7 pb-3 pt-[18px]">
+        {FILTERS.map((f) => {
+          const on = filter === f;
+          return (
+            <button
+              key={f}
+              onClick={() => setWebCategory(f)}
+              className={`h-8 rounded-full border px-[15px] text-[12.5px] font-semibold ${
+                on ? "border-[var(--acc)] bg-[var(--acc)] text-[var(--onacc)]" : "border-[var(--line)] bg-[var(--card)] text-[var(--mut)] hover:border-[var(--line2)]"
+              }`}
+            >
+              {f}
+            </button>
+          );
+        })}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-6 pb-4">
@@ -151,7 +143,7 @@ export function GeneralDownloads({ filter, detail }: { filter: Category | "All";
                     </div>
                     <div className="flex flex-1 items-center gap-3">
                       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--hover)]">
-                        <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${pct(j)}%` }} />
+                        <div className="h-full rounded-full bg-[var(--dl)]" style={{ width: `${pct(j)}%` }} />
                       </div>
                       <span className="tnum w-40 shrink-0 text-right text-xs text-[var(--text-3)]">
                         {formatBytes(j.bytes)} / {formatBytes(j.totalBytes || j.bytes)} · {formatSpeed(j.speed)} · {formatEta(j.eta)}

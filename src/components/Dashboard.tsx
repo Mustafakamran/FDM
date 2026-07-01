@@ -43,7 +43,7 @@ export function Dashboard() {
   }, 0);
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto px-8 py-7">
+    <div className="h-full overflow-auto px-8 py-7">
       {/* Header */}
       <div className="mb-7">
         <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--faint)]">Dashboard</div>

@@ -44,7 +44,9 @@ export function AppShell() {
                 <ConnectView />
               ))}
           </div>
-          <DownloadsDock />
+          {/* The Downloads/Web views show their own progress + total bar, so the
+              dock would duplicate them there — only float it over other screens. */}
+          {view.kind !== "downloads" && <DownloadsDock />}
         </div>
       </div>
     </div>

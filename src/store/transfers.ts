@@ -85,7 +85,7 @@ export interface QueueItem {
 }
 
 /** A started download we track so it survives an app restart and can resume. */
-interface InflightItem extends QueueItem {
+export interface InflightItem extends QueueItem {
   jobId: number;
   bytes: number;
   /**
