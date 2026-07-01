@@ -303,10 +303,18 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
     else wrapRef.current?.requestFullscreen().catch(() => {});
   }
 
-  function timeFromPointer(clientX: number): number {
-    const bar = barRef.current;
-    if (!bar || !duration) return 0;
-    const r = bar.getBoundingClientRect();
+  // The scrub bar's rect doesn't change mid-drag or mid-hover, but naively
+  // calling getBoundingClientRect() on every pointermove/mousemove forces a
+  // synchronous layout reflow per pixel of movement — very noticeable jank
+  // while scrubbing. Cache it once per drag/hover session instead, refreshed
+  // only at the start of each (pointerdown / mouseenter).
+  const barRectRef = useRef<DOMRect | null>(null);
+  function refreshBarRect() {
+    barRectRef.current = barRef.current?.getBoundingClientRect() ?? null;
+  }
+  function timeFromRect(clientX: number): number {
+    const r = barRectRef.current;
+    if (!r || !duration) return 0;
     const p = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
     return p * duration;
   }
@@ -314,8 +322,9 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
   function onScrubDown(e: React.PointerEvent) {
     e.preventDefault();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    seek(timeFromPointer(e.clientX));
-    const move = (ev: PointerEvent) => seek(timeFromPointer(ev.clientX));
+    refreshBarRect();
+    seek(timeFromRect(e.clientX));
+    const move = (ev: PointerEvent) => seek(timeFromRect(ev.clientX));
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
@@ -417,7 +426,8 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
         <div
           ref={barRef}
           onPointerDown={onScrubDown}
-          onMouseMove={(e) => setHover(timeFromPointer(e.clientX))}
+          onMouseEnter={refreshBarRect}
+          onMouseMove={(e) => setHover(timeFromRect(e.clientX))}
           onMouseLeave={() => setHover(null)}
           className="group/bar relative mb-2 flex h-4 cursor-pointer items-center"
         >

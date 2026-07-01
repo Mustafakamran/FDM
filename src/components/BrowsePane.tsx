@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, FolderSearch, FolderOpen, Folder, FileSearch, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
@@ -50,6 +50,50 @@ const SECTION_TITLE: Record<Section, string> = {
   starred: "Starred",
   shared: "Shared with me",
 };
+
+/** A folder's size: instant from the index, computed on demand, or unknown. */
+type FolderSizeState =
+  | { kind: "known"; bytes: number }
+  | { kind: "loading" }
+  | { kind: "error" }
+  | { kind: "unknown" };
+
+/** Size cell: instant from the index, a spinner while computing, or a
+ *  "Calculate" action for folders whose size we don't auto-compute (shared).
+ *  Shared between list and grid views so both stay in sync. */
+function SizeCell({ item, folderSize, onCalcSize }: { item: RcItem; folderSize: FolderSizeState; onCalcSize: (p: string) => void }) {
+  if (!item.IsDir) return <>{item.Size > 0 ? formatBytes(item.Size) : <span className="text-[var(--text-3)]">·</span>}</>;
+  if (folderSize.kind === "known") return <>{folderSize.bytes > 0 ? formatBytes(folderSize.bytes) : <span className="text-[var(--text-3)]">·</span>}</>;
+  if (folderSize.kind === "loading") return <Loader2 size={13} className="inline animate-spin text-[var(--text-3)]" />;
+  return (
+    <button
+      onClick={() => onCalcSize(item.Path)}
+      data-tip={folderSize.kind === "error" ? "Couldn’t size this folder. Click to retry." : "Calculate folder size on demand"}
+      className="rounded-[6px] px-1.5 py-0.5 text-xs text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--accent)]"
+    >
+      {folderSize.kind === "error" ? "Retry" : "Calculate"}
+    </button>
+  );
+}
+
+/** Stable-callback props every row/grid-item shares — identical shape so both
+ * FileRow and FileGridItem can take the same object. */
+interface RowActions {
+  toggle: (p: string) => void;
+  openFolder: (p: string) => void;
+  openReview: (item: RcItem) => void;
+  download: (item: RcItem) => void;
+  indexFolder: (p: string) => void;
+  calcSize: (p: string) => void;
+  toggleStar: (p: string) => void;
+  deleteOne: (item: RcItem) => void;
+  contextMenu: (x: number, y: number, item: RcItem) => void;
+}
+
+function folderSizeEqual(a: FolderSizeState, b: FolderSizeState): boolean {
+  if (a.kind !== b.kind) return false;
+  return a.kind === "known" && b.kind === "known" ? a.bytes === b.bytes : true;
+}
 
 export function BrowsePane({ account, section, path }: { account: Account; section: Section; path: string }) {
   const setView = useApp((s) => s.setView);
@@ -117,12 +161,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   // index aggregate gives an instant size. Shared ("Shared with me") folders are
   // NOT in the index and intentionally NOT auto-walked — they can be enormous or
   // not owned — so they read "unknown" until the user calculates one on demand.
-  type FolderSize =
-    | { kind: "known"; bytes: number }
-    | { kind: "loading" }
-    | { kind: "error" }
-    | { kind: "unknown" };
-  const folderSizeState = (p: string): FolderSize => {
+  const folderSizeState = (p: string): FolderSizeState => {
     if (folderIndexed(p)) return { kind: "known", bytes: aggOf(p)?.size ?? 0 };
     const v = browseSizes[browseKey(account.id, p)];
     if (typeof v === "number") return { kind: "known", bytes: v };
@@ -141,23 +180,6 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   // (instant from the live listing). Files use their own mod time.
   const dateOf = (i: RcItem) => (i.IsDir ? (aggOf(i.Path)?.latest || i.ModTime) : i.ModTime);
   const indexFolder = (folderPath: string) => void useIndex.getState().indexFolder(account, folderPath);
-
-  // Folder size cell: instant from the index, a spinner while computing, or a
-  // "Calculate" action for folders whose size we don't auto-compute (shared).
-  const renderFolderSize = (p: string) => {
-    const st = folderSizeState(p);
-    if (st.kind === "known") return st.bytes > 0 ? formatBytes(st.bytes) : <span className="text-[var(--text-3)]">·</span>;
-    if (st.kind === "loading") return <Loader2 size={13} className="inline animate-spin text-[var(--text-3)]" />;
-    return (
-      <button
-        onClick={() => calcSize(p)}
-        data-tip={st.kind === "error" ? "Couldn’t size this folder. Click to retry." : "Calculate folder size on demand"}
-        className="rounded-[6px] px-1.5 py-0.5 text-xs text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--accent)]"
-      >
-        {st.kind === "error" ? "Retry" : "Calculate"}
-      </button>
-    );
-  };
 
   // Delete (with confirm). Cloud deletes go to the provider Trash (recoverable).
   // pendingDelete holds one item (per-row trash) or many (selection-bar delete).
@@ -258,6 +280,35 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     await enqueueItems(items.filter((i) => selected.has(i.Path)));
     setSelected(new Set());
   }
+
+  // Stable row-facing callbacks: FileRow/FileGridItem are memoized, and every
+  // closure above (enqueueItems, reviewTarget, indexFolder, etc.) is recreated
+  // on every render, so passing them straight through would defeat the memo.
+  // The ref always holds the LATEST closures; the wrappers below never change
+  // identity, so rows only re-render when their own props actually change.
+  const actionsRef = useRef<RowActions>(null!);
+  actionsRef.current = {
+    toggle,
+    openFolder: (p) => setView({ kind: "browse", accountId: account.id, section: "all", path: p }),
+    openReview: (item) => openReview(account.id, reviewTarget(item)),
+    download: (item) => void enqueueItems([item]),
+    indexFolder,
+    calcSize,
+    toggleStar: (p) => toggleStar(account.id, p),
+    deleteOne: (item) => setPendingDelete([item]),
+    contextMenu: (x, y, item) => setMenu({ x, y, item }),
+  };
+  const rowActions = useRef<RowActions>({
+    toggle: (p) => actionsRef.current.toggle(p),
+    openFolder: (p) => actionsRef.current.openFolder(p),
+    openReview: (item) => actionsRef.current.openReview(item),
+    download: (item) => actionsRef.current.download(item),
+    indexFolder: (p) => actionsRef.current.indexFolder(p),
+    calcSize: (p) => actionsRef.current.calcSize(p),
+    toggleStar: (p) => actionsRef.current.toggleStar(p),
+    deleteOne: (item) => actionsRef.current.deleteOne(item),
+    contextMenu: (x, y, item) => actionsRef.current.contextMenu(x, y, item),
+  }).current;
 
   // Build the right-click menu for one item — reuses every existing row action.
   const menuItems = (item: RcItem): MenuItem[] => {
@@ -452,26 +503,15 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           <EmptyState q={q} section={section} />
         ) : grid ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3 py-2">
-            {items.map((item) => {
-              const ft = fileType(item.Name, item.IsDir);
-              return (
-                <div key={item.Path} onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, item }); }} className={`relative flex flex-col items-center gap-3 rounded-[11px] border p-5 ${selected.has(item.Path) ? "border-[var(--accent)] bg-[var(--card)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}>
-                  <input type="checkbox" aria-label={`Select ${item.Name}`} checked={selected.has(item.Path)} onChange={() => toggle(item.Path)} className="absolute left-3 top-3" />
-                  <button
-                    className="flex flex-col items-center gap-2 text-center"
-                    onClick={() =>
-                      item.IsDir
-                        ? setView({ kind: "browse", accountId: account.id, section: "all", path: item.Path })
-                        : isVideo(item.Name) && openReview(account.id, reviewTarget(item))
-                    }
-                  >
-                    <ft.Icon size={30} style={{ color: ft.color }} />
-                    <span className="line-clamp-2 text-sm text-[var(--text)]">{item.Name}</span>
-                  </button>
-                  <span className="tnum text-xs text-[var(--text-3)]">{item.IsDir ? renderFolderSize(item.Path) : item.Size > 0 ? formatBytes(item.Size) : "·"}</span>
-                </div>
-              );
-            })}
+            {items.map((item) => (
+              <FileGridItem
+                key={item.Path}
+                item={item}
+                isSelected={selected.has(item.Path)}
+                folderSize={folderSizeState(item.Path)}
+                actions={rowActions}
+              />
+            ))}
           </div>
         ) : (
           <table className="w-full table-fixed border-collapse text-sm">
@@ -485,88 +525,19 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => {
-                const ft = fileType(item.Name, item.IsDir);
-                const isStar = starred.includes(item.Path);
-                return (
-                  <tr key={item.Path} onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, item }); }} className={`group border-b border-[var(--border)]/60 ${selected.has(item.Path) ? "bg-[var(--card)]" : "hover:bg-[var(--hover)]"}`}>
-                    <td className="w-9 py-2.5 pl-1"><input type="checkbox" aria-label={`Select ${item.Name}`} checked={selected.has(item.Path)} onChange={() => toggle(item.Path)} /></td>
-                    <td className="min-w-0 py-1.5 pr-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        {/* Icon tile + name/sub. The whole block is the open/review
-                            affordance for folders and videos; a plain span otherwise. */}
-                        {(() => {
-                          const ext = extOf(item.Name).replace(/^\./, "").slice(0, 4).toUpperCase();
-                          const sub = item.IsDir ? "" : `${ext || "FILE"}${item.Size > 0 ? ` · ${formatBytes(item.Size)}` : ""}`;
-                          const tile = item.IsDir ? (
-                            <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] bg-[var(--accw)]">
-                              <Folder size={18} className="text-[var(--acc)]" />
-                            </span>
-                          ) : (
-                            <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] font-mono text-[9.5px] font-semibold" style={{ background: "var(--accw)", color: ft.color }}>
-                              {ext || "FILE"}
-                            </span>
-                          );
-                          const body = (
-                            <>
-                              {tile}
-                              <span className="min-w-0 flex-1">
-                                <span className="flex items-center gap-1.5">
-                                  <span className="truncate text-[13.5px] font-medium text-[var(--ink)]">{item.Name}</span>
-                                  {isStar && <Star size={11} fill="currentColor" className="shrink-0 text-[var(--warn)]" />}
-                                  {!item.IsDir && isVideo(item.Name) && <Play size={11} className="shrink-0 text-[var(--faint)] opacity-0 group-hover:opacity-100" />}
-                                </span>
-                                {sub && <span className="block truncate text-[11.5px] text-[var(--faint)]">{sub}</span>}
-                              </span>
-                            </>
-                          );
-                          if (item.IsDir)
-                            return <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => setView({ kind: "browse", accountId: account.id, section: "all", path: item.Path })}>{body}</button>;
-                          if (isVideo(item.Name))
-                            return <button className="flex min-w-0 flex-1 items-center gap-3 text-left" data-tip="Open in review" onClick={() => openReview(account.id, reviewTarget(item))}>{body}</button>;
-                          return <span className="flex min-w-0 flex-1 items-center gap-3">{body}</span>;
-                        })()}
-                        {/* Fixed action cluster — reserved width (opacity, not display),
-                            so revealing it on hover never shifts the layout. */}
-                        <div className="flex shrink-0 items-center gap-0.5">
-                          {!item.IsDir && isVideo(item.Name) && (
-                            <RowAction onClick={() => openReview(account.id, reviewTarget(item))} tip="Open in review" label={`Review ${item.Name}`}>
-                              <Play size={14} />
-                            </RowAction>
-                          )}
-                          <RowAction onClick={() => void enqueueItems([item])} tip="Download" label={`Download ${item.Name}`} green>
-                            <Download size={14} />
-                          </RowAction>
-                          {item.IsDir && (
-                            <RowAction
-                              onClick={() => indexFolder(item.Path)}
-                              disabled={showCrawl}
-                              tip={folderIndexed(item.Path) ? "Re-index this folder" : "Index this folder"}
-                              label={`Index ${item.Name}`}
-                            >
-                              <FolderSearch size={14} />
-                            </RowAction>
-                          )}
-                          <RowAction
-                            onClick={() => toggleStar(account.id, item.Path)}
-                            tip={isStar ? "Unstar" : "Star"}
-                            label="Star"
-                            active={isStar}
-                          >
-                            <Star size={14} fill={isStar ? "currentColor" : "none"} />
-                          </RowAction>
-                          <RowAction onClick={() => setPendingDelete([item])} tip="Delete (moves to Trash)" label={`Delete ${item.Name}`} danger>
-                            <Trash2 size={14} />
-                          </RowAction>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="whitespace-nowrap py-2 text-[var(--text-3)]">{formatDate(dateOf(item))}</td>
-                    <td className="tnum whitespace-nowrap py-2 text-right text-[var(--text-2)]">{item.IsDir ? renderFolderSize(item.Path) : item.Size > 0 ? formatBytes(item.Size) : <span className="text-[var(--text-3)]">·</span>}</td>
-                    <td className="py-2.5 pl-6 text-[var(--text-3)]">{ft.label}</td>
-                  </tr>
-                );
-              })}
+              {items.map((item) => (
+                <FileRow
+                  key={item.Path}
+                  item={item}
+                  isSelected={selected.has(item.Path)}
+                  isStarred={starred.includes(item.Path)}
+                  dateStr={formatDate(dateOf(item))}
+                  folderSize={folderSizeState(item.Path)}
+                  showCrawl={showCrawl}
+                  folderIndexedFlag={folderIndexed(item.Path)}
+                  actions={rowActions}
+                />
+              ))}
             </tbody>
           </table>
         )}
@@ -657,6 +628,159 @@ function RowAction({
     </button>
   );
 }
+
+/**
+ * One list-view row. Memoized: without this, resolving a folder's size (which
+ * updates `browseSizes` and re-triggers the `items` sort) or ticking the
+ * selection Set for one row re-rendered every visible row on every folder in
+ * the account. Props are per-row primitives/derived values (not raw store
+ * state) precisely so the comparator can tell "did THIS row change".
+ */
+const FileRow = memo(function FileRow({
+  item,
+  isSelected,
+  isStarred,
+  dateStr,
+  folderSize,
+  showCrawl,
+  folderIndexedFlag,
+  actions,
+}: {
+  item: RcItem;
+  isSelected: boolean;
+  isStarred: boolean;
+  dateStr: string;
+  folderSize: FolderSizeState;
+  showCrawl: boolean;
+  folderIndexedFlag: boolean;
+  actions: RowActions;
+}) {
+  const ft = fileType(item.Name, item.IsDir);
+  const ext = extOf(item.Name).replace(/^\./, "").slice(0, 4).toUpperCase();
+  const sub = item.IsDir ? "" : `${ext || "FILE"}${item.Size > 0 ? ` · ${formatBytes(item.Size)}` : ""}`;
+  const video = !item.IsDir && isVideo(item.Name);
+
+  const tile = item.IsDir ? (
+    <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] bg-[var(--accw)]">
+      <Folder size={18} className="text-[var(--acc)]" />
+    </span>
+  ) : (
+    <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] font-mono text-[9.5px] font-semibold" style={{ background: "var(--accw)", color: ft.color }}>
+      {ext || "FILE"}
+    </span>
+  );
+  const body = (
+    <>
+      {tile}
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-1.5">
+          <span className="truncate text-[13.5px] font-medium text-[var(--ink)]">{item.Name}</span>
+          {isStarred && <Star size={11} fill="currentColor" className="shrink-0 text-[var(--warn)]" />}
+          {video && <Play size={11} className="shrink-0 text-[var(--faint)] opacity-0 group-hover:opacity-100" />}
+        </span>
+        {sub && <span className="block truncate text-[11.5px] text-[var(--faint)]">{sub}</span>}
+      </span>
+    </>
+  );
+  const nameCell = item.IsDir ? (
+    <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => actions.openFolder(item.Path)}>{body}</button>
+  ) : video ? (
+    <button className="flex min-w-0 flex-1 items-center gap-3 text-left" data-tip="Open in review" onClick={() => actions.openReview(item)}>{body}</button>
+  ) : (
+    <span className="flex min-w-0 flex-1 items-center gap-3">{body}</span>
+  );
+
+  return (
+    <tr onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }} className={`group border-b border-[var(--border)]/60 ${isSelected ? "bg-[var(--card)]" : "hover:bg-[var(--hover)]"}`}>
+      <td className="w-9 py-2.5 pl-1"><input type="checkbox" aria-label={`Select ${item.Name}`} checked={isSelected} onChange={() => actions.toggle(item.Path)} /></td>
+      <td className="min-w-0 py-1.5 pr-3">
+        <div className="flex min-w-0 items-center gap-3">
+          {nameCell}
+          {/* Fixed action cluster — reserved width (opacity, not display),
+              so revealing it on hover never shifts the layout. */}
+          <div className="flex shrink-0 items-center gap-0.5">
+            {video && (
+              <RowAction onClick={() => actions.openReview(item)} tip="Open in review" label={`Review ${item.Name}`}>
+                <Play size={14} />
+              </RowAction>
+            )}
+            <RowAction onClick={() => actions.download(item)} tip="Download" label={`Download ${item.Name}`} green>
+              <Download size={14} />
+            </RowAction>
+            {item.IsDir && (
+              <RowAction
+                onClick={() => actions.indexFolder(item.Path)}
+                disabled={showCrawl}
+                tip={folderIndexedFlag ? "Re-index this folder" : "Index this folder"}
+                label={`Index ${item.Name}`}
+              >
+                <FolderSearch size={14} />
+              </RowAction>
+            )}
+            <RowAction
+              onClick={() => actions.toggleStar(item.Path)}
+              tip={isStarred ? "Unstar" : "Star"}
+              label="Star"
+              active={isStarred}
+            >
+              <Star size={14} fill={isStarred ? "currentColor" : "none"} />
+            </RowAction>
+            <RowAction onClick={() => actions.deleteOne(item)} tip="Delete (moves to Trash)" label={`Delete ${item.Name}`} danger>
+              <Trash2 size={14} />
+            </RowAction>
+          </div>
+        </div>
+      </td>
+      <td className="whitespace-nowrap py-2 text-[var(--text-3)]">{dateStr}</td>
+      <td className="tnum whitespace-nowrap py-2 text-right text-[var(--text-2)]">
+        <SizeCell item={item} folderSize={folderSize} onCalcSize={actions.calcSize} />
+      </td>
+      <td className="py-2.5 pl-6 text-[var(--text-3)]">{ft.label}</td>
+    </tr>
+  );
+},
+(prev, next) =>
+  prev.item === next.item &&
+  prev.isSelected === next.isSelected &&
+  prev.isStarred === next.isStarred &&
+  prev.dateStr === next.dateStr &&
+  prev.showCrawl === next.showCrawl &&
+  prev.folderIndexedFlag === next.folderIndexedFlag &&
+  folderSizeEqual(prev.folderSize, next.folderSize));
+
+/** One grid-view card — same memoization rationale as FileRow. */
+const FileGridItem = memo(function FileGridItem({
+  item,
+  isSelected,
+  folderSize,
+  actions,
+}: {
+  item: RcItem;
+  isSelected: boolean;
+  folderSize: FolderSizeState;
+  actions: RowActions;
+}) {
+  const ft = fileType(item.Name, item.IsDir);
+  return (
+    <div
+      onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }}
+      className={`relative flex flex-col items-center gap-3 rounded-[11px] border p-5 ${isSelected ? "border-[var(--accent)] bg-[var(--card)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
+    >
+      <input type="checkbox" aria-label={`Select ${item.Name}`} checked={isSelected} onChange={() => actions.toggle(item.Path)} className="absolute left-3 top-3" />
+      <button
+        className="flex flex-col items-center gap-2 text-center"
+        onClick={() => (item.IsDir ? actions.openFolder(item.Path) : isVideo(item.Name) && actions.openReview(item))}
+      >
+        <ft.Icon size={30} style={{ color: ft.color }} />
+        <span className="line-clamp-2 text-sm text-[var(--text)]">{item.Name}</span>
+      </button>
+      <span className="tnum text-xs text-[var(--text-3)]">
+        <SizeCell item={item} folderSize={folderSize} onCalcSize={actions.calcSize} />
+      </span>
+    </div>
+  );
+},
+(prev, next) => prev.item === next.item && prev.isSelected === next.isSelected && folderSizeEqual(prev.folderSize, next.folderSize));
 
 /** Shimmer placeholder rows shown while a folder/index loads, shaped like the
  *  file table so the transition to real rows reads as instant. */

@@ -3,7 +3,7 @@ import { accountEmail } from "../lib/tauri/commands";
 
 const KEY = "account_meta_v1";
 
-interface Meta {
+export interface Meta {
   label?: string; // original (cased) label the user typed
   email?: string; // signed-in account email
 }
