@@ -17,6 +17,9 @@ use crate::rclone::supervisor::{RcConnection, RcloneState};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use tiny_http::{Header, Response, Server};
@@ -69,8 +72,39 @@ fn mime_for_ext(ext: &str) -> &'static str {
         "webm" => "video/webm",
         "ogv" | "ogg" => "video/ogg",
         "mkv" => "video/x-matroska",
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "heic" | "heif" => "image/heic",
         _ => "application/octet-stream",
     }
+}
+
+/// If `dest_root` already has a file at the sanitized location a download of
+/// `rel_path` would have landed at (the exact same sanitization the
+/// downloader uses — see `transfer::safe_join`), return its path. Lets an
+/// already-downloaded file play/preview straight from disk: instant, and
+/// works with no internet connection at all (this loopback server only ever
+/// binds 127.0.0.1, so serving local bytes through it needs no network).
+fn local_file_for(dest_root: &str, rel_path: &str) -> Option<PathBuf> {
+    if dest_root.is_empty() {
+        return None;
+    }
+    let p = crate::transfer::safe_join(Path::new(dest_root), rel_path);
+    p.is_file().then_some(p)
+}
+
+/// Read the inclusive byte range [start, end] from a local file.
+fn read_local_range(path: &Path, start: u64, end: u64) -> Result<Vec<u8>, String> {
+    let mut f = File::open(path).map_err(|e| e.to_string())?;
+    f.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
+    let len = (end - start + 1) as usize;
+    let mut buf = vec![0u8; len];
+    f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    Ok(buf)
 }
 
 fn parse_query(q: &str) -> HashMap<String, String> {
@@ -135,6 +169,17 @@ fn build_response(
     let path_b64 = params.get("path").ok_or_else(|| "missing path".to_string())?;
     let path = String::from_utf8(URL_SAFE_NO_PAD.decode(path_b64).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
+    // Optional: the destination folder this exact item was already downloaded
+    // to, if the frontend found a matching completed job in history. Present
+    // → try local disk first (instant, works offline); absent or no match on
+    // disk → fall through to the cloud fetch below, unchanged.
+    let dest_root = match params.get("dest") {
+        Some(b64) if !b64.is_empty() => {
+            String::from_utf8(URL_SAFE_NO_PAD.decode(b64).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?
+        }
+        _ => String::new(),
+    };
 
     let (start, end_opt) = parse_range(range_hdr);
     let start = start.min(size - 1);
@@ -143,6 +188,11 @@ fn build_response(
         .min(size - 1)
         .min(start + CHUNK - 1)
         .max(start);
+
+    if let Some(local_path) = local_file_for(&dest_root, &path) {
+        let data = read_local_range(&local_path, start, end)?;
+        return Ok((data, start, end, size, mime_for_ext(ext)));
+    }
 
     let conn = app
         .state::<RcloneState>()
@@ -278,5 +328,48 @@ mod tests {
         assert_eq!(m.get("acct").unwrap(), "drive_x");
         assert_eq!(m.get("size").unwrap(), "123");
         assert_eq!(m.get("ext").unwrap(), "mp4");
+    }
+
+    #[test]
+    fn maps_image_mime_types() {
+        assert_eq!(mime_for_ext("JPG"), "image/jpeg");
+        assert_eq!(mime_for_ext("png"), "image/png");
+        assert_eq!(mime_for_ext("heic"), "image/heic");
+    }
+
+    #[test]
+    fn local_file_for_finds_an_already_downloaded_file() {
+        let root = std::env::temp_dir().join(format!("fdm-stream-test-{}-a", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("clip.mp4"), b"hello world").unwrap();
+
+        let found = local_file_for(root.to_str().unwrap(), "clip.mp4").unwrap();
+        assert!(found.is_file());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn local_file_for_returns_none_when_not_downloaded_or_no_dest() {
+        let root = std::env::temp_dir().join(format!("fdm-stream-test-{}-b", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert!(local_file_for(root.to_str().unwrap(), "missing.mp4").is_none());
+        assert!(local_file_for("", "clip.mp4").is_none());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn read_local_range_reads_the_requested_bytes() {
+        let root = std::env::temp_dir().join(format!("fdm-stream-test-{}-c", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("data.bin");
+        std::fs::write(&path, b"0123456789").unwrap();
+
+        assert_eq!(read_local_range(&path, 2, 4).unwrap(), b"234");
+        assert_eq!(read_local_range(&path, 0, 9).unwrap(), b"0123456789");
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

@@ -4,9 +4,10 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { useApp, type ReviewTarget } from "../store/app";
 import { useReview, fileKey, type FileReview } from "../store/review";
 import { useAccountMeta, accountLabel } from "../store/account-meta";
+import { useHistory } from "../store/history";
 import { useToasts } from "../store/toast";
 import { writeBinaryFile } from "../lib/tauri/commands";
-import { streamUrl, isPlayable, timecode } from "../lib/review";
+import { streamUrl, isPlayable, isImage, timecode } from "../lib/review";
 import { ReviewPlayer } from "./ReviewPlayer";
 import { Button } from "./ui";
 
@@ -37,11 +38,23 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
   const [exporting, setExporting] = useState(false);
 
   const playable = isPlayable(target.name);
+  const isImg = isImage(target.name);
+  const previewable = playable || isImg;
   const parent = target.path.includes("/") ? target.path.slice(0, target.path.lastIndexOf("/")) : "";
   const stampTime = locked ? lockedTime : curTime;
 
+  // If this exact file was already downloaded (a completed job in history for
+  // this account + path), grab its destination folder — the backend then
+  // serves straight from that local copy instead of the cloud: instant, and
+  // works with no internet connection at all.
+  const historyItems = useHistory((s) => s.items);
+  const localDest = useMemo(
+    () => historyItems.find((h) => h.status === "success" && h.accountId === accountId && h.item?.path === target.path)?.dest,
+    [historyItems, accountId, target.path],
+  );
+
   useEffect(() => {
-    if (!playable) return;
+    if (!previewable) return;
     let alive = true;
     setUrl(null);
     setHlsUrl(null);
@@ -54,10 +67,11 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
     // inside their web UI. hlsUrl stays null, so ReviewPlayer uses <video src>.
     // (Pro codecs like ProRes/RAW can't decode in ANY browser; those surface the
     // "download to review" message — the same thing a provider's preview shows.)
-    streamUrl(accountId, target)
+    streamUrl(accountId, target, localDest)
       .then(async (u) => {
         if (!alive) return;
         setUrl(u);
+        if (isImg) return; // <img onError> handles failures; no video-specific probing needed.
         // Background-probe the direct /media URL only to capture a real error
         // message we can surface IF playback fails, never block playback on it.
         fetch(u)
@@ -77,7 +91,7 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
     return () => {
       alive = false;
     };
-  }, [accountId, target, playable]);
+  }, [accountId, target, previewable, isImg, localDest]);
 
   const comments = useMemo(() => [...review.comments].sort((a, b) => a.time - b.time), [review.comments]);
 
@@ -213,7 +227,30 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
       <div className="flex min-h-0 flex-1">
         {/* Player */}
         <div className="flex min-w-0 flex-1 flex-col bg-black/30 p-4">
-          {!playable ? (
+          {isImg ? (
+            err ? (
+              <Fallback title="Couldn't load the image" body={err} />
+            ) : (
+              <div className="flex min-h-0 flex-1 items-center justify-center">
+                {url ? (
+                  <img
+                    src={url}
+                    alt={target.name}
+                    className="max-h-full max-w-full rounded-[8px] object-contain"
+                    onError={() =>
+                      setErr(
+                        "This image format doesn't decode in the app on this OS (HEIC previews on macOS but generally not on Windows). Download it to view, comments here still export to PDF.",
+                      )
+                    }
+                  />
+                ) : (
+                  <div className="flex items-center gap-2 text-sm text-[var(--text-2)]">
+                    <Loader2 size={16} className="animate-spin" /> Opening…
+                  </div>
+                )}
+              </div>
+            )
+          ) : !playable ? (
             <Fallback
               title="Can't preview this format in-app"
               body={`.${target.name.split(".").pop()} (ProRes / RAW / MXF and similar pro codecs can't play in the app). Download it to review in your editor, comments here still export to PDF.`}

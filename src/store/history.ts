@@ -120,8 +120,12 @@ export const useHistory = create<HistoryState>((set, get) => {
         status,
         at: now,
         error: status === "failed" ? job.error : undefined,
-        // Keep the item on failures so the user can resume from history.
-        item: status === "failed" ? item : undefined,
+        // Kept for every status, not just failures: a failed entry needs it to
+        // resume from history, and a SUCCESSFUL entry needs it too — it's how
+        // the reviewer later recognizes "this exact file was already
+        // downloaded to `dest`" and plays it straight from disk instead of
+        // re-streaming from the cloud.
+        item,
         category: categoryFor(job.name),
         sourceUrl,
         ...computeFinishStats(size, stats, now),

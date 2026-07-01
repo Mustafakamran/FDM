@@ -1,8 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, FolderSearch, FolderOpen, Folder, FileSearch, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy } from "lucide-react";
+import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
-import { isVideo, extOf } from "../lib/review";
+import { isVideo, isPreviewable, extOf } from "../lib/review";
 import { useIndex } from "../store/index-store";
 import { useBrowse, browseKey, browseSearchKey, browseRecentKey } from "../store/browse";
 import { useTransfers } from "../store/transfers";
@@ -329,7 +329,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
       out.push({ label: "Open", icon: FolderOpen, onClick: () => setView({ kind: "browse", accountId: account.id, section: "all", path: item.Path }) });
       out.push({ label: "Calculate size", icon: Calculator, onClick: () => calcSize(item.Path) });
       out.push({ label: folderIndexed(item.Path) ? "Re-index folder" : "Index folder", icon: FolderSearch, disabled: showCrawl, onClick: () => indexFolder(item.Path) });
-    } else if (isVideo(item.Name)) {
+    } else if (isPreviewable(item.Name)) {
       out.push({ label: "Open in review", icon: Play, onClick: () => openReview(account.id, reviewTarget(item)) });
     }
     out.push({ label: "Download", icon: Download, onClick: () => void enqueueItems([item]) });
@@ -670,6 +670,7 @@ const FileRow = memo(function FileRow({
   const ext = extOf(item.Name).replace(/^\./, "").slice(0, 4).toUpperCase();
   const sub = item.IsDir ? "" : `${ext || "FILE"}${item.Size > 0 ? ` · ${formatBytes(item.Size)}` : ""}`;
   const video = !item.IsDir && isVideo(item.Name);
+  const previewableFlag = !item.IsDir && isPreviewable(item.Name);
 
   const tile = item.IsDir ? (
     <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] bg-[var(--accw)]">
@@ -695,7 +696,7 @@ const FileRow = memo(function FileRow({
   );
   const nameCell = item.IsDir ? (
     <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => actions.openFolder(item.Path)}>{body}</button>
-  ) : video ? (
+  ) : previewableFlag ? (
     <button className="flex min-w-0 flex-1 items-center gap-3 text-left" data-tip="Open in review" onClick={() => actions.openReview(item)}>{body}</button>
   ) : (
     <span className="flex min-w-0 flex-1 items-center gap-3">{body}</span>
@@ -718,9 +719,9 @@ const FileRow = memo(function FileRow({
           {/* Fixed action cluster — reserved width (opacity, not display),
               so revealing it on hover never shifts the layout. */}
           <div className="flex shrink-0 items-center gap-0.5">
-            {video && (
+            {previewableFlag && (
               <RowAction onClick={() => actions.openReview(item)} tip="Open in review" label={`Review ${item.Name}`}>
-                <Play size={14} />
+                {video ? <Play size={14} /> : <Eye size={14} />}
               </RowAction>
             )}
             <RowAction onClick={() => actions.download(item)} tip="Download" label={`Download ${item.Name}`} green>
@@ -795,7 +796,7 @@ const FileGridItem = memo(function FileGridItem({
       />
       <button
         className="flex flex-col items-center gap-2 text-center"
-        onClick={() => (item.IsDir ? actions.openFolder(item.Path) : isVideo(item.Name) && actions.openReview(item))}
+        onClick={() => (item.IsDir ? actions.openFolder(item.Path) : isPreviewable(item.Name) && actions.openReview(item))}
       >
         <ft.Icon size={30} style={{ color: ft.color }} />
         <span className="line-clamp-2 text-sm text-[var(--text)]">{item.Name}</span>

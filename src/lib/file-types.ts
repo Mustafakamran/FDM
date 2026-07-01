@@ -28,7 +28,8 @@ const ARCHIVE = { Icon: FileArchive, color: "#aeb4bd", label: "Archive" };
 
 const BY_EXT: Record<string, FileType> = {
   mxf: VIDEO, mov: VIDEO, mp4: VIDEO, avi: VIDEO, braw: VIDEO, r3d: VIDEO, mkv: VIDEO, m4v: VIDEO, mts: VIDEO,
-  png: IMAGE, jpg: IMAGE, jpeg: IMAGE, gif: IMAGE, webp: IMAGE, heic: IMAGE, tiff: IMAGE, dng: IMAGE, cr2: IMAGE, arw: IMAGE,
+  png: IMAGE, jpg: IMAGE, jpeg: IMAGE, gif: IMAGE, webp: IMAGE, bmp: IMAGE, svg: IMAGE, heic: IMAGE, heif: IMAGE,
+  tiff: IMAGE, dng: IMAGE, cr2: IMAGE, cr3: IMAGE, arw: IMAGE, nef: IMAGE, raf: IMAGE, orf: IMAGE, rw2: IMAGE,
   wav: AUDIO, mp3: AUDIO, aac: AUDIO, aiff: AUDIO, flac: AUDIO,
   xlsx: SHEET, xls: SHEET, csv: SHEET, numbers: SHEET,
   pptx: SLIDES, ppt: SLIDES, key: SLIDES,

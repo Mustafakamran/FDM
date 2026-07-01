@@ -429,7 +429,7 @@ fn parse_size(v: &Value) -> i64 {
 /// incorrect" (os error 87) / ERROR_INVALID_NAME (123), which previously aborted a
 /// whole folder download partway through. Sanitizing every component lets all files
 /// land (with a safe name) regardless of the source naming.
-fn safe_join(root: &Path, rel: &str) -> PathBuf {
+pub(crate) fn safe_join(root: &Path, rel: &str) -> PathBuf {
     let mut out = root.to_path_buf();
     for comp in rel.split(['/', '\\']) {
         match comp {
