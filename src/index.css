@@ -62,6 +62,7 @@
   --okw: rgba(34, 197, 94, 0.15);
   --dl: #22c55e;
   --dlw: rgba(34, 197, 94, 0.15);
+  --dl-glow: rgba(34, 197, 94, 0.28);
   --warn: #e0a13a;
   --warning: #e0a13a;
   --err: #f0616a;
@@ -70,12 +71,24 @@
 
   --window-radius: 18px;
   --radius: 11px;
+  /* Canonical radius scale — new components should reach for these instead of
+     one-off rounded-[Npx] values (the app has accumulated ~9 distinct ones). */
+  --radius-sm: 8px;
+  --radius-md: 11px;
+  --radius-lg: 16px;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --mono: var(--font-mono);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow: 0 10px 30px rgba(8, 9, 14, 0.4);
   --shadow-lg: 0 30px 80px rgba(8, 9, 14, 0.55);
+
+  /* Animation vocabulary — duration + easing tokens so new transitions reach
+     for a shared vocabulary instead of hand-rolled durations per component. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 0.12s;
+  --dur-base: 0.2s;
+  --dur-slow: 0.32s;
 }
 
 /* Light theme — accent flips to near-black ink, surfaces go bright. */
@@ -116,6 +129,7 @@ html.light {
   --okw: rgba(22, 163, 74, 0.12);
   --dl: #16a34a;
   --dlw: rgba(22, 163, 74, 0.12);
+  --dl-glow: rgba(22, 163, 74, 0.22);
   --warn: #d9881f;
   --warning: #d9881f;
   --err: #e5484d;
@@ -167,10 +181,10 @@ a,
 input,
 [role="button"] {
   transition:
-    background-color 0.15s ease,
-    color 0.15s ease,
-    border-color 0.15s ease,
-    box-shadow 0.15s ease,
+    background-color var(--dur-base) ease,
+    color var(--dur-base) ease,
+    border-color var(--dur-base) ease,
+    box-shadow var(--dur-base) ease,
     transform 0.08s ease;
 }
 
@@ -191,7 +205,7 @@ input,
   }
 }
 .animate-rise {
-  animation: rise 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rise var(--dur-slow) var(--ease-out) both;
 }
 
 /* Menu / popover entrance — quick scale-fade from the anchor. */
@@ -206,7 +220,7 @@ input,
   }
 }
 .animate-pop {
-  animation: pop 0.12s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: pop var(--dur-fast) var(--ease-out) both;
   transform-origin: top left;
 }
 
@@ -220,7 +234,7 @@ input,
   }
 }
 .animate-tip {
-  animation: tip 0.1s ease-out both;
+  animation: tip var(--dur-fast) ease-out both;
 }
 
 @media (prefers-reduced-motion: reduce) {

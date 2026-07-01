@@ -9,10 +9,12 @@ import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { ProviderIcon, providerName } from "./icons";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { SpeedTestCard } from "./SpeedTestCard";
+import { Skeleton } from "./ui";
 
 /** At-a-glance landing: accounts, storage, live downloads, indexed files. */
 export function Dashboard() {
   const accounts = useApp((s) => s.accounts);
+  const accountsLoaded = useApp((s) => s.accountsLoaded);
   const selectAccount = useApp((s) => s.selectAccount);
   const showDownloads = useApp((s) => s.showDownloads);
   const showWebDownloads = useApp((s) => s.showWebDownloads);
@@ -110,7 +112,19 @@ export function Dashboard() {
 
       {/* Accounts */}
       <Section title="Your drives" action={{ label: "Web downloads", onClick: () => showWebDownloads() }}>
-        {accounts.length === 0 ? (
+        {!accountsLoaded && accounts.length === 0 ? (
+          <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4">
+                <Skeleton className="h-[38px] w-[38px] shrink-0 rounded-[11px]" />
+                <div className="min-w-0 flex-1">
+                  <Skeleton className="mb-1.5 h-3.5 w-32" />
+                  <Skeleton className="h-3 w-20" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : accounts.length === 0 ? (
           <div className="rounded-[15px] border border-dashed border-[var(--line2)] px-5 py-8 text-center text-[13px] text-[var(--faint)]">
             No drives yet — connect Google Drive or Dropbox from the sidebar.
           </div>

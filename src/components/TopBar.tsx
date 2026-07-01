@@ -35,7 +35,7 @@ export function TopBar() {
       </button>
 
       {/* Search */}
-      <div className="mx-auto flex w-full max-w-xl items-center gap-2 rounded-[11px] border border-[var(--line)] bg-[var(--card)] px-3.5 py-2 text-sm">
+      <div className="mx-auto flex w-full max-w-xl items-center gap-2 rounded-[11px] border border-[var(--line)] bg-[var(--card)] px-3.5 py-2 text-sm focus-within:border-[var(--acc)]">
         <Search size={15} className="text-[var(--faint)]" />
         <input
           value={q}

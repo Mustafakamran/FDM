@@ -10,7 +10,7 @@ const variants: Record<Variant, string> = {
   danger: "bg-transparent text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--error)]",
   // Green is reserved for downloads (the design's signature semantic).
   download:
-    "bg-[var(--dl)] font-semibold text-white shadow-[0_4px_14px_rgba(34,197,94,.28)] hover:brightness-110 active:translate-y-px",
+    "bg-[var(--dl)] font-semibold text-white shadow-[0_4px_14px_var(--dl-glow)] hover:brightness-110 active:translate-y-px",
 };
 
 export function Button({
@@ -62,4 +62,21 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
  */
 export function Skeleton({ className = "", style }: { className?: string; style?: CSSProperties }) {
   return <div aria-hidden className={`skeleton ${className}`} style={style} />;
+}
+
+/**
+ * The "nothing here yet" state — was hand-rolled near-identically in three
+ * different views (drifting token names + font weights each time). One shape
+ * for every list/section that can be empty.
+ */
+export function EmptyState({ icon, title, body }: { icon: ReactNode; title: string; body: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-weak)] text-[var(--text-3)]">
+        {icon}
+      </div>
+      <div className="text-sm font-semibold text-[var(--text)]">{title}</div>
+      <p className="max-w-xs text-xs text-[var(--text-3)]">{body}</p>
+    </div>
+  );
 }

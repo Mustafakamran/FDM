@@ -11,7 +11,7 @@ import { useStarred } from "../store/starred";
 import { useSearch } from "../store/search";
 import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { ProviderIcon } from "./icons";
-import { Button, Skeleton } from "./ui";
+import { Button, Skeleton, EmptyState } from "./ui";
 import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
 import { fileType } from "../lib/file-types";
 import { itemAt } from "../lib/account-index";
@@ -490,7 +490,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             Recent isn’t available for Dropbox. Use <span className="font-semibold text-[var(--ink)]">Search</span> or browse <span className="font-semibold text-[var(--ink)]">All Files</span>.
           </div>
         ) : items.length === 0 ? (
-          <EmptyState q={q} section={section} />
+          <BrowseEmptyState q={q} section={section} />
         ) : grid ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3 py-2">
             {items.map((item) => (
@@ -791,7 +791,7 @@ function FileListSkeleton() {
 }
 
 /** Friendly empty-state copy for the three empty cases (search / starred / folder). */
-function EmptyState({ q, section }: { q: string; section: Section }) {
+function BrowseEmptyState({ q, section }: { q: string; section: Section }) {
   const Icon = q ? FileSearch : section === "starred" ? Star : FolderOpen;
   const title = q ? "No matches" : section === "starred" ? "No starred items yet" : "This folder is empty";
   const body = q
@@ -799,13 +799,5 @@ function EmptyState({ q, section }: { q: string; section: Section }) {
     : section === "starred"
       ? "Star files and folders to pin them here for quick access."
       : "Nothing to show in this folder.";
-  return (
-    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-weak)] text-[var(--text-3)]">
-        <Icon size={20} />
-      </div>
-      <div className="text-sm font-medium text-[var(--text)]">{title}</div>
-      <p className="max-w-xs text-xs text-[var(--text-3)]">{body}</p>
-    </div>
-  );
+  return <EmptyState icon={<Icon size={20} />} title={title} body={body} />;
 }

@@ -8,6 +8,7 @@ import { laneOf } from "../lib/lane";
 import { formatBytes, formatSpeed, formatEta } from "../lib/format";
 import { GeneralDownloads } from "./GeneralDownloads";
 import { SpeedGraph } from "./ui/SpeedGraph";
+import { EmptyState } from "./ui";
 import type { JobStatus } from "../lib/tauri/commands";
 
 /** id → display label, so rows look up account names without scanning `accounts`. */
@@ -218,17 +219,11 @@ function PrimaryDownloads({ filter }: { filter: DownloadFilter }) {
           <div>
             {filter === "all" && <div className="mb-3 font-mono text-[11px] font-semibold tracking-[0.06em] text-[var(--faint)]">HISTORY</div>}
             {histFiltered.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accw)] text-[var(--faint)]">
-                  <Download size={20} />
-                </div>
-                <div className="text-sm font-semibold text-[var(--ink)]">
-                  {filter === "failed" ? "No failed downloads" : filter === "completed" ? "No completed downloads yet" : "No downloads yet"}
-                </div>
-                <p className="max-w-xs text-xs text-[var(--faint)]">
-                  Select files in a connected account and hit Download, or paste a URL to grab it from the web.
-                </p>
-              </div>
+              <EmptyState
+                icon={<Download size={20} />}
+                title={filter === "failed" ? "No failed downloads" : filter === "completed" ? "No completed downloads yet" : "No downloads yet"}
+                body="Select files in a connected account and hit Download, or paste a URL to grab it from the web."
+              />
             ) : (
               <div className="overflow-hidden rounded-[15px] border border-[var(--line)] bg-[var(--card)]">
                 {histFiltered.map((h) => {

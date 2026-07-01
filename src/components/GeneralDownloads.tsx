@@ -10,6 +10,7 @@ import { formatBytes, formatSpeed, formatEta } from "../lib/format";
 import { categoryFor, CATEGORIES, type Category } from "../lib/categories";
 import { UrlDownload } from "./UrlDownload";
 import { DownloadDetail } from "./DownloadDetail";
+import { EmptyState } from "./ui";
 import type { JobStatus } from "../lib/tauri/commands";
 
 /** Category filter: "All" plus every category. */
@@ -233,17 +234,11 @@ export function GeneralDownloads({ filter, detail }: { filter: Category | "All";
             <div className="mb-2 text-xs font-semibold tracking-wide text-[var(--text-3)]">HISTORY</div>
           )}
           {empty ? (
-            <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-weak)] text-[var(--text-3)]">
-                <Download size={20} />
-              </div>
-              <div className="text-sm font-medium text-[var(--text)]">
-                {filter === "All" ? "No web downloads yet" : `No ${filter.toLowerCase()} downloads`}
-              </div>
-              <p className="max-w-xs text-xs text-[var(--text-3)]">
-                Paste a direct file URL above to download it from the web, it runs alongside your Drive/Dropbox transfers.
-              </p>
-            </div>
+            <EmptyState
+              icon={<Download size={20} />}
+              title={filter === "All" ? "No web downloads yet" : `No ${filter.toLowerCase()} downloads`}
+              body="Paste a direct file URL above to download it from the web, it runs alongside your Drive/Dropbox transfers."
+            />
           ) : (
             <div className="flex flex-col">
               {hist.map((h) => (
