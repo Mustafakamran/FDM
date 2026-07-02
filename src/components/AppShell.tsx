@@ -1,8 +1,10 @@
 import { useShallow } from "zustand/react/shallow";
 import { useApp } from "../store/app";
+import { useSearch } from "../store/search";
 import { TopBar } from "./TopBar";
 import { Sidebar } from "./Sidebar";
 import { BrowsePane } from "./BrowsePane";
+import { GlobalSearchResults } from "./GlobalSearchResults";
 import { ReviewView } from "./ReviewView";
 import { DownloadsView } from "./DownloadsView";
 import { Dashboard } from "./Dashboard";
@@ -18,6 +20,10 @@ import { TooltipLayer } from "./ui/Tooltip";
 export function AppShell() {
   const { view, accounts } = useApp(useShallow((s) => ({ view: s.view, accounts: s.accounts })));
   const browseAccount = view.kind === "browse" ? accounts.find((a) => a.id === view.accountId) : undefined;
+  // A query in the top-bar search box takes over the content area with results
+  // from EVERY connected drive (see GlobalSearchResults), regardless of which
+  // view is underneath — that's the "search all drives" behaviour.
+  const searching = useSearch((s) => s.q.trim().length > 0);
 
   return (
     <div
@@ -36,16 +42,22 @@ export function AppShell() {
         <Sidebar />
         <div className="flex min-h-0 flex-1 flex-col gap-2.5">
           <div className="min-h-0 flex-1 overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)]">
-            {view.kind === "home" && <Dashboard />}
-            {view.kind === "accounts" && <ConnectView />}
-            {view.kind === "downloads" && <DownloadsView filter={view.filter} />}
-            {view.kind === "review" && <ReviewView accountId={view.accountId} target={view.target} />}
-            {view.kind === "browse" &&
-              (browseAccount ? (
-                <BrowsePane account={browseAccount} section={view.section} path={view.path} />
-              ) : (
-                <ConnectView />
-              ))}
+            {searching ? (
+              <GlobalSearchResults />
+            ) : (
+              <>
+                {view.kind === "home" && <Dashboard />}
+                {view.kind === "accounts" && <ConnectView />}
+                {view.kind === "downloads" && <DownloadsView filter={view.filter} />}
+                {view.kind === "review" && <ReviewView accountId={view.accountId} target={view.target} />}
+                {view.kind === "browse" &&
+                  (browseAccount ? (
+                    <BrowsePane account={browseAccount} section={view.section} path={view.path} />
+                  ) : (
+                    <ConnectView />
+                  ))}
+              </>
+            )}
           </div>
           {/* The Downloads/Web views show their own progress + total bar, so the
               dock would duplicate them there — only float it over other screens. */}

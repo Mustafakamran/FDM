@@ -106,6 +106,7 @@ pub fn run() {
             index::index_remove,
             search::account_search,
             search::account_recent,
+            search::search_all_accounts,
             speedtest::start_speed_test,
             speedtest::cancel_speed_test,
         ])
