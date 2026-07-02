@@ -39,6 +39,77 @@ pub struct RcloneState {
     pub connection: Mutex<Option<RcConnection>>,
 }
 
+/// Kill ORPHANED rclone daemons left behind by previous FDM runs.
+///
+/// The graceful shutdown path (window Destroyed → `stop_rclone`) never runs on
+/// a crash, a force-quit, or a SIGKILL — each such exit leaves an `rclone rcd`
+/// daemon running forever (one real-world machine had 30+ accumulated). An
+/// orphan is identified by BOTH of:
+///   1. its command line references OUR config file (`<app-data>/rclone.conf`),
+///      so daemons from other apps/tools are never touched, and
+///   2. its parent process is gone (reparented to init/launchd on macOS, or a
+///      dead ParentProcessId on Windows) — so a daemon belonging to another
+///      LIVE FDM instance is left alone.
+///
+/// Best-effort: any failure here is ignored and startup proceeds normally.
+fn reap_orphans(config_path: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        // PowerShell: rclone.exe processes whose command line uses our config
+        // and whose parent pid is no longer alive.
+        let script = format!(
+            "$ps = Get-CimInstance Win32_Process; $alive = $ps.ProcessId; \
+             $ps | Where-Object {{ $_.Name -eq 'rclone.exe' -and $_.CommandLine -like '*{}*' \
+             -and ($alive -notcontains $_.ParentProcessId) }} | \
+             ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+            config_path.replace('\'', "").replace('\\', "\\\\")
+        );
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // ps: pid, ppid, full command — orphans have been reparented to pid 1.
+        let Ok(out) = std::process::Command::new("ps").args(["-axo", "pid=,ppid=,command="]).output() else {
+            return;
+        };
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            if let Some(pid) = orphan_rclone_pid(line, config_path) {
+                let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).output();
+            }
+        }
+    }
+}
+
+/// Parse one `ps -axo pid=,ppid=,command=` line; return the pid if it is an
+/// ORPHANED (ppid 1) rclone daemon using our config file. ps pads its columns
+/// with a VARIABLE number of spaces, so this must split on whitespace runs —
+/// a naive splitn on single whitespace chars reads ppid as "". Pure, tested.
+#[cfg(not(target_os = "windows"))]
+fn orphan_rclone_pid(line: &str, config_path: &str) -> Option<i32> {
+    let mut parts = line.split_whitespace();
+    let pid: i32 = parts.next()?.parse().ok()?;
+    let ppid: i32 = parts.next()?.parse().ok()?;
+    if ppid != 1 {
+        return None;
+    }
+    // Rejoin the command tail (paths with single spaces survive the rejoin).
+    let cmd = parts.collect::<Vec<_>>().join(" ");
+    // The EXECUTABLE must be an rclone binary running `rcd`. Two traps handled:
+    // - matching the whole line against "rclone" would false-positive on any
+    //   process merely referencing our config path (it contains "rclone.conf");
+    // - the executable path itself may contain spaces (a dev checkout does),
+    //   so split at the " rcd " boundary rather than by token position.
+    let exe = cmd.split(" rcd ").next().unwrap_or("");
+    let is_rclone_rcd = (exe == "rclone" || exe.ends_with("/rclone")) && cmd.len() > exe.len();
+    let args = &cmd[exe.len()..];
+    (is_rclone_rcd && args.contains(config_path)).then_some(pid)
+}
+
 /// Launch the rclone sidecar in rc daemon mode and wait until it answers.
 pub fn start_rclone(app: &AppHandle) -> Result<RcConnection, String> {
     let port = pick_free_port().map_err(|e| format!("port: {e}"))?;
@@ -50,6 +121,9 @@ pub fn start_rclone(app: &AppHandle) -> Result<RcConnection, String> {
         .map_err(|e| format!("app_data_dir: {e}"))?;
     std::fs::create_dir_all(&data_dir).map_err(|e| format!("create app_data_dir: {e}"))?;
     let config_path = data_dir.join("rclone.conf").to_string_lossy().into_owned();
+    // Clean up daemons orphaned by a previous crash/force-quit BEFORE spawning
+    // ours (so we can never reap the one we're about to start).
+    reap_orphans(&config_path);
     let cfg = RcConfig {
         host: "127.0.0.1".into(),
         port,
@@ -139,5 +213,41 @@ pub fn stop_rclone(state: &RcloneState) {
     // Recover from a poisoned lock so shutdown still kills the child.
     if let Some(child) = state.child.lock().unwrap_or_else(|e| e.into_inner()).take() {
         let _ = child.kill();
+    }
+}
+
+#[cfg(all(test, not(target_os = "windows")))]
+mod tests {
+    use super::orphan_rclone_pid;
+
+    const CONF: &str = "/Users/zz/Library/Application Support/com.zz.google-drive-downloader/rclone.conf";
+
+    #[test]
+    fn matches_an_orphaned_daemon_despite_ps_column_padding() {
+        // Real ps output pads pid/ppid columns with runs of spaces.
+        let line = format!("90822     1 /Applications/FDM.app/Contents/MacOS/rclone rcd --rc-addr 127.0.0.1:59987 --config {CONF}");
+        assert_eq!(orphan_rclone_pid(&line, CONF), Some(90822));
+    }
+
+    #[test]
+    fn skips_a_daemon_whose_parent_is_alive() {
+        let line = format!("91236 89009 /Applications/FDM.app/Contents/MacOS/rclone rcd --config {CONF}");
+        assert_eq!(orphan_rclone_pid(&line, CONF), None);
+    }
+
+    #[test]
+    fn skips_orphans_that_are_not_our_rclone() {
+        // Orphaned, but a different config file / a different program entirely.
+        assert_eq!(orphan_rclone_pid("500     1 /usr/local/bin/rclone rcd --config /tmp/other.conf", CONF), None);
+        assert_eq!(orphan_rclone_pid(&format!("501     1 /usr/bin/tail -f {CONF}"), CONF), None);
+        assert_eq!(orphan_rclone_pid("garbage line", CONF), None);
+    }
+
+    #[test]
+    fn matches_a_dev_binary_whose_path_contains_spaces() {
+        let line = format!(
+            "502     1 /Users/zz/Google Drive Downloader/src-tauri/target/debug/rclone rcd --rc-addr 127.0.0.1:1 --config {CONF}"
+        );
+        assert_eq!(orphan_rclone_pid(&line, CONF), Some(502));
     }
 }
