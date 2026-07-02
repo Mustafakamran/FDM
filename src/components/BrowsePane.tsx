@@ -11,6 +11,7 @@ import { useStarred } from "../store/starred";
 import { useVisited } from "../store/visited";
 import { useHistory } from "../store/history";
 import { useSearch } from "../store/search";
+import { useSettings } from "../store/settings";
 import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { ProviderIcon } from "./icons";
 import { Button, Skeleton, EmptyState } from "./ui";
@@ -252,6 +253,8 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   // Folder date: index "latest file" if crawled, else the folder's own mod time
   // (instant from the live listing). Files use their own mod time.
   const dateOf = (i: RcItem) => (i.IsDir ? (aggOf(i.Path)?.latest || i.ModTime) : i.ModTime);
+  // A folder's recursive file count, once the index has captured its subtree.
+  const fileCountOf = (i: RcItem): number | undefined => (i.IsDir ? aggOf(i.Path)?.fileCount : undefined);
   const indexFolder = (folderPath: string) => void useIndex.getState().indexFolder(account, folderPath);
 
   // Delete (with confirm). Cloud deletes go to the provider Trash (recoverable).
@@ -300,6 +303,15 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
       useVisited.getState().markVisited(account.id, path);
     }
   }, [folderView, path, account]);
+
+  // Auto-index the drive in the background (when enabled) so every folder's
+  // total SIZE + FILE COUNT is available by default. ensure() is idempotent
+  // (serves from memory/disk, only crawls once) and runs on background threads,
+  // so the main thread stays smooth — the crawl only shows a progress bar.
+  const autoIndex = useSettings((s) => s.autoIndex);
+  useEffect(() => {
+    if (autoIndex) void useIndex.getState().ensure(account);
+  }, [account, autoIndex]);
 
   // Reset selection AND scroll position on navigation — otherwise the
   // virtualization window below would briefly compute from the PREVIOUS
@@ -675,6 +687,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                 item={item}
                 isSelected={selected.has(item.Path)}
                 folderSize={folderSizeState(item.Path)}
+                folderCount={fileCountOf(item)}
                 visited={item.IsDir && visitedSet.has(item.Path)}
                 hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
                 actions={rowActions}
@@ -709,6 +722,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                   isStarred={starred.includes(item.Path)}
                   dateStr={formatDate(dateOf(item))}
                   folderSize={folderSizeState(item.Path)}
+                  folderCount={fileCountOf(item)}
                   showCrawl={showCrawl}
                   folderIndexedFlag={folderIndexed(item.Path)}
                   visited={item.IsDir && visitedSet.has(item.Path)}
@@ -874,6 +888,7 @@ const FileRow = memo(function FileRow({
   isStarred,
   dateStr,
   folderSize,
+  folderCount,
   showCrawl,
   folderIndexedFlag,
   visited,
@@ -885,6 +900,7 @@ const FileRow = memo(function FileRow({
   isStarred: boolean;
   dateStr: string;
   folderSize: FolderSizeState;
+  folderCount: number | undefined;
   showCrawl: boolean;
   folderIndexedFlag: boolean;
   visited: boolean;
@@ -893,7 +909,11 @@ const FileRow = memo(function FileRow({
 }) {
   const ft = fileType(item.Name, item.IsDir);
   const ext = extOf(item.Name).replace(/^\./, "").slice(0, 4).toUpperCase();
-  const sub = item.IsDir ? "" : `${ext || "FILE"}${item.Size > 0 ? ` · ${formatBytes(item.Size)}` : ""}`;
+  const sub = item.IsDir
+    ? folderCount != null
+      ? `${folderCount.toLocaleString()} file${folderCount === 1 ? "" : "s"}`
+      : ""
+    : `${ext || "FILE"}${item.Size > 0 ? ` · ${formatBytes(item.Size)}` : ""}`;
   const video = !item.IsDir && isVideo(item.Name);
   const previewableFlag = !item.IsDir && isPreviewable(item.Name);
 
@@ -990,6 +1010,7 @@ const FileRow = memo(function FileRow({
   prev.isSelected === next.isSelected &&
   prev.isStarred === next.isStarred &&
   prev.dateStr === next.dateStr &&
+  prev.folderCount === next.folderCount &&
   prev.showCrawl === next.showCrawl &&
   prev.folderIndexedFlag === next.folderIndexedFlag &&
   prev.visited === next.visited &&
@@ -1001,6 +1022,7 @@ const FileGridItem = memo(function FileGridItem({
   item,
   isSelected,
   folderSize,
+  folderCount,
   visited,
   hasDownloads,
   actions,
@@ -1008,6 +1030,7 @@ const FileGridItem = memo(function FileGridItem({
   item: RcItem;
   isSelected: boolean;
   folderSize: FolderSizeState;
+  folderCount: number | undefined;
   visited: boolean;
   hasDownloads: boolean;
   actions: RowActions;
@@ -1038,6 +1061,9 @@ const FileGridItem = memo(function FileGridItem({
       </button>
       <span className="tnum text-xs text-[var(--text-3)]">
         <SizeCell item={item} folderSize={folderSize} onCalcSize={actions.calcSize} />
+        {item.IsDir && folderCount != null && (
+          <span className="text-[var(--text-3)]"> · {folderCount.toLocaleString()} file{folderCount === 1 ? "" : "s"}</span>
+        )}
       </span>
     </div>
   );
@@ -1045,6 +1071,7 @@ const FileGridItem = memo(function FileGridItem({
 (prev, next) =>
   prev.item === next.item &&
   prev.isSelected === next.isSelected &&
+  prev.folderCount === next.folderCount &&
   prev.visited === next.visited &&
   prev.hasDownloads === next.hasDownloads &&
   folderSizeEqual(prev.folderSize, next.folderSize));
