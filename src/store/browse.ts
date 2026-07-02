@@ -2,11 +2,41 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listFolder, folderSize, type RcItem } from "../lib/rc/browse";
 import type { Account } from "../lib/tauri/commands";
+import { loadJson, saveJson } from "../lib/persisted";
 
 /** Folder size value: a byte count, or a status sentinel. */
 export type SizeValue = number | "loading" | "error";
 
 const key = (accountId: string, path: string) => `${accountId} ${path}`;
+
+// Persisted folder-listing cache (LRU). The in-memory `listings` map already
+// makes re-opening a folder instant WITHIN a session; hydrating it from disk
+// on launch extends that to "instant across restarts" — the cached rows paint
+// immediately and ensure() silently refreshes them (stale-while-revalidate).
+// Bounded hard: skip enormous folders and cap how many are kept, so a footage
+// library can never blow the localStorage quota.
+const LISTING_CACHE_KEY = "browse_listings_v1";
+const LISTING_CACHE_CAP = 30; // folders
+const LISTING_ITEM_MAX = 400; // don't persist folders bigger than this
+type ListingEntry = { k: string; items: RcItem[] };
+
+function loadPersistedListings(): Record<string, RcItem[]> {
+  const rec: Record<string, RcItem[]> = {};
+  for (const e of loadJson<ListingEntry[]>(LISTING_CACHE_KEY, [])) rec[e.k] = e.items;
+  return rec;
+}
+
+function persistListing(k: string, items: RcItem[]): void {
+  if (items.length > LISTING_ITEM_MAX) return; // keep the cache small + bounded
+  try {
+    const arr = loadJson<ListingEntry[]>(LISTING_CACHE_KEY, []).filter((e) => e.k !== k);
+    arr.push({ k, items }); // most-recently-used at the end
+    while (arr.length > LISTING_CACHE_CAP) arr.shift();
+    saveJson(LISTING_CACHE_KEY, arr);
+  } catch {
+    /* quota exceeded or serialization error — the cache is best-effort */
+  }
+}
 const inflightList = new Set<string>();
 const inflightSize = new Set<string>();
 
@@ -46,7 +76,7 @@ interface BrowseState {
 }
 
 export const useBrowse = create<BrowseState>((set, get) => ({
-  listings: {},
+  listings: loadPersistedListings(),
   loading: {},
   errors: {},
   sizes: {},
@@ -84,6 +114,7 @@ export const useBrowse = create<BrowseState>((set, get) => ({
             loading: { ...s.loading, [k]: false },
             errors: { ...s.errors, [k]: undefined },
           }));
+          persistListing(k, items);
           return;
         } catch (e) {
           lastErr = e;

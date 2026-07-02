@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useApp } from "../store/app";
 import { useSearch } from "../store/search";
@@ -24,6 +25,41 @@ export function AppShell() {
   // from EVERY connected drive (see GlobalSearchResults), regardless of which
   // view is underneath — that's the "search all drives" behaviour.
   const searching = useSearch((s) => s.q.trim().length > 0);
+  const goBack = useApp((s) => s.goBack);
+  const goForward = useApp((s) => s.goForward);
+
+  // Global Back/Forward: Alt+←/→ and the mouse back/forward buttons (button 3/4),
+  // so navigation history works everywhere — matching a native file browser.
+  useEffect(() => {
+    const isEditable = (el: EventTarget | null) =>
+      el instanceof HTMLElement && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+    const onKey = (e: KeyboardEvent) => {
+      // Don't hijack Option/Alt+← word-navigation inside text fields.
+      if (isEditable(e.target)) return;
+      if (e.altKey && e.key === "ArrowLeft") {
+        e.preventDefault();
+        goBack();
+      } else if (e.altKey && e.key === "ArrowRight") {
+        e.preventDefault();
+        goForward();
+      }
+    };
+    const onMouse = (e: MouseEvent) => {
+      if (e.button === 3) {
+        e.preventDefault();
+        goBack();
+      } else if (e.button === 4) {
+        e.preventDefault();
+        goForward();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mouseup", onMouse);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mouseup", onMouse);
+    };
+  }, [goBack, goForward]);
 
   return (
     <div

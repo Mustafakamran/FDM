@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X } from "lucide-react";
+import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, ChevronLeft, ChevronRight, CornerLeftUp, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
 import { isVideo, isPreviewable, extOf } from "../lib/review";
@@ -120,6 +120,11 @@ function folderSizeEqual(a: FolderSizeState, b: FolderSizeState): boolean {
 
 export function BrowsePane({ account, section, path }: { account: Account; section: Section; path: string }) {
   const setView = useApp((s) => s.setView);
+  const canGoBack = useApp((s) => s.back.length > 0);
+  const canGoForward = useApp((s) => s.forward.length > 0);
+  const goBack = useApp((s) => s.goBack);
+  const goForward = useApp((s) => s.goForward);
+  const goUp = useApp((s) => s.goUp);
   const openReview = useApp((s) => s.openReview);
   const entry = useIndex((s) => s.byAccount[account.id]);
   const enqueue = useTransfers((s) => s.enqueue);
@@ -520,6 +525,37 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
 
       {/* Toolbar */}
       <div className="flex items-center gap-3 px-6 py-4">
+        {/* Back / Forward / Up — history-based navigation (also Alt+←/→ and the
+            mouse back/forward buttons, wired globally in AppShell). */}
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button
+            onClick={goBack}
+            disabled={!canGoBack}
+            aria-label="Back"
+            data-tip="Back (Alt+←)"
+            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            <ChevronLeft size={17} />
+          </button>
+          <button
+            onClick={goForward}
+            disabled={!canGoForward}
+            aria-label="Forward"
+            data-tip="Forward (Alt+→)"
+            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            <ChevronRight size={17} />
+          </button>
+          <button
+            onClick={goUp}
+            disabled={!path}
+            aria-label="Up one folder"
+            data-tip="Up one folder"
+            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            <CornerLeftUp size={16} />
+          </button>
+        </div>
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-[15px]">
           <ProviderIcon provider={account.provider} size={18} />
           {q.trim() ? (
