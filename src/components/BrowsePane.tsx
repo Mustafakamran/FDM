@@ -250,6 +250,9 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     const st = folderSizeState(i.Path);
     return st.kind === "known" ? st.bytes : 0;
   };
+  // A folder's size counts for sorting only once it's actually known — so
+  // still-computing folders park stably at the bottom instead of jumping.
+  const sizeKnownOf = (i: RcItem): boolean => (i.IsDir ? folderSizeState(i.Path).kind === "known" : true);
   // Folder date: index "latest file" if crawled, else the folder's own mod time
   // (instant from the live listing). Files use their own mod time.
   const dateOf = (i: RcItem) => (i.IsDir ? (aggOf(i.Path)?.latest || i.ModTime) : i.ModTime);
@@ -336,7 +339,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   }, [index, q, section, starred, indexItems, liveItems, serverItems]);
 
   const items = useMemo(() => {
-    return sortItems(base, sort, { sizeOf, dateOf });
+    return sortItems(base, sort, { sizeOf, dateOf, sizeKnown: sizeKnownOf });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, sort, index, browseSizes]);
 

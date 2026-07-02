@@ -18,10 +18,16 @@ export const DEFAULT_SORT: SortState = { field: "name", dir: "asc", foldersFirst
  * aggregate (folders report their recursive size / newest mod time). The
  * caller supplies how to read a size and a date from any entry; for files
  * these fall back to the entry's own Size / ModTime.
+ *
+ * `sizeKnown` lets the caller mark a folder's size as not-yet-computed so it
+ * can be parked at the bottom of a size sort (stable) instead of counted as 0
+ * — otherwise folders visibly jump to the top and shuffle down as their sizes
+ * stream in. Defaults to "always known" (files always are).
  */
 export interface SortResolvers {
   sizeOf: (i: RcItem) => number;
   dateOf: (i: RcItem) => string;
+  sizeKnown?: (i: RcItem) => boolean;
 }
 
 const defaultResolvers: SortResolvers = {
@@ -29,28 +35,30 @@ const defaultResolvers: SortResolvers = {
   dateOf: (i) => (i.IsDir ? "" : i.ModTime),
 };
 
-/** Compare two entries by a single field (ascending). Stable and side-effect free. */
-function compareByField(a: RcItem, b: RcItem, field: SortField, r: SortResolvers): number {
-  switch (field) {
-    case "name":
-      return a.Name.toLowerCase().localeCompare(b.Name.toLowerCase());
-    case "size":
-      return r.sizeOf(a) - r.sizeOf(b);
-    case "modified": {
-      const da = r.dateOf(a);
-      const db = r.dateOf(b);
-      return da < db ? -1 : da > db ? 1 : 0;
-    }
-    case "type":
-      return fileType(a.Name, a.IsDir).label.localeCompare(fileType(b.Name, b.IsDir).label);
-  }
+/** Decorated sort key: computed ONCE per item (Schwartzian transform) so the
+ *  O(n log n) comparator never re-parses a date, re-lowercases a name, or
+ *  re-derives a file type. */
+interface SortKey {
+  item: RcItem;
+  isDir: boolean;
+  nameKey: string;
+  sizeVal: number | null; // null = size not yet known
+  dateVal: number; // epoch ms; -Infinity when absent/unparseable
+  typeLabel: string;
+  path: string;
+}
+
+/** Numeric compare that is safe for ±Infinity (subtraction of two ∞ is NaN). */
+function num(a: number, b: number): number {
+  return a === b ? 0 : a < b ? -1 : 1;
 }
 
 /**
  * Pure sort: returns a new array sorted by `field`/`dir`. When
- * `state.foldersFirst` is true, folders are grouped ahead of files and the
- * field/direction only orders within each group. Name is always the tiebreaker
- * so ordering is deterministic.
+ * `state.foldersFirst` is true (name sort only), folders are grouped ahead of
+ * files. Every field falls back to a deterministic tiebreaker (case-insensitive
+ * name, then full path), so ordering is fully stable and never depends on the
+ * engine's sort stability or on which case-variant of a name came first.
  */
 export function sortItems(
   items: RcItem[],
@@ -63,13 +71,54 @@ export function sortItems(
   // TRUE value order — a 16 GB video must outrank a 2 GB folder — so folders are
   // sorted by their own aggregate value, not pinned to the top.
   const groupFolders = state.foldersFirst && state.field === "name";
-  return [...items].sort((a, b) => {
-    if (groupFolders && a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1;
-    let r = compareByField(a, b, state.field, resolvers) * mult;
-    if (r === 0 && state.field !== "name") {
-      // Deterministic tiebreaker — keep equal sizes/dates in a stable name order.
-      r = a.Name.toLowerCase().localeCompare(b.Name.toLowerCase());
-    }
-    return r;
+  const sizeKnown = resolvers.sizeKnown ?? (() => true);
+
+  const keys: SortKey[] = items.map((item) => {
+    const dateStr = resolvers.dateOf(item);
+    const t = dateStr ? Date.parse(dateStr) : NaN;
+    return {
+      item,
+      isDir: item.IsDir,
+      nameKey: item.Name.toLowerCase(),
+      sizeVal: sizeKnown(item) ? resolvers.sizeOf(item) : null,
+      dateVal: Number.isNaN(t) ? -Infinity : t,
+      typeLabel: fileType(item.Name, item.IsDir).label,
+      path: item.Path,
+    };
   });
+
+  keys.sort((a, b) => {
+    if (groupFolders && a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+
+    let r = 0;
+    switch (state.field) {
+      case "name":
+        r = a.nameKey.localeCompare(b.nameKey) * mult;
+        break;
+      case "type":
+        r = a.typeLabel.localeCompare(b.typeLabel) * mult;
+        break;
+      case "modified":
+        r = num(a.dateVal, b.dateVal) * mult;
+        break;
+      case "size":
+        // Unknown sizes always sort LAST, independent of direction, so a folder
+        // whose size is still being computed sits stably at the bottom and makes
+        // exactly one move (into place) when its value arrives — instead of being
+        // treated as 0, pinned to the top, then shuffling down.
+        if (a.sizeVal === null && b.sizeVal === null) r = 0;
+        else if (a.sizeVal === null) return 1;
+        else if (b.sizeVal === null) return -1;
+        else r = num(a.sizeVal, b.sizeVal) * mult;
+        break;
+    }
+    if (r !== 0) return r;
+
+    // Deterministic final tiebreakers (direction-independent).
+    const n = a.nameKey.localeCompare(b.nameKey);
+    if (n !== 0) return n;
+    return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+  });
+
+  return keys.map((k) => k.item);
 }

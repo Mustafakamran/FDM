@@ -100,4 +100,40 @@ describe("sortItems", () => {
     const out = sortItems(dupes, { field: "size", dir: "asc", foldersFirst: false }).map((i) => i.Name);
     expect(out).toEqual(["x.bin", "y.bin", "z.bin"]);
   });
+
+  it("case-only-different names hold a stable, deterministic order", () => {
+    // Path is the final tiebreaker, so 'File'/'file' never flip arbitrarily.
+    const same: RcItem[] = [
+      { Name: "file", Path: "b/file", Size: 1, IsDir: false, ModTime: "", MimeType: "" },
+      { Name: "File", Path: "a/File", Size: 1, IsDir: false, ModTime: "", MimeType: "" },
+    ];
+    const asc = sortItems(same, { field: "name", dir: "asc", foldersFirst: false }).map((i) => i.Path);
+    expect(asc).toEqual(["a/File", "b/file"]);
+  });
+
+  it("size sort parks still-computing folders at the bottom regardless of direction", () => {
+    // 'big' has no known size yet (sizeKnown=false) — it must sit last in BOTH
+    // directions rather than being treated as 0 and jumping to the top.
+    const rs: SortResolvers = {
+      sizeOf: (i) => (i.IsDir ? agg[i.Path]?.size ?? 0 : Math.max(0, i.Size)),
+      dateOf: (i) => i.ModTime,
+      sizeKnown: (i) => i.Name !== "big",
+    };
+    const list: RcItem[] = [d("big"), f("s.mp4", 100, ""), f("m.mp4", 400, "")];
+    const asc = sortItems(list, { field: "size", dir: "asc", foldersFirst: false }, rs).map((i) => i.Name);
+    const desc = sortItems(list, { field: "size", dir: "desc", foldersFirst: false }, rs).map((i) => i.Name);
+    expect(asc).toEqual(["s.mp4", "m.mp4", "big"]);
+    expect(desc).toEqual(["m.mp4", "s.mp4", "big"]);
+  });
+
+  it("date sort compares timestamps, not raw strings (mixed offsets)", () => {
+    // 09:00Z is EARLIER than 05:00-08:00 (=13:00Z). A raw string compare would
+    // order them wrong; epoch parsing gets it right.
+    const list: RcItem[] = [
+      f("later.mp4", 1, "2026-01-01T05:00:00-08:00"),
+      f("earlier.mp4", 1, "2026-01-01T09:00:00Z"),
+    ];
+    const asc = sortItems(list, { field: "modified", dir: "asc", foldersFirst: false }).map((i) => i.Name);
+    expect(asc).toEqual(["earlier.mp4", "later.mp4"]);
+  });
 });
