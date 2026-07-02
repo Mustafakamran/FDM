@@ -114,6 +114,23 @@ pub fn run() {
             // instantly, the daemon comes up asynchronously, and the frontend
             // (which already tolerates a not-ready daemon and re-loads on the
             // "rclone-ready" event below) catches up once it's live.
+            // FAILSAFE: the window starts hidden (visible:false) and the
+            // frontend reveals it after its first paint — but if that reveal
+            // ever fails (JS error, missing capability, webview stall), the
+            // app would sit invisible in the task manager forever. Force-show
+            // after a short grace period; showing an already-visible window
+            // is a no-op, so the healthy path is unaffected.
+            let show_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(4));
+                if let Some(win) = show_handle.get_webview_window("main") {
+                    if !win.is_visible().unwrap_or(true) {
+                        let _ = win.show();
+                        let _ = win.set_focus();
+                    }
+                }
+            });
+
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 match start_rclone(&handle) {
