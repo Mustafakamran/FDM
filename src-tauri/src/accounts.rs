@@ -176,7 +176,7 @@ fn reload_daemon(app: &AppHandle) {
 /// Dropbox shared-links (which have no rclone remote, so they come from the
 /// native link store).
 #[tauri::command]
-pub fn list_accounts(app: AppHandle, state: tauri::State<RcloneState>) -> Result<Vec<Account>, String> {
+pub async fn list_accounts(app: AppHandle, state: tauri::State<'_, RcloneState>) -> Result<Vec<Account>, String> {
     // Recover from a poisoned lock (matches supervisor.rs) so a single panic
     // elsewhere doesn't permanently brick this command.
     let conn = state
@@ -185,14 +185,20 @@ pub fn list_accounts(app: AppHandle, state: tauri::State<RcloneState>) -> Result
         .unwrap_or_else(|e| e.into_inner())
         .clone()
         .ok_or_else(|| "rclone not started".to_string())?;
-    let resp = rc_post(&conn, "config/listremotes", &serde_json::json!({}))?;
-    let mut accounts: Vec<Account> = resp
-        .get("remotes")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).filter_map(parse_remote).collect())
-        .unwrap_or_default();
-    accounts.extend(crate::dropbox::link_accounts(&app));
-    Ok(accounts)
+    // Runs on app open; the rc call is blocking HTTP, so keep it off the main
+    // thread to avoid the startup "loading all drives" freeze.
+    tauri::async_runtime::spawn_blocking(move || {
+        let resp = rc_post(&conn, "config/listremotes", &serde_json::json!({}))?;
+        let mut accounts: Vec<Account> = resp
+            .get("remotes")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).filter_map(parse_remote).collect())
+            .unwrap_or_default();
+        accounts.extend(crate::dropbox::link_accounts(&app));
+        Ok(accounts)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Remove an account. rclone-backed accounts delete their remote; Dropbox links
@@ -384,8 +390,8 @@ pub async fn add_account(
 /// The signed-in account's email — via the provider's native API (Drive about /
 /// Dropbox get_current_account), since rclone doesn't expose it uniformly.
 #[tauri::command]
-pub fn account_email(
-    rclone: tauri::State<RcloneState>,
+pub async fn account_email(
+    rclone: tauri::State<'_, RcloneState>,
     account_id: String,
 ) -> Result<Option<String>, String> {
     // Dropbox links borrow another account's token and have no identity of their
@@ -402,10 +408,13 @@ pub fn account_email(
         .unwrap_or_else(|e| e.into_inner())
         .clone()
         .ok_or_else(|| "rclone not started".to_string())?;
-    match provider.as_str() {
+    // drive_email / dropbox_email do blocking token refresh + HTTP; off-thread.
+    tauri::async_runtime::spawn_blocking(move || match provider.as_str() {
         "drive" => crate::drive::drive_email(&conn, &account_id),
         _ => crate::drive::dropbox_email(&conn, &account_id),
-    }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Core: create a `drivelink_*` remote rooted at a folder id, reusing a connected

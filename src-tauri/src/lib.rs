@@ -22,18 +22,26 @@ use rclone::supervisor::{start_rclone, stop_rclone, RcloneState};
 use tauri::{Emitter, Manager};
 
 #[tauri::command]
-fn rc_call(
-    state: tauri::State<RcloneState>,
+async fn rc_call(
+    state: tauri::State<'_, RcloneState>,
     endpoint: String,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    // Clone the connection out of the lock synchronously (fast, non-blocking),
+    // then run the blocking HTTP call on the blocking-thread pool. This is the
+    // hot path for every folder listing / browse call, so keeping it OFF the
+    // main thread is what prevents the window from going "Not Responding".
     let conn = state
         .connection
         .lock()
         .map_err(|e| e.to_string())?
         .clone()
         .ok_or_else(|| "rclone not started".to_string())?;
-    rclone::supervisor::rc_post(&conn, &endpoint, &params)
+    tauri::async_runtime::spawn_blocking(move || {
+        rclone::supervisor::rc_post(&conn, &endpoint, &params)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Write base64-encoded bytes to a path on disk (used to save an exported review

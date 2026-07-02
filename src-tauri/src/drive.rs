@@ -90,8 +90,8 @@ pub(crate) fn drive_access_token(conn: &RcConnection, account_id: &str) -> Resul
 /// Query Drive for a file's uploader/owner display name. Returns Ok(None) when
 /// unavailable (e.g. no name on the record); Err only on hard failures.
 #[tauri::command]
-pub fn drive_uploader(
-    rclone: tauri::State<RcloneState>,
+pub async fn drive_uploader(
+    rclone: tauri::State<'_, RcloneState>,
     account_id: String,
     file_id: String,
 ) -> Result<Option<String>, String> {
@@ -102,33 +102,39 @@ pub fn drive_uploader(
         .clone()
         .ok_or_else(|| "rclone not started".to_string())?;
 
-    let dump = rc_post(&conn, "config/dump", &serde_json::json!({}))?;
-    let (token_json, client_id, client_secret) =
-        remote_creds(&dump, &account_id).ok_or_else(|| format!(
-            "This account isn't fully authorized (no saved sign-in for {account_id}). \
-             Reconnect it: remove the account and add it again, finish the sign-in in the \
-             browser, and make sure your OAuth client ID + secret are set in Settings."
-        ))?;
-    let refresh = refresh_token_from(&token_json).ok_or_else(|| "no refresh token".to_string())?;
-    let access = refresh_at("https://oauth2.googleapis.com/token", &client_id, &client_secret, &refresh)?;
+    // Token refresh + Drive files.get are all blocking HTTP — run off the main
+    // thread so opening a download's detail never stalls the UI.
+    tauri::async_runtime::spawn_blocking(move || {
+        let dump = rc_post(&conn, "config/dump", &serde_json::json!({}))?;
+        let (token_json, client_id, client_secret) =
+            remote_creds(&dump, &account_id).ok_or_else(|| format!(
+                "This account isn't fully authorized (no saved sign-in for {account_id}). \
+                 Reconnect it: remove the account and add it again, finish the sign-in in the \
+                 browser, and make sure your OAuth client ID + secret are set in Settings."
+            ))?;
+        let refresh = refresh_token_from(&token_json).ok_or_else(|| "no refresh token".to_string())?;
+        let access = refresh_at("https://oauth2.googleapis.com/token", &client_id, &client_secret, &refresh)?;
 
-    let client = reqwest::blocking::Client::new();
-    let url = format!(
-        "https://www.googleapis.com/drive/v3/files/{file_id}?fields=owners(displayName),lastModifyingUser(displayName)&supportsAllDrives=true"
-    );
-    let resp = client
-        .get(&url)
-        .bearer_auth(&access)
-        .send()
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        return Err(format!("drive files.get {status}: {body}"));
-    }
-    let text = resp.text().map_err(|e| e.to_string())?;
-    let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    Ok(name_from_drive_file(&v))
+        let client = reqwest::blocking::Client::new();
+        let url = format!(
+            "https://www.googleapis.com/drive/v3/files/{file_id}?fields=owners(displayName),lastModifyingUser(displayName)&supportsAllDrives=true"
+        );
+        let resp = client
+            .get(&url)
+            .bearer_auth(&access)
+            .send()
+            .map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(format!("drive files.get {status}: {body}"));
+        }
+        let text = resp.text().map_err(|e| e.to_string())?;
+        let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        Ok(name_from_drive_file(&v))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// The Drive account's email via the native about endpoint (rclone doesn't

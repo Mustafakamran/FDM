@@ -121,41 +121,51 @@ fn conn(app: &tauri::AppHandle) -> Result<RcConnection, String> {
 /// Live search of one account by name. Drive: name-contains across all corpora;
 /// Dropbox: filename search_v2. Returns RcItems (files + folders).
 #[tauri::command]
-pub fn account_search(app: tauri::AppHandle, account_id: String, query: String) -> Result<Vec<Value>, String> {
-    let q = query.trim();
+pub async fn account_search(app: tauri::AppHandle, account_id: String, query: String) -> Result<Vec<Value>, String> {
+    let q = query.trim().to_string();
     if q.is_empty() {
         return Ok(vec![]);
     }
     let conn = conn(&app)?;
-    let provider = parse_remote(&account_id).map(|a| a.provider).unwrap_or_default();
-    let c = client();
-    match provider.as_str() {
-        "drive" => {
-            let token = crate::drive::drive_access_token(&conn, &account_id)?;
-            let dq = format!("name contains '{}' and trashed = false", drive_q_escape(q));
-            drive_list(&c, &token, &dq, "")
+    // The provider HTTP call blocks up to 30s; run it on the blocking-thread
+    // pool so typing a search never freezes the UI thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let provider = parse_remote(&account_id).map(|a| a.provider).unwrap_or_default();
+        let c = client();
+        match provider.as_str() {
+            "drive" => {
+                let token = crate::drive::drive_access_token(&conn, &account_id)?;
+                let dq = format!("name contains '{}' and trashed = false", drive_q_escape(&q));
+                drive_list(&c, &token, &dq, "")
+            }
+            "dropbox" => {
+                let token = crate::drive::dropbox_access_token(&conn, &account_id)?;
+                dropbox_search(&c, &token, &q)
+            }
+            _ => Ok(vec![]),
         }
-        "dropbox" => {
-            let token = crate::drive::dropbox_access_token(&conn, &account_id)?;
-            dropbox_search(&c, &token, q)
-        }
-        _ => Ok(vec![]),
-    }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Recent files for one account, newest first — server-side, no crawl. Drive uses
 /// `orderBy=modifiedTime desc`. Dropbox has no cheap "recent" endpoint, so it
 /// returns empty (the UI falls back to a hint).
 #[tauri::command]
-pub fn account_recent(app: tauri::AppHandle, account_id: String) -> Result<Vec<Value>, String> {
+pub async fn account_recent(app: tauri::AppHandle, account_id: String) -> Result<Vec<Value>, String> {
     let conn = conn(&app)?;
-    let provider = parse_remote(&account_id).map(|a| a.provider).unwrap_or_default();
-    let c = client();
-    match provider.as_str() {
-        "drive" => {
-            let token = crate::drive::drive_access_token(&conn, &account_id)?;
-            drive_list(&c, &token, "trashed = false and mimeType != 'application/vnd.google-apps.folder'", "&orderBy=modifiedTime%20desc")
+    tauri::async_runtime::spawn_blocking(move || {
+        let provider = parse_remote(&account_id).map(|a| a.provider).unwrap_or_default();
+        let c = client();
+        match provider.as_str() {
+            "drive" => {
+                let token = crate::drive::drive_access_token(&conn, &account_id)?;
+                drive_list(&c, &token, "trashed = false and mimeType != 'application/vnd.google-apps.folder'", "&orderBy=modifiedTime%20desc")
+            }
+            _ => Ok(vec![]),
         }
-        _ => Ok(vec![]),
-    }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
