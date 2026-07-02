@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -14,16 +14,20 @@ import { createPortal } from "react-dom";
 
 const SHOW_DELAY = 350; // ms hover-intent before showing
 const GAP = 8; // px between target and tooltip
+const EDGE_MARGIN = 8; // px kept clear of the viewport edge
 
-interface TipState {
+interface TipAnchor {
   text: string;
-  x: number; // viewport px (tooltip is position:fixed)
-  y: number;
+  rect: DOMRect;
   side: "top" | "bottom";
 }
 
 export function TooltipLayer() {
-  const [tip, setTip] = useState<TipState | null>(null);
+  const [tip, setTip] = useState<TipAnchor | null>(null);
+  // Final, edge-clamped position — computed from the tooltip's OWN measured
+  // size (see the layout effect below), not a guessed width. Null until that
+  // measurement lands, which a layout effect guarantees happens before paint.
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tipRef = useRef<HTMLDivElement>(null);
 
@@ -37,6 +41,7 @@ export function TooltipLayer() {
     const hide = () => {
       clear();
       setTip(null);
+      setPos(null);
     };
 
     // Resolve the nearest ancestor that should show a tooltip, normalizing a
@@ -60,12 +65,10 @@ export function TooltipLayer() {
       if (!found) return;
       clear();
       timer.current = setTimeout(() => {
-        const r = found.el.getBoundingClientRect();
+        const rect = found.el.getBoundingClientRect();
         // Prefer above; flip below when there isn't room.
-        const side: TipState["side"] = r.top > 56 ? "top" : "bottom";
-        const y = side === "top" ? r.top - GAP : r.bottom + GAP;
-        const x = Math.min(Math.max(r.left + r.width / 2, 60), window.innerWidth - 60);
-        setTip({ text: found.text, x, y, side });
+        const side: TipAnchor["side"] = rect.top > 56 ? "top" : "bottom";
+        setTip({ text: found.text, rect, side });
       }, SHOW_DELAY);
     };
 
@@ -98,16 +101,38 @@ export function TooltipLayer() {
     };
   }, []);
 
+  // Clamp against the tooltip's ACTUAL rendered box, not a guessed half-width —
+  // a fixed margin let long tooltips run off-screen at the left/right/top edges.
+  // Runs before paint, so there's no visible jump from the unclamped position.
+  useLayoutEffect(() => {
+    if (!tip) return;
+    const box = tipRef.current?.getBoundingClientRect();
+    if (!box) return;
+    const centerX = tip.rect.left + tip.rect.width / 2;
+    const left = Math.min(
+      Math.max(centerX, EDGE_MARGIN + box.width / 2),
+      window.innerWidth - EDGE_MARGIN - box.width / 2,
+    );
+    const rawTop = tip.side === "top" ? tip.rect.top - GAP - box.height : tip.rect.bottom + GAP;
+    const top = Math.min(Math.max(rawTop, EDGE_MARGIN), window.innerHeight - EDGE_MARGIN - box.height);
+    setPos({ left, top });
+  }, [tip]);
+
   if (!tip) return null;
+  // Before the first measurement lands, render at a reasonable (unclamped)
+  // guess so tipRef has a box to measure; the layout effect corrects it
+  // synchronously pre-paint, so this guess is never actually shown.
+  const left = pos?.left ?? tip.rect.left + tip.rect.width / 2;
+  const top = pos?.top ?? (tip.side === "top" ? tip.rect.top - GAP : tip.rect.bottom + GAP);
   return createPortal(
     <div
       ref={tipRef}
       role="tooltip"
-      className="animate-tip pointer-events-none fixed z-[200] max-w-[260px] -translate-x-1/2 rounded-[7px] bg-[var(--text)] px-2 py-1 text-[11.5px] font-medium leading-snug text-[var(--bg)] shadow-[var(--shadow)]"
+      className="animate-tip pointer-events-none fixed z-[200] max-w-[260px] rounded-[7px] bg-[var(--text)] px-2 py-1 text-[11.5px] font-medium leading-snug text-[var(--bg)] shadow-[var(--shadow)]"
       style={{
-        left: tip.x,
-        top: tip.y,
-        transform: `translateX(-50%) translateY(${tip.side === "top" ? "-100%" : "0"})`,
+        left,
+        top,
+        transform: pos ? "translateX(-50%)" : `translateX(-50%) translateY(${tip.side === "top" ? "-100%" : "0"})`,
       }}
     >
       {tip.text}

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
@@ -8,6 +8,8 @@ import { useBrowse, browseKey, browseSearchKey, browseRecentKey } from "../store
 import { useTransfers } from "../store/transfers";
 import { useToasts } from "../store/toast";
 import { useStarred } from "../store/starred";
+import { useVisited } from "../store/visited";
+import { useHistory } from "../store/history";
 import { useSearch } from "../store/search";
 import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { ProviderIcon } from "./icons";
@@ -18,6 +20,7 @@ import { itemAt } from "../lib/account-index";
 import { IndexProgress } from "./IndexProgress";
 import { formatBytes, formatDate } from "../lib/format";
 import { sortItems, DEFAULT_SORT, type SortField, type SortState } from "../lib/sort";
+import { computeVirtualRange } from "../lib/virtual-rows";
 import type { RcItem } from "../lib/rc/browse";
 import { deleteItem } from "../lib/tauri/commands";
 import type { Account, DownloadItem } from "../lib/tauri/commands";
@@ -70,6 +73,31 @@ function SizeCell({ item, folderSize, onCalcSize }: { item: RcItem; folderSize: 
   );
 }
 
+/** Small corner badge on a folder's icon: a filled dot once something inside
+ *  it has been downloaded, or a plain dot once it's just been opened. Shared
+ *  between list and grid views so both stay in sync. */
+function FolderBadge({ hasDownloads, visited }: { hasDownloads: boolean; visited: boolean }) {
+  if (hasDownloads) {
+    return (
+      <span
+        data-tip="Downloaded from this folder"
+        className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[var(--dl)] ring-2 ring-[var(--surface)]"
+      >
+        <Check size={8} strokeWidth={3} className="text-white" />
+      </span>
+    );
+  }
+  if (visited) {
+    return (
+      <span
+        data-tip="Opened — nothing downloaded yet"
+        className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-[var(--text-3)] ring-2 ring-[var(--surface)]"
+      />
+    );
+  }
+  return null;
+}
+
 /** Stable-callback props every row/grid-item shares — identical shape so both
  * FileRow and FileGridItem can take the same object. */
 interface RowActions {
@@ -98,6 +126,28 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const q = useSearch((s) => s.q);
   const starred = useStarred((s) => s.byAccount[account.id]) ?? EMPTY_STARS;
   const toggleStar = useStarred((s) => s.toggle);
+
+  // Folder badges: "visited" (opened at least once) persists across restarts;
+  // "has downloads" is derived from history rather than stored separately, so
+  // it can never drift from what was actually downloaded.
+  const visitedList = useVisited((s) => s.byAccount[account.id]) ?? EMPTY_STARS;
+  const visitedSet = useMemo(() => new Set(visitedList), [visitedList]);
+  const historyItems = useHistory((s) => s.items);
+  const downloadedPaths = useMemo(() => {
+    const set = new Set<string>();
+    for (const h of historyItems) {
+      if (h.accountId === account.id && h.status === "success" && h.item?.path) set.add(h.item.path);
+    }
+    return set;
+  }, [historyItems, account.id]);
+  const folderHasDownloads = (folderPath: string) => {
+    if (downloadedPaths.has(folderPath)) return true;
+    const prefix = `${folderPath}/`;
+    for (const p of downloadedPaths) {
+      if (p.startsWith(prefix)) return true;
+    }
+    return false;
+  };
   const displayLabel = accountLabel(useAccountMeta((s) => s.byId[account.id]?.label), account);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -105,6 +155,37 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const [grid, setGrid] = useState(false);
   const [sort, setSort] = useState<SortState>(loadSort);
   const [sortOpen, setSortOpen] = useState(false);
+
+  // List-view virtualization: a folder full of raw footage can hold thousands
+  // of files, and rendering every row as a real DOM node is exactly what was
+  // freezing the app on large folders. Only the rows in (or near) the
+  // viewport are ever mounted — see the `computeVirtualRange` call below.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const scrollRaf = useRef<number | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(0);
+  const [rowHeight, setRowHeight] = useState(50); // corrected once a real row is measured below
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (scrollRaf.current != null) return;
+      scrollRaf.current = requestAnimationFrame(() => {
+        scrollRaf.current = null;
+        setScrollTop(el.scrollTop);
+      });
+    };
+    const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
+    el.addEventListener("scroll", onScroll, { passive: true });
+    ro.observe(el);
+    setViewportH(el.clientHeight);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+      if (scrollRaf.current != null) cancelAnimationFrame(scrollRaf.current);
+    };
+  }, []);
 
   // Persist sort field + direction + folders-first so it sticks across sessions.
   useEffect(() => {
@@ -213,10 +294,20 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
 
   // List the current folder live whenever it changes — never wait for the crawl.
   useEffect(() => {
-    if (folderView) void useBrowse.getState().ensure(account, path);
+    if (folderView) {
+      void useBrowse.getState().ensure(account, path);
+      useVisited.getState().markVisited(account.id, path);
+    }
   }, [folderView, path, account]);
 
-  useEffect(() => setSelected(new Set()), [section, path, q]);
+  // Reset selection AND scroll position on navigation — otherwise the
+  // virtualization window below would briefly compute from the PREVIOUS
+  // folder's scroll offset before the browser catches up.
+  useEffect(() => {
+    setSelected(new Set());
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+    setScrollTop(0);
+  }, [section, path, q]);
 
   const base: RcItem[] = useMemo(() => {
     // Search + Recent are LIVE server-side queries (no crawl). Starred reads from
@@ -240,6 +331,18 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   // Owned folders get an instant size from the persisted index; shared / unindexed
   // folders show a "Calculate" action (renderFolderSize) so we never silently
   // recursive-walk a huge shared drive the user didn't ask about.
+
+  // Correct the ROW_HEIGHT guess against a real rendered row so the virtual
+  // spacer heights (below) match actual scroll height instead of drifting.
+  useLayoutEffect(() => {
+    if (grid) return;
+    const row = bodyRef.current?.querySelector<HTMLElement>("tbody tr[data-row]");
+    const h = row?.getBoundingClientRect().height;
+    if (h && h > 0 && Math.abs(h - rowHeight) > 0.5) setRowHeight(h);
+  }, [items, grid, rowHeight]);
+
+  const virtualRange = grid ? { start: 0, end: items.length } : computeVirtualRange(scrollTop, viewportH, rowHeight, items.length);
+  const visibleItems = items.slice(virtualRange.start, virtualRange.end);
 
   const allSelected = items.length > 0 && items.every((i) => selected.has(i.Path));
   const totalSelected = items.filter((i) => selected.has(i.Path)).reduce((s, i) => s + sizeOf(i), 0);
@@ -492,7 +595,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
       )}
 
       {/* Body */}
-      <div className="min-h-0 flex-1 overflow-auto px-6 pb-2" data-testid="file-list">
+      <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto px-6 pb-2" data-testid="file-list">
         {status === "error" && (
           <div className="mb-3 flex items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--error)]">
             <AlertCircle size={16} /> {entry?.error}
@@ -520,6 +623,8 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                 item={item}
                 isSelected={selected.has(item.Path)}
                 folderSize={folderSizeState(item.Path)}
+                visited={item.IsDir && visitedSet.has(item.Path)}
+                hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
                 actions={rowActions}
               />
             ))}
@@ -536,7 +641,15 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
+              {/* Spacer rows reserve the scroll height of the rows scrolled past
+                  above/below the window, so the scrollbar and sticky header stay
+                  accurate without every row actually being mounted. */}
+              {virtualRange.start > 0 && (
+                <tr aria-hidden style={{ height: virtualRange.start * rowHeight }}>
+                  <td colSpan={5} />
+                </tr>
+              )}
+              {visibleItems.map((item) => (
                 <FileRow
                   key={item.Path}
                   item={item}
@@ -546,9 +659,16 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                   folderSize={folderSizeState(item.Path)}
                   showCrawl={showCrawl}
                   folderIndexedFlag={folderIndexed(item.Path)}
+                  visited={item.IsDir && visitedSet.has(item.Path)}
+                  hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
                   actions={rowActions}
                 />
               ))}
+              {virtualRange.end < items.length && (
+                <tr aria-hidden style={{ height: (items.length - virtualRange.end) * rowHeight }}>
+                  <td colSpan={5} />
+                </tr>
+              )}
             </tbody>
           </table>
         )}
@@ -655,6 +775,8 @@ const FileRow = memo(function FileRow({
   folderSize,
   showCrawl,
   folderIndexedFlag,
+  visited,
+  hasDownloads,
   actions,
 }: {
   item: RcItem;
@@ -664,6 +786,8 @@ const FileRow = memo(function FileRow({
   folderSize: FolderSizeState;
   showCrawl: boolean;
   folderIndexedFlag: boolean;
+  visited: boolean;
+  hasDownloads: boolean;
   actions: RowActions;
 }) {
   const ft = fileType(item.Name, item.IsDir);
@@ -673,8 +797,9 @@ const FileRow = memo(function FileRow({
   const previewableFlag = !item.IsDir && isPreviewable(item.Name);
 
   const tile = item.IsDir ? (
-    <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] bg-[var(--accw)]">
+    <span className="relative flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] bg-[var(--accw)]">
       <Folder size={18} className="text-[var(--acc)]" />
+      <FolderBadge hasDownloads={hasDownloads} visited={visited} />
     </span>
   ) : (
     <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] font-mono text-[9.5px] font-semibold" style={{ background: "var(--accw)", color: ft.color }}>
@@ -703,7 +828,7 @@ const FileRow = memo(function FileRow({
   );
 
   return (
-    <tr onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }} className={`group border-b border-[var(--border)]/60 ${isSelected ? "bg-[var(--card)]" : "hover:bg-[var(--hover)]"}`}>
+    <tr data-row onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }} className={`group border-b border-[var(--border)]/60 ${isSelected ? "bg-[var(--card)]" : "hover:bg-[var(--hover)]"}`}>
       <td className="w-9 py-2.5 pl-1">
         <input
           type="checkbox"
@@ -766,6 +891,8 @@ const FileRow = memo(function FileRow({
   prev.dateStr === next.dateStr &&
   prev.showCrawl === next.showCrawl &&
   prev.folderIndexedFlag === next.folderIndexedFlag &&
+  prev.visited === next.visited &&
+  prev.hasDownloads === next.hasDownloads &&
   folderSizeEqual(prev.folderSize, next.folderSize));
 
 /** One grid-view card — same memoization rationale as FileRow. */
@@ -773,11 +900,15 @@ const FileGridItem = memo(function FileGridItem({
   item,
   isSelected,
   folderSize,
+  visited,
+  hasDownloads,
   actions,
 }: {
   item: RcItem;
   isSelected: boolean;
   folderSize: FolderSizeState;
+  visited: boolean;
+  hasDownloads: boolean;
   actions: RowActions;
 }) {
   const ft = fileType(item.Name, item.IsDir);
@@ -798,7 +929,10 @@ const FileGridItem = memo(function FileGridItem({
         className="flex flex-col items-center gap-2 text-center"
         onClick={() => (item.IsDir ? actions.openFolder(item.Path) : isPreviewable(item.Name) && actions.openReview(item))}
       >
-        <ft.Icon size={30} style={{ color: ft.color }} />
+        <span className="relative flex items-center justify-center">
+          <ft.Icon size={30} style={{ color: ft.color }} />
+          {item.IsDir && <FolderBadge hasDownloads={hasDownloads} visited={visited} />}
+        </span>
         <span className="line-clamp-2 text-sm text-[var(--text)]">{item.Name}</span>
       </button>
       <span className="tnum text-xs text-[var(--text-3)]">
@@ -807,7 +941,12 @@ const FileGridItem = memo(function FileGridItem({
     </div>
   );
 },
-(prev, next) => prev.item === next.item && prev.isSelected === next.isSelected && folderSizeEqual(prev.folderSize, next.folderSize));
+(prev, next) =>
+  prev.item === next.item &&
+  prev.isSelected === next.isSelected &&
+  prev.visited === next.visited &&
+  prev.hasDownloads === next.hasDownloads &&
+  folderSizeEqual(prev.folderSize, next.folderSize));
 
 /** Shimmer placeholder rows shown while a folder/index loads, shaped like the
  *  file table so the transition to real rows reads as instant. */
