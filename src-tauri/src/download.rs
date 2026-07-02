@@ -45,6 +45,8 @@ pub struct Job {
     pub dest: String,
     pub total_bytes: i64,
     pub cancelled: bool,
+    /// "download" or "upload" — the UI routes each kind to a different surface.
+    pub kind: &'static str,
 }
 
 /// Managed state: all jobs launched this session.
@@ -129,6 +131,8 @@ pub struct JobStatus {
     pub success: bool,
     pub cancelled: bool,
     pub error: String,
+    /// "download" or "upload" — lets the frontend split the shared job poll.
+    pub kind: &'static str,
 }
 
 /// rclone connection string for an account id (provider derived from prefix).
@@ -170,6 +174,99 @@ pub fn build_copy(account_fs: &str, item: &DownloadItem, dest: &str) -> (&'stati
     }
 }
 
+/// Join a remote folder path and an item name ("" folder = account root).
+fn join_remote(dest_path: &str, name: &str) -> String {
+    if dest_path.is_empty() {
+        name.to_string()
+    } else {
+        format!("{dest_path}/{name}")
+    }
+}
+
+/// Build the rc (endpoint, params) for uploading one LOCAL item into the remote
+/// folder `dest_path`. A file → `operations/copyfile` (srcFs = its parent dir on
+/// the local fs); a folder → `sync/copy` into `dest_path/<name>`. Both async so
+/// they get a jobid + `job/<id>` stats group, same as downloads once did.
+pub fn build_upload(
+    account_fs: &str,
+    local_path: &str,
+    name: &str,
+    is_dir: bool,
+    dest_path: &str,
+) -> (&'static str, Value) {
+    if is_dir {
+        (
+            "sync/copy",
+            json!({
+                "srcFs": local_path,
+                "dstFs": format!("{account_fs}{}", join_remote(dest_path, name)),
+                "_async": true,
+            }),
+        )
+    } else {
+        // Split the file into (parent dir as the local fs, filename as remote) —
+        // rclone's local backend takes a plain absolute path as the fs string.
+        let parent = std::path::Path::new(local_path)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        (
+            "operations/copyfile",
+            json!({
+                "srcFs": parent,
+                "srcRemote": name,
+                "dstFs": account_fs,
+                "dstRemote": join_remote(dest_path, name),
+                "_async": true,
+            }),
+        )
+    }
+}
+
+/// Launch uploads of local files/folders into `dest_path` on an account. Each
+/// item becomes one rclone async job tracked in `JobsState`, so `list_jobs`
+/// reports progress and `cancel_job` stops it — no new polling machinery.
+#[tauri::command]
+pub fn upload_start(
+    rclone: tauri::State<RcloneState>,
+    jobs_state: tauri::State<JobsState>,
+    account_id: String,
+    paths: Vec<String>,
+    dest_path: String,
+) -> Result<Vec<JobStatus>, String> {
+    if account_id.starts_with("dropboxlink_") {
+        return Err("can't upload to a Dropbox shared link (it's read-only)".into());
+    }
+    let conn = connection(&rclone)?;
+    let fs = account_fs(&account_id)?;
+    let mut created = Vec::with_capacity(paths.len());
+    for local in paths {
+        let meta = std::fs::metadata(&local).map_err(|e| format!("{local}: {e}"))?;
+        let name = std::path::Path::new(&local)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .ok_or_else(|| format!("bad path: {local}"))?;
+        let total = if meta.is_dir() { 0 } else { meta.len() as i64 };
+        let (endpoint, params) = build_upload(&fs, &local, &name, meta.is_dir(), &dest_path);
+        let resp = rc_post(&conn, endpoint, &params).map_err(humanize_write_err)?;
+        let job_id = resp
+            .get("jobid")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| "rclone returned no job id".to_string())?;
+        jobs_state.jobs.lock().unwrap_or_else(|e| e.into_inner()).push(Job {
+            job_id,
+            account_id: account_id.clone(),
+            name: name.clone(),
+            dest: dest_path.clone(),
+            total_bytes: total,
+            cancelled: false,
+            kind: "upload",
+        });
+        created.push(status_for(job_id, &account_id, &name, &dest_path, total, "upload"));
+    }
+    Ok(created)
+}
+
 fn connection(state: &RcloneState) -> Result<RcConnection, String> {
     state
         .connection
@@ -209,7 +306,7 @@ pub fn start_download(
     for item in items {
         let total = item.size.max(0);
         let handles = native.create(&account_id, &item.name, &dest, total);
-        created.push(status_for(handles.job_id, &account_id, &item.name, &dest, total));
+        created.push(status_for(handles.job_id, &account_id, &item.name, &dest, total, "download"));
         let app = app.clone();
         let conn = conn.clone();
         let account_id = account_id.clone();
@@ -221,7 +318,7 @@ pub fn start_download(
     Ok(created)
 }
 
-fn status_for(job_id: i64, account_id: &str, name: &str, dest: &str, total: i64) -> JobStatus {
+fn status_for(job_id: i64, account_id: &str, name: &str, dest: &str, total: i64, kind: &'static str) -> JobStatus {
     JobStatus {
         job_id,
         account_id: account_id.to_string(),
@@ -235,6 +332,7 @@ fn status_for(job_id: i64, account_id: &str, name: &str, dest: &str, total: i64)
         success: false,
         cancelled: false,
         error: String::new(),
+        kind,
     }
 }
 
@@ -265,6 +363,7 @@ fn native_status(job: &NativeJob) -> JobStatus {
         success: h.success.load(Ordering::SeqCst),
         cancelled,
         error: h.error.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        kind: "download",
     }
 }
 
@@ -281,7 +380,7 @@ pub fn list_jobs(
 
     let mut out = Vec::with_capacity(jobs.len());
     for job in &jobs {
-        let mut s = status_for(job.job_id, &job.account_id, &job.name, &job.dest, job.total_bytes);
+        let mut s = status_for(job.job_id, &job.account_id, &job.name, &job.dest, job.total_bytes, job.kind);
         s.cancelled = job.cancelled;
 
         // Live byte/speed/eta from the per-job stats group.
@@ -394,22 +493,23 @@ pub fn delete_item(
     let conn = connection(&rclone)?;
     let fs = account_fs(&account_id)?;
     let endpoint = if is_dir { "operations/purge" } else { "operations/deletefile" };
-    rc_post(&conn, endpoint, &json!({ "fs": fs, "remote": path })).map_err(humanize_delete_err)?;
+    rc_post(&conn, endpoint, &json!({ "fs": fs, "remote": path })).map_err(humanize_write_err)?;
     Ok(())
 }
 
-/// Turn rclone's raw delete failure into a human message for the common cases.
-fn humanize_delete_err(e: String) -> String {
+/// Turn rclone's raw write (delete/upload) failure into a human message for the
+/// common permission cases.
+fn humanize_write_err(e: String) -> String {
     if e.contains("ACCESS_TOKEN_SCOPE_INSUFFICIENT") || e.contains("insufficientPermissions") {
         "Insufficient permission — this Google Drive account was connected read-only. \
-         Reconnect it (remove + add again) to grant delete access. Note: files shared with \
-         you but owned by someone else can't be deleted."
+         Reconnect it (remove + add again) to grant write access. Note: writing into a folder \
+         shared with you needs Editor permission from its owner."
             .into()
     } else if e.contains("files.content.write") || e.contains("missing_scope") {
-        "Dropbox delete needs the 'files.content.write' permission, which this Dropbox app \
-         doesn't have yet. Open the Dropbox App Console (dropbox.com/developers/apps) → your app \
-         → Permissions, tick 'files.content.write' (and 'files.content.read'), click Submit, then \
-         reconnect this account in FDM (remove + add again) so the new permission takes effect."
+        "This Dropbox app doesn't have the 'files.content.write' permission yet. Open the \
+         Dropbox App Console (dropbox.com/developers/apps) → your app → Permissions, tick \
+         'files.content.write' (and 'files.content.read'), click Submit, then reconnect this \
+         account in FDM (remove + add again) so the new permission takes effect."
             .into()
     } else {
         e
@@ -464,6 +564,44 @@ mod tests {
         assert_eq!(endpoint, "sync/copy");
         assert_eq!(params["srcFs"], "drive_x,shared_with_me=true:FolderA");
         assert_eq!(params["dstFs"], "/dest/FolderA");
+        assert_eq!(params["_async"], true);
+    }
+
+    #[test]
+    fn build_upload_file_copies_from_parent_dir_into_dest() {
+        let (endpoint, params) = build_upload(
+            "drive_x,shared_with_me=true:",
+            "/renders/final/cut_v3.mp4",
+            "cut_v3.mp4",
+            false,
+            "Client/Renders",
+        );
+        assert_eq!(endpoint, "operations/copyfile");
+        assert_eq!(params["srcFs"], "/renders/final");
+        assert_eq!(params["srcRemote"], "cut_v3.mp4");
+        assert_eq!(params["dstFs"], "drive_x,shared_with_me=true:");
+        assert_eq!(params["dstRemote"], "Client/Renders/cut_v3.mp4");
+        assert_eq!(params["_async"], true);
+    }
+
+    #[test]
+    fn build_upload_file_into_account_root_uses_bare_name() {
+        let (_, params) = build_upload("dropbox_y:", "/renders/cut.mp4", "cut.mp4", false, "");
+        assert_eq!(params["dstRemote"], "cut.mp4");
+    }
+
+    #[test]
+    fn build_upload_dir_syncs_into_named_remote_subfolder() {
+        let (endpoint, params) = build_upload(
+            "dropbox_y:",
+            "/renders/ProjectX",
+            "ProjectX",
+            true,
+            "Client/Renders",
+        );
+        assert_eq!(endpoint, "sync/copy");
+        assert_eq!(params["srcFs"], "/renders/ProjectX");
+        assert_eq!(params["dstFs"], "dropbox_y:Client/Renders/ProjectX");
         assert_eq!(params["_async"], true);
     }
 }

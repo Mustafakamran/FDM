@@ -83,6 +83,7 @@ pub fn run() {
             accounts::add_drive_link,
             dropbox::add_dropbox_link,
             download::start_download,
+            download::upload_start,
             download::list_jobs,
             download::cancel_job,
             download::clear_finished_jobs,

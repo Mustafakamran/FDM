@@ -19,7 +19,7 @@ function item(name: string): DownloadItem {
 function job(over: Partial<JobStatus>): JobStatus {
   return {
     jobId: 1, accountId: "drive_x", name: "a", dest: "/dest", totalBytes: 1000, bytes: 0,
-    speed: 0, eta: null, finished: false, success: false, cancelled: false, error: "", ...over,
+    speed: 0, eta: null, finished: false, success: false, cancelled: false, error: "", kind: "download", ...over,
   };
 }
 function qItem(over: Partial<QueueItem> & { accountId: string }): QueueItem {

@@ -71,7 +71,7 @@ export interface DownloadItem {
   headers?: Record<string, string>;
 }
 
-/** Live status of a download job. */
+/** Live status of a transfer job (download or upload). */
 export interface JobStatus {
   jobId: number;
   accountId: string;
@@ -85,6 +85,8 @@ export interface JobStatus {
   success: boolean;
   cancelled: boolean;
   error: string;
+  /** "download" | "upload" — both flow through the same poll; the UI splits them. */
+  kind: "download" | "upload";
 }
 
 /** Start downloads for the selected items into `dest`; returns the new jobs. */
@@ -95,6 +97,14 @@ export function startDownload(
   config?: Record<string, unknown>,
 ): Promise<JobStatus[]> {
   return invoke<JobStatus[]>("start_download", { accountId, items, dest, config });
+}
+
+/**
+ * Upload local files/folders (absolute paths) into `destPath` on an account.
+ * Each path becomes one rclone async job; progress flows through `listJobs`.
+ */
+export function startUpload(accountId: string, paths: string[], destPath: string): Promise<JobStatus[]> {
+  return invoke<JobStatus[]>("upload_start", { accountId, paths, destPath });
 }
 
 /** Poll live status of all tracked jobs. */

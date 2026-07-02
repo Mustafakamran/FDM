@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy } from "lucide-react";
+import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
 import { isVideo, isPreviewable, extOf } from "../lib/review";
@@ -18,7 +18,7 @@ import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
 import { fileType } from "../lib/file-types";
 import { itemAt } from "../lib/account-index";
 import { IndexProgress } from "./IndexProgress";
-import { formatBytes, formatDate } from "../lib/format";
+import { formatBytes, formatDate, formatSpeed } from "../lib/format";
 import { sortItems, DEFAULT_SORT, type SortField, type SortState } from "../lib/sort";
 import { computeVirtualRange } from "../lib/virtual-rows";
 import type { RcItem } from "../lib/rc/browse";
@@ -155,6 +155,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const [grid, setGrid] = useState(false);
   const [sort, setSort] = useState<SortState>(loadSort);
   const [sortOpen, setSortOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   // List-view virtualization: a folder full of raw footage can hold thousands
   // of files, and rendering every row as a real DOM node is exactly what was
@@ -375,6 +376,24 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     lastToggledPath.current = p;
   }
 
+  // Upload local renders into the CURRENT folder. Editors connect their own
+  // account and upload into a folder the owner shared with them (Editor
+  // permission) — no credentials change hands. Dropbox links are read-only.
+  const canUpload =
+    folderView &&
+    !searching &&
+    !account.id.startsWith("dropboxlink_") &&
+    (account.provider === "drive" || account.provider === "dropbox");
+  const myUploads = useTransfers((s) => s.uploads).filter((u) => u.accountId === account.id);
+  async function pickUpload(directory: boolean) {
+    setUploadOpen(false);
+    const picked = await open(directory ? { directory: true, multiple: true } : { multiple: true });
+    if (!picked) return;
+    const paths = (Array.isArray(picked) ? picked : [picked]).filter((p): p is string => typeof p === "string");
+    if (paths.length === 0) return;
+    void useTransfers.getState().startUploads(account.id, paths, path);
+  }
+
   // Queue a set of items, prompting once for a destination folder if none is set.
   async function enqueueItems(its: RcItem[]) {
     if (its.length === 0) return;
@@ -508,6 +527,39 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             <span className="ml-1 font-medium text-[var(--text)]">{SECTION_TITLE[section]}</span>
           )}
         </div>
+
+        {/* Upload local files/folders into the current folder (files land where
+            you're looking). Hidden on read-only sources (Dropbox links). */}
+        {canUpload && (
+          <div className="relative">
+            <button
+              onClick={() => setUploadOpen((o) => !o)}
+              data-tip="Upload into this folder"
+              className="flex items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+            >
+              <Upload size={15} /> Upload <ChevronDown size={13} />
+            </button>
+            {uploadOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setUploadOpen(false)} />
+                <div className="absolute right-0 top-9 z-20 w-44 overflow-hidden rounded-[8px] border border-[var(--border-strong)] bg-[var(--card)] py-1 shadow-[var(--shadow-lg)]">
+                  <button
+                    onClick={() => void pickUpload(false)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                  >
+                    <FileUp size={14} /> Upload files…
+                  </button>
+                  <button
+                    onClick={() => void pickUpload(true)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                  >
+                    <FolderUp size={14} /> Upload folder…
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Sort: field picker + asc/desc toggle (+ folders-first). No overflow-hidden
             on the group — it would clip the dropdown; edge buttons are rounded instead. */}
@@ -673,6 +725,55 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           </table>
         )}
       </div>
+
+      {/* Active uploads strip — live progress per upload; successful ones
+          auto-clear (a toast announces them), failed ones stay dismissable. */}
+      {myUploads.length > 0 && (
+        <div className="border-t border-[var(--border)] bg-[var(--surface)] px-6 py-2">
+          {myUploads.map((u) => {
+            const pct = u.totalBytes > 0 ? Math.min(100, (u.bytes / u.totalBytes) * 100) : 0;
+            const failed = u.finished && !u.success && !u.cancelled;
+            return (
+              <div key={u.jobId} className="flex items-center gap-3 py-1 text-sm">
+                <Upload size={14} className={failed ? "shrink-0 text-[var(--err)]" : "shrink-0 text-[var(--dl)]"} />
+                <span className="min-w-0 max-w-[40%] truncate text-[var(--text)]">{u.name}</span>
+                {failed ? (
+                  <span className="min-w-0 flex-1 truncate text-xs text-[var(--err)]" title={u.error}>
+                    {u.error || "Upload failed"}
+                  </span>
+                ) : u.cancelled ? (
+                  <span className="flex-1 text-xs text-[var(--text-3)]">Cancelled</span>
+                ) : (
+                  <>
+                    <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--soft)]">
+                      <div
+                        className="h-full rounded-full bg-[var(--dl)] transition-[width] duration-500"
+                        style={{ width: u.totalBytes > 0 ? `${pct}%` : "100%" }}
+                      />
+                    </div>
+                    <span className="tnum shrink-0 text-xs text-[var(--text-2)]">
+                      {u.totalBytes > 0 ? `${Math.floor(pct)}%` : formatBytes(u.bytes)}
+                      {u.speed > 0 ? ` · ${formatSpeed(u.speed)}` : ""}
+                    </span>
+                  </>
+                )}
+                <button
+                  onClick={() =>
+                    u.finished || u.cancelled
+                      ? useTransfers.getState().dismissUpload(u.jobId)
+                      : void useTransfers.getState().cancel(u.jobId)
+                  }
+                  aria-label={u.finished || u.cancelled ? `Dismiss ${u.name}` : `Cancel upload of ${u.name}`}
+                  data-tip={u.finished || u.cancelled ? "Dismiss" : "Cancel upload"}
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-[var(--faint)] hover:bg-[var(--hover)] hover:text-[var(--err)]"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Selection bar */}
       {selected.size > 0 && (

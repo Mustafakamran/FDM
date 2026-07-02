@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   startDownload,
+  startUpload,
   listJobs,
   cancelJob,
   clearFinishedJobs,
@@ -11,6 +12,8 @@ import { loadDlSettings, toDownloadConfig } from "../lib/dl-settings";
 import { laneOf, type Lane } from "../lib/lane";
 import { useHistory, type JobStats } from "./history";
 import { useToasts } from "./toast";
+import { useApp } from "./app";
+import { useBrowse } from "./browse";
 import { loadJson, loadRaw, saveJson, saveRaw } from "../lib/persisted";
 
 const CONCURRENCY_KEY = "download_concurrency";
@@ -41,6 +44,10 @@ const nextId = () => `q${Date.now()}_${++seq}`;
 const pausedJobIds = new Set<number>();
 // Job ids we've already surfaced a failure toast for (avoid repeats while polling).
 const failedToasted = new Set<number>();
+// Upload job ids already toasted on finish, and ones dismissed from the strip
+// (successful uploads auto-dismiss once toasted; failed ones dismiss manually).
+const uploadToasted = new Set<number>();
+const uploadDismissed = new Set<number>();
 
 function loadConcurrency(): number {
   const n = parseInt(loadRaw(CONCURRENCY_KEY, "1"), 10);
@@ -305,6 +312,9 @@ export function decideLanes(
 
 interface TransfersState {
   jobs: JobStatus[];
+  /** Live upload jobs (rclone async, local → cloud). Not queued/persisted:
+   *  they start immediately and don't survive a restart (re-upload is cheap). */
+  uploads: JobStatus[];
   queue: QueueItem[];
   inflight: InflightItem[];
   /**
@@ -324,6 +334,10 @@ interface TransfersState {
   enqueue: (accountId: string, items: DownloadItem[], dest: string) => void;
   /** Enqueue a generic HTTP(S) URL download (secondary lane). */
   enqueueUrl: (url: string, dest: string) => void;
+  /** Upload local files/folders (absolute paths) into a remote folder. */
+  startUploads: (accountId: string, paths: string[], destPath: string) => Promise<void>;
+  /** Drop one upload from the strip (failed/cancelled entries linger until dismissed). */
+  dismissUpload: (jobId: number) => void;
   removeQueued: (id: string) => void;
   refresh: () => Promise<void>;
   cancel: (jobId: number) => Promise<void>;
@@ -341,6 +355,7 @@ interface TransfersState {
 
 export const useTransfers = create<TransfersState>((set, get) => ({
   jobs: [],
+  uploads: [],
   queue: restoreQueue(),
   inflight: [],
   speedHistory: {},
@@ -382,6 +397,25 @@ export const useTransfers = create<TransfersState>((set, get) => ({
       id: url,
     };
     get().enqueue(HTTP_ACCOUNT_ID, [item], dest);
+  },
+
+  startUploads: async (accountId, paths, destPath) => {
+    try {
+      const created = await startUpload(accountId, paths, destPath);
+      set({ uploads: [...get().uploads, ...created] });
+      useToasts.getState().push(
+        `Uploading ${created.length} item${created.length === 1 ? "" : "s"}`,
+        "success",
+      );
+      get().ensurePolling();
+    } catch (e) {
+      useToasts.getState().push(`Upload failed to start: ${e instanceof Error ? e.message : String(e)}`, "error");
+    }
+  },
+
+  dismissUpload: (jobId) => {
+    uploadDismissed.add(jobId);
+    set({ uploads: get().uploads.filter((u) => u.jobId !== jobId) });
   },
 
   removeQueued: (id) => {
@@ -449,7 +483,31 @@ export const useTransfers = create<TransfersState>((set, get) => ({
   },
 
   refresh: async () => {
-    const jobs = await listJobs();
+    const polled = await listJobs();
+    // Uploads share the poll but none of the download machinery (no queue,
+    // lanes, history, or resume). Toast once on finish; successful ones then
+    // auto-leave the strip, failed/cancelled ones linger until dismissed.
+    const uploads: JobStatus[] = [];
+    for (const u of polled) {
+      if (u.kind !== "upload") continue;
+      if (u.finished && !uploadToasted.has(u.jobId)) {
+        uploadToasted.add(u.jobId);
+        if (u.success) {
+          useToasts.getState().push(`Upload complete · ${u.name}`, "success");
+          uploadDismissed.add(u.jobId);
+          // Refresh the destination folder's listing so the new file shows up
+          // without a manual re-navigate (ensure() is cached + background).
+          const acct = useApp.getState().accounts.find((a) => a.id === u.accountId);
+          if (acct) void useBrowse.getState().ensure(acct, u.dest);
+        } else if (!u.cancelled) {
+          useToasts.getState().push(`Upload failed · ${u.name}: ${u.error || "unknown error"}`, "error");
+        }
+      }
+      if (!uploadDismissed.has(u.jobId)) uploads.push(u);
+    }
+    if (!jobsEqual(uploads, get().uploads)) set({ uploads });
+
+    const jobs = polled.filter((j) => j.kind !== "upload");
     // Record finished/cancelled jobs to history — except ones the user paused
     // OR we auto-paused (those are kept for resume, not logged as cancelled).
     // Surface real failure reasons as a toast so downloads never fail silently.
@@ -523,8 +581,9 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     // pump() drives auto-resume: when the primary lane has drained it clears
     // autoPaused on gated secondary and restarts them.
     await get().pump();
-    const { inflight: inflightAfter, queue: queueAfter } = get();
-    if (!needsPolling(queueAfter, inflightAfter)) get().stopPolling();
+    const { inflight: inflightAfter, queue: queueAfter, uploads: uploadsAfter } = get();
+    const uploadsActive = uploadsAfter.some((u) => !u.finished && !u.cancelled);
+    if (!needsPolling(queueAfter, inflightAfter) && !uploadsActive) get().stopPolling();
   },
 
   cancel: async (jobId) => {

@@ -13,7 +13,7 @@ function item(name: string): DownloadItem {
 function job(over: Partial<JobStatus>): JobStatus {
   return {
     jobId: 1, accountId: "drive_x", name: "a", dest: "/dest", totalBytes: 1000, bytes: 0,
-    speed: 0, eta: null, finished: false, success: false, cancelled: false, error: "", ...over,
+    speed: 0, eta: null, finished: false, success: false, cancelled: false, error: "", kind: "download", ...over,
   };
 }
 
@@ -25,7 +25,7 @@ beforeEach(() => {
   localStorage.clear();
   nextJobId = 1;
   listReturns = [];
-  useTransfers.setState({ jobs: [], queue: [], inflight: [], concurrency: 1, secondaryConcurrency: 3, dockOpen: true });
+  useTransfers.setState({ jobs: [], uploads: [], queue: [], inflight: [], concurrency: 1, secondaryConcurrency: 3, dockOpen: true });
   invokeMock.mockImplementation((cmd: string) => {
     if (cmd === "start_download") return Promise.resolve([job({ jobId: nextJobId++ })]);
     if (cmd === "list_jobs") return Promise.resolve(listReturns);
@@ -125,6 +125,41 @@ describe("needsPolling", () => {
   });
   it("is false when truly idle", () => {
     expect(needsPolling([], [])).toBe(false);
+  });
+});
+
+describe("uploads", () => {
+  it("splits upload jobs out of the shared poll (never into the downloads list)", async () => {
+    listReturns = [
+      job({ jobId: 9101, kind: "download", bytes: 10 }),
+      job({ jobId: 9102, kind: "upload", name: "render.mp4", bytes: 500 }),
+    ];
+    await useTransfers.getState().refresh();
+    expect(useTransfers.getState().jobs.map((j) => j.jobId)).toEqual([9101]);
+    expect(useTransfers.getState().uploads.map((u) => u.jobId)).toEqual([9102]);
+  });
+
+  it("auto-dismisses a successful upload but keeps a failed one until dismissed", async () => {
+    listReturns = [
+      job({ jobId: 9201, kind: "upload", name: "ok.mp4", finished: true, success: true }),
+      job({ jobId: 9202, kind: "upload", name: "bad.mp4", finished: true, success: false, error: "quota" }),
+    ];
+    await useTransfers.getState().refresh();
+    expect(useTransfers.getState().uploads.map((u) => u.jobId)).toEqual([9202]);
+
+    useTransfers.getState().dismissUpload(9202);
+    expect(useTransfers.getState().uploads).toHaveLength(0);
+    // Dismissed ids stay gone on later ticks even while still in the poll.
+    await useTransfers.getState().refresh();
+    expect(useTransfers.getState().uploads).toHaveLength(0);
+  });
+
+  it("never records an upload into download history", async () => {
+    const { useHistory } = await import("./history");
+    const before = useHistory.getState().items.length;
+    listReturns = [job({ jobId: 9301, kind: "upload", name: "r.mp4", finished: true, success: true })];
+    await useTransfers.getState().refresh();
+    expect(useHistory.getState().items.length).toBe(before);
   });
 });
 
