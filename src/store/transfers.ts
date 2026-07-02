@@ -494,7 +494,6 @@ export const useTransfers = create<TransfersState>((set, get) => ({
         uploadToasted.add(u.jobId);
         if (u.success) {
           useToasts.getState().push(`Upload complete · ${u.name}`, "success");
-          uploadDismissed.add(u.jobId);
           // Refresh the destination folder's listing so the new file shows up
           // without a manual re-navigate (ensure() is cached + background).
           const acct = useApp.getState().accounts.find((a) => a.id === u.accountId);
@@ -503,6 +502,8 @@ export const useTransfers = create<TransfersState>((set, get) => ({
           useToasts.getState().push(`Upload failed · ${u.name}: ${u.error || "unknown error"}`, "error");
         }
       }
+      // Completed uploads stay in the list so the Uploads screen shows a full
+      // record (like Downloads history); they leave only when dismissed.
       if (!uploadDismissed.has(u.jobId)) uploads.push(u);
     }
     if (!jobsEqual(uploads, get().uploads)) set({ uploads });

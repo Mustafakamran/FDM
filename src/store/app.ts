@@ -21,6 +21,8 @@ export type View =
   // mounts <DownloadsView/> for it without needing a per-kind branch edit —
   // DownloadsView itself switches to <GeneralDownloads/> when `web` is set.
   | { kind: "downloads"; filter: DownloadFilter; web?: boolean; detail?: string; category?: WebCategoryFilter }
+  // The Uploads area — a mirror of Downloads for local → cloud transfers.
+  | { kind: "uploads"; filter: DownloadFilter }
   | { kind: "review"; accountId: string; target: ReviewTarget }
   // Dashboard / landing: at-a-glance stats (accounts, storage, downloads, files).
   | { kind: "home" }
@@ -66,6 +68,8 @@ interface AppState {
   selectAccount: (accountId: string) => void;
   openReview: (accountId: string, target: ReviewTarget) => void;
   showDownloads: (filter: DownloadFilter) => void;
+  /** Open the Uploads view (local → cloud transfers). */
+  showUploads: (filter: DownloadFilter) => void;
   /** Open the GENERAL / WEB DOWNLOADS view (secondary-lane http/ytdlp jobs). */
   showWebDownloads: () => void;
   /** Pin (or, with undefined, clear) one web download in the detail panel. */
@@ -125,6 +129,8 @@ export const useApp = create<AppState>((set, get) => {
   openReview: (accountId, target) => set((s) => navTo(s, { kind: "review", accountId, target })),
 
   showDownloads: (filter) => set((s) => navTo(s, { kind: "downloads", filter })),
+
+  showUploads: (filter) => set((s) => navTo(s, { kind: "uploads", filter })),
 
   showWebDownloads: () => set((s) => navTo(s, { kind: "downloads", filter: "all", web: true, category: "All" })),
 

@@ -8,6 +8,7 @@ import { BrowsePane } from "./BrowsePane";
 import { GlobalSearchResults } from "./GlobalSearchResults";
 import { ReviewView } from "./ReviewView";
 import { DownloadsView } from "./DownloadsView";
+import { UploadsView } from "./UploadsView";
 import { Dashboard } from "./Dashboard";
 import { ConnectView } from "./ConnectView";
 import { DownloadsDock } from "./DownloadsDock";
@@ -85,6 +86,7 @@ export function AppShell() {
                 {view.kind === "home" && <Dashboard />}
                 {view.kind === "accounts" && <ConnectView />}
                 {view.kind === "downloads" && <DownloadsView filter={view.filter} />}
+                {view.kind === "uploads" && <UploadsView filter={view.filter} />}
                 {view.kind === "review" && <ReviewView accountId={view.accountId} target={view.target} />}
                 {view.kind === "browse" &&
                   (browseAccount ? (
@@ -95,9 +97,9 @@ export function AppShell() {
               </>
             )}
           </div>
-          {/* The Downloads/Web views show their own progress + total bar, so the
+          {/* The Downloads/Web/Uploads views show their own progress lists, so the
               dock would duplicate them there — only float it over other screens. */}
-          {view.kind !== "downloads" && <DownloadsDock />}
+          {view.kind !== "downloads" && view.kind !== "uploads" && <DownloadsDock />}
         </div>
       </div>
     </div>

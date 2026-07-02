@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Plus, Home, FolderOpen, Download, AlertCircle, Globe, Trash2, Loader2, Link as LinkIcon, Sun, Moon } from "lucide-react";
+import { Plus, Home, FolderOpen, Download, Upload, AlertCircle, Globe, Trash2, Loader2, Link as LinkIcon, Sun, Moon } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useApp } from "../store/app";
 import { useTransfers } from "../store/transfers";
@@ -16,7 +16,7 @@ import { laneOf } from "../lib/lane";
 import type { Account, Provider } from "../lib/tauri/commands";
 
 export function Sidebar() {
-  const { view, accounts, accountsLoaded, selectAccount, removeAccount, showDownloads, showWebDownloads, setView } = useApp(
+  const { view, accounts, accountsLoaded, selectAccount, removeAccount, showDownloads, showUploads, showWebDownloads, setView } = useApp(
     useShallow((s) => ({
       view: s.view,
       accounts: s.accounts,
@@ -24,16 +24,20 @@ export function Sidebar() {
       selectAccount: s.selectAccount,
       removeAccount: s.removeAccount,
       showDownloads: s.showDownloads,
+      showUploads: s.showUploads,
       showWebDownloads: s.showWebDownloads,
       setView: s.setView,
     })),
   );
   const onWeb = view.kind === "downloads" && !!view.web;
   const onDownloads = view.kind === "downloads" && !view.web;
+  const onUploads = view.kind === "uploads";
   const onFiles = view.kind === "browse";
   const onHome = view.kind === "home";
   const jobs = useTransfers((s) => s.jobs);
   const queue = useTransfers((s) => s.queue);
+  const uploads = useTransfers((s) => s.uploads);
+  const activeUploads = uploads.filter((u) => !u.finished && !u.cancelled).length;
   const storage = useStorage((s) => s.byAccount);
   const fetchStorage = useStorage((s) => s.fetch);
   const meta = useAccountMeta((s) => s.byId);
@@ -96,6 +100,7 @@ export function Sidebar() {
         <NavItem icon={<Home size={16} />} label="Home" active={onHome} onClick={() => setView({ kind: "home" })} />
         <NavItem icon={<FolderOpen size={16} />} label="Files" active={onFiles} onClick={goFiles} />
         <NavItem icon={<Download size={16} />} label="Downloads" active={onDownloads} onClick={() => showDownloads("active")} badge={counts.downloading || undefined} />
+        <NavItem icon={<Upload size={16} />} label="Uploads" active={onUploads} onClick={() => showUploads("active")} badge={activeUploads || undefined} />
         <NavItem icon={<Globe size={16} />} label="Web Downloads" active={onWeb} onClick={() => showWebDownloads()} badge={counts.web || undefined} />
       </div>
 

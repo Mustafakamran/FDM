@@ -404,7 +404,12 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     !searching &&
     !account.id.startsWith("dropboxlink_") &&
     (account.provider === "drive" || account.provider === "dropbox");
-  const myUploads = useTransfers((s) => s.uploads).filter((u) => u.accountId === account.id);
+  // The in-folder strip is in-progress feedback: show active + failed/cancelled,
+  // but not completed successes (those live on the Uploads screen now). A toast
+  // already announces each success.
+  const myUploads = useTransfers((s) => s.uploads).filter(
+    (u) => u.accountId === account.id && !(u.finished && u.success),
+  );
   async function pickUpload(directory: boolean) {
     setUploadOpen(false);
     const picked = await open(directory ? { directory: true, multiple: true } : { multiple: true });
