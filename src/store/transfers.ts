@@ -485,8 +485,9 @@ export const useTransfers = create<TransfersState>((set, get) => ({
   refresh: async () => {
     const polled = await listJobs();
     // Uploads share the poll but none of the download machinery (no queue,
-    // lanes, history, or resume). Toast once on finish; successful ones then
-    // auto-leave the strip, failed/cancelled ones linger until dismissed.
+    // lanes, or resume). Toast once on finish; finished uploads (success OR
+    // failure) stay listed for the Uploads screen until the user dismisses them.
+    // The in-browser strip separately hides completed successes to stay clean.
     const uploads: JobStatus[] = [];
     for (const u of polled) {
       if (u.kind !== "upload") continue;

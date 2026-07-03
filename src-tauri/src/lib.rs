@@ -30,6 +30,13 @@ use tauri::{Emitter, Manager};
 #[derive(Default)]
 struct Quitting(AtomicBool);
 
+/// True once the system tray was built successfully. Close-to-hide is ONLY safe
+/// when there's a tray to bring the window back — on a build with no icon (so no
+/// tray) hiding would strand the window with no way to reopen it, so there we
+/// let close actually close.
+#[derive(Default)]
+struct TrayReady(AtomicBool);
+
 /// Run the shutdown cleanup that must happen on a REAL quit: kill the rclone
 /// daemon and clear the HLS segment cache. Idempotent, so it's safe to call
 /// from the quit path AND from the window `Destroyed` handler.
@@ -92,6 +99,11 @@ fn write_binary_file(path: String, base64: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // MUST be registered first: it intercepts a second launch before the
+        // rest of the app (and a second rclone daemon) can start.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -104,6 +116,7 @@ pub fn run() {
             Some(vec!["--minimized"]),
         ))
         .manage(Quitting::default())
+        .manage(TrayReady::default())
         .manage(RcloneState::default())
         .manage(JobsState::default())
         .manage(NativeJobsState::default())
@@ -187,6 +200,8 @@ pub fn run() {
                         }
                     })
                     .build(app)?;
+                // Only now is close-to-hide safe: there's a tray to reopen from.
+                app.state::<TrayReady>().0.store(true, Ordering::SeqCst);
             }
 
             // CRITICAL: the setup closure runs on the main thread BEFORE Tauri's
@@ -251,7 +266,12 @@ pub fn run() {
             // and the window actually closes. Minimize is untouched (it doesn't
             // emit CloseRequested).
             tauri::WindowEvent::CloseRequested { api, .. } => {
-                if !window.state::<Quitting>().0.load(Ordering::SeqCst) {
+                // Hide instead of quit — but ONLY when a tray exists to reopen
+                // from. Without a tray (icon-less build) let close actually close,
+                // so the window can never get stranded invisibly.
+                let quitting = window.state::<Quitting>().0.load(Ordering::SeqCst);
+                let tray_ready = window.state::<TrayReady>().0.load(Ordering::SeqCst);
+                if !quitting && tray_ready {
                     api.prevent_close();
                     let _ = window.hide();
                 }

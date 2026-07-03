@@ -167,7 +167,11 @@ export const useApp = create<AppState>((set, get) => {
         const id = view.accountId;
         if (!accounts.some((a) => a.id === id)) view = first();
       }
-      return { accounts, accountsLoaded: true, view };
+      // Drop history entries that point at accounts that no longer exist, so
+      // Back/Forward can never land on a removed account (which would render
+      // ConnectView instead of the expected folder).
+      const valid = (v: View) => v.kind !== "browse" || accounts.some((a) => a.id === v.accountId);
+      return { accounts, accountsLoaded: true, view, back: s.back.filter(valid), forward: s.forward.filter(valid) };
     });
   },
 

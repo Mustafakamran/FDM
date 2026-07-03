@@ -18,24 +18,45 @@ const key = (accountId: string, path: string) => `${accountId} ${path}`;
 const LISTING_CACHE_KEY = "browse_listings_v1";
 const LISTING_CACHE_CAP = 30; // folders
 const LISTING_ITEM_MAX = 400; // don't persist folders bigger than this
+const LISTING_SAVE_DEBOUNCE_MS = 1000;
 type ListingEntry = { k: string; items: RcItem[] };
+
+// The cache lives in memory (parsed ONCE at startup) and is written back on a
+// trailing debounce — so navigating folders never re-parses or re-serializes
+// the whole multi-MB cache on the main thread per navigation (that write
+// amplification would defeat the "instant navigation" goal). MRU: newest last.
+let cacheArr: ListingEntry[] = loadJson<ListingEntry[]>(LISTING_CACHE_KEY, []);
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleCacheSave(): void {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = undefined;
+    try {
+      saveJson(LISTING_CACHE_KEY, cacheArr);
+    } catch {
+      /* quota exceeded or serialization error — the cache is best-effort */
+    }
+  }, LISTING_SAVE_DEBOUNCE_MS);
+}
 
 function loadPersistedListings(): Record<string, RcItem[]> {
   const rec: Record<string, RcItem[]> = {};
-  for (const e of loadJson<ListingEntry[]>(LISTING_CACHE_KEY, [])) rec[e.k] = e.items;
+  for (const e of cacheArr) rec[e.k] = e.items;
   return rec;
 }
 
 function persistListing(k: string, items: RcItem[]): void {
-  if (items.length > LISTING_ITEM_MAX) return; // keep the cache small + bounded
-  try {
-    const arr = loadJson<ListingEntry[]>(LISTING_CACHE_KEY, []).filter((e) => e.k !== k);
-    arr.push({ k, items }); // most-recently-used at the end
-    while (arr.length > LISTING_CACHE_CAP) arr.shift();
-    saveJson(LISTING_CACHE_KEY, arr);
-  } catch {
-    /* quota exceeded or serialization error — the cache is best-effort */
+  // Always drop any existing entry for this key first, so a folder that has
+  // grown past the item cap can't leave a stale smaller snapshot behind to be
+  // hydrated as if current on the next launch.
+  const i = cacheArr.findIndex((e) => e.k === k);
+  if (i !== -1) cacheArr.splice(i, 1);
+  if (items.length <= LISTING_ITEM_MAX) {
+    cacheArr.push({ k, items }); // most-recently-used at the end
+    while (cacheArr.length > LISTING_CACHE_CAP) cacheArr.shift();
   }
+  scheduleCacheSave();
 }
 const inflightList = new Set<string>();
 const inflightSize = new Set<string>();

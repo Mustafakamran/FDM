@@ -34,31 +34,52 @@ export function AppShell() {
   useEffect(() => {
     const isEditable = (el: EventTarget | null) =>
       el instanceof HTMLElement && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+    // Back while a search is active dismisses the search overlay first (it sits
+    // OVER the current view), so Back never silently changes a hidden view.
+    const back = () => {
+      if (useSearch.getState().q.trim()) {
+        useSearch.getState().set("");
+        return;
+      }
+      goBack();
+    };
+    const forward = () => {
+      if (useSearch.getState().q.trim()) return; // Forward is meaningless while searching
+      goForward();
+    };
     const onKey = (e: KeyboardEvent) => {
       // Don't hijack Option/Alt+← word-navigation inside text fields.
       if (isEditable(e.target)) return;
       if (e.altKey && e.key === "ArrowLeft") {
         e.preventDefault();
-        goBack();
+        back();
       } else if (e.altKey && e.key === "ArrowRight") {
         e.preventDefault();
-        goForward();
+        forward();
       }
     };
-    const onMouse = (e: MouseEvent) => {
+    // Suppress the WebView's own history navigation on the mouse back/forward
+    // buttons (some engines start it on mousedown) so it can't double up with
+    // our handler; run our action on mouseup.
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button === 3 || e.button === 4) e.preventDefault();
+    };
+    const onMouseUp = (e: MouseEvent) => {
       if (e.button === 3) {
         e.preventDefault();
-        goBack();
+        back();
       } else if (e.button === 4) {
         e.preventDefault();
-        goForward();
+        forward();
       }
     };
     window.addEventListener("keydown", onKey);
-    window.addEventListener("mouseup", onMouse);
+    window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("mouseup", onMouseUp);
     return () => {
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener("mouseup", onMouse);
+      window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("mouseup", onMouseUp);
     };
   }, [goBack, goForward]);
 

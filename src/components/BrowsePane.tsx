@@ -318,7 +318,12 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   // so the main thread stays smooth — the crawl only shows a progress bar.
   const autoIndex = useSettings((s) => s.autoIndex);
   useEffect(() => {
-    if (autoIndex) void useIndex.getState().ensure(account);
+    if (!autoIndex) return;
+    // Don't auto-retry a crawl that ended in error — that would re-hammer the
+    // provider on every visit to the account. The manual Re-index button still
+    // lets the user retry. (ensure() itself skips loading/crawling/ready.)
+    if (useIndex.getState().byAccount[account.id]?.status === "error") return;
+    void useIndex.getState().ensure(account);
   }, [account, autoIndex]);
 
   // Reset selection AND scroll position on navigation — otherwise the

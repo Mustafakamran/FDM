@@ -225,19 +225,26 @@ pub async fn search_all_accounts(app: tauri::AppHandle, query: String) -> Result
     }
     let conn = conn(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
+        // Cap concurrent OS threads so a user with very many accounts can't hit
+        // the thread limit; fan out in chunks and merge each chunk's results.
+        const MAX_SEARCH_THREADS: usize = 12;
         let accounts = all_accounts(&conn, &app);
-        let mut handles = Vec::with_capacity(accounts.len());
-        for acct in accounts {
-            let conn = conn.clone();
-            let q = q.clone();
-            handles.push(std::thread::spawn(move || {
-                search_one(&conn, &acct.id, &acct.provider, &q).unwrap_or_default()
-            }));
-        }
         let mut out: Vec<Value> = Vec::new();
-        for h in handles {
-            if let Ok(items) = h.join() {
-                out.extend(items);
+        for chunk in accounts.chunks(MAX_SEARCH_THREADS) {
+            let mut handles = Vec::with_capacity(chunk.len());
+            for acct in chunk {
+                let conn = conn.clone();
+                let q = q.clone();
+                let id = acct.id.clone();
+                let provider = acct.provider.clone();
+                handles.push(std::thread::spawn(move || {
+                    search_one(&conn, &id, &provider, &q).unwrap_or_default()
+                }));
+            }
+            for h in handles {
+                if let Ok(items) = h.join() {
+                    out.extend(items);
+                }
             }
         }
         Ok(out)
