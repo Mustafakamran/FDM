@@ -139,14 +139,16 @@ describe("uploads", () => {
     expect(useTransfers.getState().uploads.map((u) => u.jobId)).toEqual([9102]);
   });
 
-  it("auto-dismisses a successful upload but keeps a failed one until dismissed", async () => {
+  it("keeps completed uploads (for the Uploads screen) until explicitly dismissed", async () => {
     listReturns = [
       job({ jobId: 9201, kind: "upload", name: "ok.mp4", finished: true, success: true }),
       job({ jobId: 9202, kind: "upload", name: "bad.mp4", finished: true, success: false, error: "quota" }),
     ];
     await useTransfers.getState().refresh();
-    expect(useTransfers.getState().uploads.map((u) => u.jobId)).toEqual([9202]);
+    // Both a completed success and a failure stay listed (mirrors download history).
+    expect(useTransfers.getState().uploads.map((u) => u.jobId)).toEqual([9201, 9202]);
 
+    useTransfers.getState().dismissUpload(9201);
     useTransfers.getState().dismissUpload(9202);
     expect(useTransfers.getState().uploads).toHaveLength(0);
     // Dismissed ids stay gone on later ticks even while still in the poll.

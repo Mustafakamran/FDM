@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, Check, RefreshCw, Download, Loader2, Layers, Copy, Puzzle, Sun, Moon, Palette } from "lucide-react";
+import { FolderOpen, Check, RefreshCw, Download, Loader2, Layers, Copy, Puzzle, Sun, Moon, Palette, FolderTree, Power, Rocket } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
-import { getSecret, setSecret, SECRET_KEYS, bdmGetConfig, bdmSetConfig, ingestToken, prepareExtension, revealPath } from "../lib/tauri/commands";
+import { enable as autostartEnable, disable as autostartDisable, isEnabled as autostartIsEnabled } from "@tauri-apps/plugin-autostart";
+import { getSecret, setSecret, SECRET_KEYS, bdmGetConfig, bdmSetConfig, ingestToken, prepareExtension, revealPath, quitApp } from "../lib/tauri/commands";
 import { Button, TextField, Card } from "./ui";
 import { useToasts } from "../store/toast";
 import { useTransfers } from "../store/transfers";
 import { useUpdater } from "../store/updater";
 import { useTheme, ACCENTS, type Accent } from "../store/theme";
+import { useSettings } from "../store/settings";
 import { loadDlSettings, saveDlSettings, type DlSettings } from "../lib/dl-settings";
 import { getAskWhereToSave, setAskWhereToSave } from "../lib/ask-where";
 import { FOLDER_KEY } from "../lib/ingest";
@@ -244,6 +246,10 @@ export function SettingsView() {
               ))}
             </div>
           </Card>
+
+          <IndexingCard />
+
+          <StartupCard />
 
           <Card className="p-5">
             <h2 className="mb-1 text-sm font-semibold text-[var(--text)]">Default download folder</h2>
@@ -539,5 +545,110 @@ export function SettingsView() {
         </Card>
       )}
     </div>
+  );
+}
+
+/** Toggle: auto-build the background folder index so every folder's total size
+ *  and file count show by default (vs. per-folder Index/Calculate on demand). */
+function IndexingCard() {
+  const autoIndex = useSettings((s) => s.autoIndex);
+  const setAutoIndex = useSettings((s) => s.setAutoIndex);
+  return (
+    <Card className="p-5">
+      <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
+        <FolderTree size={16} /> Folder sizes &amp; file counts
+      </h2>
+      <p className="mb-4 text-xs text-[var(--text-3)]">
+        Show every folder’s total size and number of files by default. This builds a
+        background index of each drive the first time you open it (progress is shown and
+        it’s cancellable; the result is saved so a drive is only crawled once). Turn it
+        off to size folders individually with the per-folder “Calculate” action instead —
+        useful if your “Shared with me” drives are very large.
+      </p>
+      <button
+        onClick={() => setAutoIndex(!autoIndex)}
+        role="switch"
+        aria-checked={autoIndex}
+        className="flex items-center gap-3 text-left"
+      >
+        <span
+          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${autoIndex ? "bg-[var(--acc)]" : "bg-[var(--surface)] border border-[var(--border)]"}`}
+        >
+          <span
+            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-[var(--shadow-sm)] transition-transform ${autoIndex ? "translate-x-[22px]" : "translate-x-0.5"}`}
+          />
+        </span>
+        <span className="text-sm text-[var(--text-2)]">
+          {autoIndex ? "On — sizes and file counts show automatically" : "Off — size folders on demand"}
+        </span>
+      </button>
+    </Card>
+  );
+}
+
+/** Launch-on-startup toggle + a real Quit button (the window close button only
+ *  hides FDM to the tray/menu bar so downloads keep running). */
+function StartupCard() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    autostartIsEnabled()
+      .then(setEnabled)
+      .catch(() => setEnabled(false));
+  }, []);
+
+  const toggle = async () => {
+    if (enabled === null || busy) return;
+    setBusy(true);
+    try {
+      if (enabled) {
+        await autostartDisable();
+        setEnabled(false);
+      } else {
+        await autostartEnable();
+        setEnabled(true);
+      }
+    } catch {
+      /* leave the toggle where it was on failure */
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="p-5">
+      <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
+        <Rocket size={16} /> Startup &amp; window
+      </h2>
+      <p className="mb-4 text-xs text-[var(--text-3)]">
+        Closing the window keeps FDM running in the system tray (Windows) / menu bar (macOS)
+        so downloads and uploads keep going. Minimize still sends it to the taskbar/dock. Use
+        Quit below to exit fully.
+      </p>
+      <button
+        onClick={toggle}
+        role="switch"
+        aria-checked={enabled === true}
+        disabled={enabled === null || busy}
+        className="flex items-center gap-3 text-left disabled:opacity-60"
+      >
+        <span
+          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${enabled ? "bg-[var(--acc)]" : "bg-[var(--surface)] border border-[var(--border)]"}`}
+        >
+          <span
+            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-[var(--shadow-sm)] transition-transform ${enabled ? "translate-x-[22px]" : "translate-x-0.5"}`}
+          />
+        </span>
+        <span className="text-sm text-[var(--text-2)]">
+          {enabled === null ? "Checking…" : enabled ? "Launch FDM on system startup" : "Don’t launch on startup"}
+        </span>
+      </button>
+      <div className="mt-5 border-t border-[var(--border)] pt-4">
+        <Button variant="danger" onClick={() => void quitApp()}>
+          <Power size={16} /> Quit FDM
+        </Button>
+      </div>
+    </Card>
   );
 }

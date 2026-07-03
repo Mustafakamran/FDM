@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X } from "lucide-react";
+import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, ChevronLeft, ChevronRight, CornerLeftUp, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
 import { isVideo, isPreviewable, extOf } from "../lib/review";
@@ -11,6 +11,7 @@ import { useStarred } from "../store/starred";
 import { useVisited } from "../store/visited";
 import { useHistory } from "../store/history";
 import { useSearch } from "../store/search";
+import { useSettings } from "../store/settings";
 import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { ProviderIcon } from "./icons";
 import { Button, Skeleton, EmptyState } from "./ui";
@@ -119,6 +120,11 @@ function folderSizeEqual(a: FolderSizeState, b: FolderSizeState): boolean {
 
 export function BrowsePane({ account, section, path }: { account: Account; section: Section; path: string }) {
   const setView = useApp((s) => s.setView);
+  const canGoBack = useApp((s) => s.back.length > 0);
+  const canGoForward = useApp((s) => s.forward.length > 0);
+  const goBack = useApp((s) => s.goBack);
+  const goForward = useApp((s) => s.goForward);
+  const goUp = useApp((s) => s.goUp);
   const openReview = useApp((s) => s.openReview);
   const entry = useIndex((s) => s.byAccount[account.id]);
   const enqueue = useTransfers((s) => s.enqueue);
@@ -249,9 +255,14 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     const st = folderSizeState(i.Path);
     return st.kind === "known" ? st.bytes : 0;
   };
+  // A folder's size counts for sorting only once it's actually known — so
+  // still-computing folders park stably at the bottom instead of jumping.
+  const sizeKnownOf = (i: RcItem): boolean => (i.IsDir ? folderSizeState(i.Path).kind === "known" : true);
   // Folder date: index "latest file" if crawled, else the folder's own mod time
   // (instant from the live listing). Files use their own mod time.
   const dateOf = (i: RcItem) => (i.IsDir ? (aggOf(i.Path)?.latest || i.ModTime) : i.ModTime);
+  // A folder's recursive file count, once the index has captured its subtree.
+  const fileCountOf = (i: RcItem): number | undefined => (i.IsDir ? aggOf(i.Path)?.fileCount : undefined);
   const indexFolder = (folderPath: string) => void useIndex.getState().indexFolder(account, folderPath);
 
   // Delete (with confirm). Cloud deletes go to the provider Trash (recoverable).
@@ -301,6 +312,20 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     }
   }, [folderView, path, account]);
 
+  // Auto-index the drive in the background (when enabled) so every folder's
+  // total SIZE + FILE COUNT is available by default. ensure() is idempotent
+  // (serves from memory/disk, only crawls once) and runs on background threads,
+  // so the main thread stays smooth — the crawl only shows a progress bar.
+  const autoIndex = useSettings((s) => s.autoIndex);
+  useEffect(() => {
+    if (!autoIndex) return;
+    // Don't auto-retry a crawl that ended in error — that would re-hammer the
+    // provider on every visit to the account. The manual Re-index button still
+    // lets the user retry. (ensure() itself skips loading/crawling/ready.)
+    if (useIndex.getState().byAccount[account.id]?.status === "error") return;
+    void useIndex.getState().ensure(account);
+  }, [account, autoIndex]);
+
   // Reset selection AND scroll position on navigation — otherwise the
   // virtualization window below would briefly compute from the PREVIOUS
   // folder's scroll offset before the browser catches up.
@@ -324,7 +349,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   }, [index, q, section, starred, indexItems, liveItems, serverItems]);
 
   const items = useMemo(() => {
-    return sortItems(base, sort, { sizeOf, dateOf });
+    return sortItems(base, sort, { sizeOf, dateOf, sizeKnown: sizeKnownOf });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, sort, index, browseSizes]);
 
@@ -384,7 +409,12 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     !searching &&
     !account.id.startsWith("dropboxlink_") &&
     (account.provider === "drive" || account.provider === "dropbox");
-  const myUploads = useTransfers((s) => s.uploads).filter((u) => u.accountId === account.id);
+  // The in-folder strip is in-progress feedback: show active + failed/cancelled,
+  // but not completed successes (those live on the Uploads screen now). A toast
+  // already announces each success.
+  const myUploads = useTransfers((s) => s.uploads).filter(
+    (u) => u.accountId === account.id && !(u.finished && u.success),
+  );
   async function pickUpload(directory: boolean) {
     setUploadOpen(false);
     const picked = await open(directory ? { directory: true, multiple: true } : { multiple: true });
@@ -505,6 +535,37 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
 
       {/* Toolbar */}
       <div className="flex items-center gap-3 px-6 py-4">
+        {/* Back / Forward / Up — history-based navigation (also Alt+←/→ and the
+            mouse back/forward buttons, wired globally in AppShell). */}
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button
+            onClick={goBack}
+            disabled={!canGoBack}
+            aria-label="Back"
+            data-tip="Back (Alt+←)"
+            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            <ChevronLeft size={17} />
+          </button>
+          <button
+            onClick={goForward}
+            disabled={!canGoForward}
+            aria-label="Forward"
+            data-tip="Forward (Alt+→)"
+            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            <ChevronRight size={17} />
+          </button>
+          <button
+            onClick={goUp}
+            disabled={!path}
+            aria-label="Up one folder"
+            data-tip="Up one folder"
+            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            <CornerLeftUp size={16} />
+          </button>
+        </div>
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-[15px]">
           <ProviderIcon provider={account.provider} size={18} />
           {q.trim() ? (
@@ -675,6 +736,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                 item={item}
                 isSelected={selected.has(item.Path)}
                 folderSize={folderSizeState(item.Path)}
+                folderCount={fileCountOf(item)}
                 visited={item.IsDir && visitedSet.has(item.Path)}
                 hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
                 actions={rowActions}
@@ -709,6 +771,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                   isStarred={starred.includes(item.Path)}
                   dateStr={formatDate(dateOf(item))}
                   folderSize={folderSizeState(item.Path)}
+                  folderCount={fileCountOf(item)}
                   showCrawl={showCrawl}
                   folderIndexedFlag={folderIndexed(item.Path)}
                   visited={item.IsDir && visitedSet.has(item.Path)}
@@ -874,6 +937,7 @@ const FileRow = memo(function FileRow({
   isStarred,
   dateStr,
   folderSize,
+  folderCount,
   showCrawl,
   folderIndexedFlag,
   visited,
@@ -885,6 +949,7 @@ const FileRow = memo(function FileRow({
   isStarred: boolean;
   dateStr: string;
   folderSize: FolderSizeState;
+  folderCount: number | undefined;
   showCrawl: boolean;
   folderIndexedFlag: boolean;
   visited: boolean;
@@ -893,7 +958,11 @@ const FileRow = memo(function FileRow({
 }) {
   const ft = fileType(item.Name, item.IsDir);
   const ext = extOf(item.Name).replace(/^\./, "").slice(0, 4).toUpperCase();
-  const sub = item.IsDir ? "" : `${ext || "FILE"}${item.Size > 0 ? ` · ${formatBytes(item.Size)}` : ""}`;
+  const sub = item.IsDir
+    ? folderCount != null
+      ? `${folderCount.toLocaleString()} file${folderCount === 1 ? "" : "s"}`
+      : ""
+    : `${ext || "FILE"}${item.Size > 0 ? ` · ${formatBytes(item.Size)}` : ""}`;
   const video = !item.IsDir && isVideo(item.Name);
   const previewableFlag = !item.IsDir && isPreviewable(item.Name);
 
@@ -990,6 +1059,7 @@ const FileRow = memo(function FileRow({
   prev.isSelected === next.isSelected &&
   prev.isStarred === next.isStarred &&
   prev.dateStr === next.dateStr &&
+  prev.folderCount === next.folderCount &&
   prev.showCrawl === next.showCrawl &&
   prev.folderIndexedFlag === next.folderIndexedFlag &&
   prev.visited === next.visited &&
@@ -1001,6 +1071,7 @@ const FileGridItem = memo(function FileGridItem({
   item,
   isSelected,
   folderSize,
+  folderCount,
   visited,
   hasDownloads,
   actions,
@@ -1008,6 +1079,7 @@ const FileGridItem = memo(function FileGridItem({
   item: RcItem;
   isSelected: boolean;
   folderSize: FolderSizeState;
+  folderCount: number | undefined;
   visited: boolean;
   hasDownloads: boolean;
   actions: RowActions;
@@ -1038,6 +1110,9 @@ const FileGridItem = memo(function FileGridItem({
       </button>
       <span className="tnum text-xs text-[var(--text-3)]">
         <SizeCell item={item} folderSize={folderSize} onCalcSize={actions.calcSize} />
+        {item.IsDir && folderCount != null && (
+          <span className="text-[var(--text-3)]"> · {folderCount.toLocaleString()} file{folderCount === 1 ? "" : "s"}</span>
+        )}
       </span>
     </div>
   );
@@ -1045,6 +1120,7 @@ const FileGridItem = memo(function FileGridItem({
 (prev, next) =>
   prev.item === next.item &&
   prev.isSelected === next.isSelected &&
+  prev.folderCount === next.folderCount &&
   prev.visited === next.visited &&
   prev.hasDownloads === next.hasDownloads &&
   folderSizeEqual(prev.folderSize, next.folderSize));

@@ -1,6 +1,6 @@
 [package]
 name = "google-drive-downloader"
-version = "1.9.2"
+version = "2.0.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -18,10 +18,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["macos-private-api"] }
+tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-shell = "2.3.5"
+tauri-plugin-autostart = "2"
+# Single-instance: a second launch (e.g. from autostart, or clicking the icon
+# while the app is hidden in the tray) focuses the running window instead of
+# spawning a duplicate process + duplicate rclone daemon.
+tauri-plugin-single-instance = "2"
 rand = "0.10.1"
 # rustls-tls is required for the external HTTPS calls (Google/Dropbox token +
 # API endpoints); loopback rc calls are plain HTTP but need a TLS backend present.

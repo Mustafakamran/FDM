@@ -2,11 +2,62 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listFolder, folderSize, type RcItem } from "../lib/rc/browse";
 import type { Account } from "../lib/tauri/commands";
+import { loadJson, saveJson } from "../lib/persisted";
 
 /** Folder size value: a byte count, or a status sentinel. */
 export type SizeValue = number | "loading" | "error";
 
 const key = (accountId: string, path: string) => `${accountId} ${path}`;
+
+// Persisted folder-listing cache (LRU). The in-memory `listings` map already
+// makes re-opening a folder instant WITHIN a session; hydrating it from disk
+// on launch extends that to "instant across restarts" — the cached rows paint
+// immediately and ensure() silently refreshes them (stale-while-revalidate).
+// Bounded hard: skip enormous folders and cap how many are kept, so a footage
+// library can never blow the localStorage quota.
+const LISTING_CACHE_KEY = "browse_listings_v1";
+const LISTING_CACHE_CAP = 30; // folders
+const LISTING_ITEM_MAX = 400; // don't persist folders bigger than this
+const LISTING_SAVE_DEBOUNCE_MS = 1000;
+type ListingEntry = { k: string; items: RcItem[] };
+
+// The cache lives in memory (parsed ONCE at startup) and is written back on a
+// trailing debounce — so navigating folders never re-parses or re-serializes
+// the whole multi-MB cache on the main thread per navigation (that write
+// amplification would defeat the "instant navigation" goal). MRU: newest last.
+let cacheArr: ListingEntry[] = loadJson<ListingEntry[]>(LISTING_CACHE_KEY, []);
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleCacheSave(): void {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = undefined;
+    try {
+      saveJson(LISTING_CACHE_KEY, cacheArr);
+    } catch {
+      /* quota exceeded or serialization error — the cache is best-effort */
+    }
+  }, LISTING_SAVE_DEBOUNCE_MS);
+}
+
+function loadPersistedListings(): Record<string, RcItem[]> {
+  const rec: Record<string, RcItem[]> = {};
+  for (const e of cacheArr) rec[e.k] = e.items;
+  return rec;
+}
+
+function persistListing(k: string, items: RcItem[]): void {
+  // Always drop any existing entry for this key first, so a folder that has
+  // grown past the item cap can't leave a stale smaller snapshot behind to be
+  // hydrated as if current on the next launch.
+  const i = cacheArr.findIndex((e) => e.k === k);
+  if (i !== -1) cacheArr.splice(i, 1);
+  if (items.length <= LISTING_ITEM_MAX) {
+    cacheArr.push({ k, items }); // most-recently-used at the end
+    while (cacheArr.length > LISTING_CACHE_CAP) cacheArr.shift();
+  }
+  scheduleCacheSave();
+}
 const inflightList = new Set<string>();
 const inflightSize = new Set<string>();
 
@@ -46,7 +97,7 @@ interface BrowseState {
 }
 
 export const useBrowse = create<BrowseState>((set, get) => ({
-  listings: {},
+  listings: loadPersistedListings(),
   loading: {},
   errors: {},
   sizes: {},
@@ -84,6 +135,7 @@ export const useBrowse = create<BrowseState>((set, get) => ({
             loading: { ...s.loading, [k]: false },
             errors: { ...s.errors, [k]: undefined },
           }));
+          persistListing(k, items);
           return;
         } catch (e) {
           lastErr = e;

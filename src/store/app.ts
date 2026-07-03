@@ -21,6 +21,8 @@ export type View =
   // mounts <DownloadsView/> for it without needing a per-kind branch edit —
   // DownloadsView itself switches to <GeneralDownloads/> when `web` is set.
   | { kind: "downloads"; filter: DownloadFilter; web?: boolean; detail?: string; category?: WebCategoryFilter }
+  // The Uploads area — a mirror of Downloads for local → cloud transfers.
+  | { kind: "uploads"; filter: DownloadFilter }
   | { kind: "review"; accountId: string; target: ReviewTarget }
   // Dashboard / landing: at-a-glance stats (accounts, storage, downloads, files).
   | { kind: "home" }
@@ -38,17 +40,36 @@ export interface ReviewTarget {
   ext: string;
 }
 
+/** Cap on the back/forward history so a long session can't grow unbounded. */
+const HISTORY_CAP = 100;
+
+/** Structural equality so a no-op navigation (clicking the folder you're
+ *  already in) never records a duplicate history entry. Views are small. */
+function sameView(a: View, b: View): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 interface AppState {
   view: View;
+  /** Back/forward navigation stacks (most-recent at the ends nearest `view`). */
+  back: View[];
+  forward: View[];
   accounts: Account[];
   accountsLoaded: boolean;
 
   setView: (view: View) => void;
+  /** Go to the previous / next view in history. No-ops when the stack is empty. */
+  goBack: () => void;
+  goForward: () => void;
+  /** Go up one folder (browse views only). */
+  goUp: () => void;
   /** Open the dashboard / home view. */
   showHome: () => void;
   selectAccount: (accountId: string) => void;
   openReview: (accountId: string, target: ReviewTarget) => void;
   showDownloads: (filter: DownloadFilter) => void;
+  /** Open the Uploads view (local → cloud transfers). */
+  showUploads: (filter: DownloadFilter) => void;
   /** Open the GENERAL / WEB DOWNLOADS view (secondary-lane http/ytdlp jobs). */
   showWebDownloads: () => void;
   /** Pin (or, with undefined, clear) one web download in the detail panel. */
@@ -61,23 +82,60 @@ interface AppState {
   removeAccount: (id: string) => Promise<void>;
 }
 
-export const useApp = create<AppState>((set, get) => ({
+export const useApp = create<AppState>((set, get) => {
+  // Record a navigation: push the current view onto `back`, clear `forward`.
+  // All user-initiated navigation funnels through here (setView + the helpers
+  // below), so ONE interception point captures folder dives, breadcrumb jumps,
+  // account switches, section changes, and search → result → folder moves.
+  const navTo = (s: AppState, view: View): Partial<AppState> => {
+    if (sameView(s.view, view)) return {};
+    return { view, back: [...s.back, s.view].slice(-HISTORY_CAP), forward: [] };
+  };
+
+  return {
   view: { kind: "accounts" },
+  back: [],
+  forward: [],
   accounts: [],
   accountsLoaded: false,
 
-  setView: (view) => set({ view }),
+  setView: (view) => set((s) => navTo(s, view)),
 
-  showHome: () => set({ view: { kind: "home" } }),
+  goBack: () =>
+    set((s) => {
+      if (s.back.length === 0) return {};
+      const prev = s.back[s.back.length - 1];
+      return { view: prev, back: s.back.slice(0, -1), forward: [s.view, ...s.forward].slice(0, HISTORY_CAP) };
+    }),
 
-  selectAccount: (accountId) => set({ view: { kind: "browse", accountId, section: "all", path: "" } }),
+  goForward: () =>
+    set((s) => {
+      if (s.forward.length === 0) return {};
+      const next = s.forward[0];
+      return { view: next, forward: s.forward.slice(1), back: [...s.back, s.view].slice(-HISTORY_CAP) };
+    }),
 
-  openReview: (accountId, target) => set({ view: { kind: "review", accountId, target } }),
+  goUp: () =>
+    set((s) => {
+      if (s.view.kind !== "browse" || !s.view.path) return {};
+      const parent = s.view.path.split("/").slice(0, -1).join("/");
+      return navTo(s, { ...s.view, path: parent });
+    }),
 
-  showDownloads: (filter) => set({ view: { kind: "downloads", filter } }),
+  showHome: () => set((s) => navTo(s, { kind: "home" })),
 
-  showWebDownloads: () => set({ view: { kind: "downloads", filter: "all", web: true, category: "All" } }),
+  selectAccount: (accountId) => set((s) => navTo(s, { kind: "browse", accountId, section: "all", path: "" })),
 
+  openReview: (accountId, target) => set((s) => navTo(s, { kind: "review", accountId, target })),
+
+  showDownloads: (filter) => set((s) => navTo(s, { kind: "downloads", filter })),
+
+  showUploads: (filter) => set((s) => navTo(s, { kind: "uploads", filter })),
+
+  showWebDownloads: () => set((s) => navTo(s, { kind: "downloads", filter: "all", web: true, category: "All" })),
+
+  // Sub-view state (detail panel / category filter) — not recorded in history,
+  // so Back doesn't get cluttered with panel toggles.
   openWebDownloadDetail: (id) =>
     set((s) =>
       s.view.kind === "downloads" && s.view.web ? { view: { ...s.view, detail: id } } : s,
@@ -91,11 +149,9 @@ export const useApp = create<AppState>((set, get) => ({
     ),
 
   setSection: (section) =>
-    set((s) =>
-      s.view.kind === "browse" ? { view: { ...s.view, section, path: "" } } : s,
-    ),
+    set((s) => (s.view.kind === "browse" ? navTo(s, { ...s.view, section, path: "" }) : {})),
 
-  setPath: (path) => set((s) => (s.view.kind === "browse" ? { view: { ...s.view, path } } : s)),
+  setPath: (path) => set((s) => (s.view.kind === "browse" ? navTo(s, { ...s.view, path }) : {})),
 
   loadAccounts: async () => {
     const accounts = await listAccounts();
@@ -111,7 +167,11 @@ export const useApp = create<AppState>((set, get) => ({
         const id = view.accountId;
         if (!accounts.some((a) => a.id === id)) view = first();
       }
-      return { accounts, accountsLoaded: true, view };
+      // Drop history entries that point at accounts that no longer exist, so
+      // Back/Forward can never land on a removed account (which would render
+      // ConnectView instead of the expected folder).
+      const valid = (v: View) => v.kind !== "browse" || accounts.some((a) => a.id === v.accountId);
+      return { accounts, accountsLoaded: true, view, back: s.back.filter(valid), forward: s.forward.filter(valid) };
     });
   },
 
@@ -122,4 +182,5 @@ export const useApp = create<AppState>((set, get) => ({
     await get().loadAccounts();
     useToasts.getState().push(`Removed ${acct ? prettyLabel(acct.label) : "account"}`, "success");
   },
-}));
+  };
+});

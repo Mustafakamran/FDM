@@ -121,41 +121,134 @@ fn conn(app: &tauri::AppHandle) -> Result<RcConnection, String> {
 /// Live search of one account by name. Drive: name-contains across all corpora;
 /// Dropbox: filename search_v2. Returns RcItems (files + folders).
 #[tauri::command]
-pub fn account_search(app: tauri::AppHandle, account_id: String, query: String) -> Result<Vec<Value>, String> {
-    let q = query.trim();
+pub async fn account_search(app: tauri::AppHandle, account_id: String, query: String) -> Result<Vec<Value>, String> {
+    let q = query.trim().to_string();
     if q.is_empty() {
         return Ok(vec![]);
     }
     let conn = conn(&app)?;
-    let provider = parse_remote(&account_id).map(|a| a.provider).unwrap_or_default();
-    let c = client();
-    match provider.as_str() {
-        "drive" => {
-            let token = crate::drive::drive_access_token(&conn, &account_id)?;
-            let dq = format!("name contains '{}' and trashed = false", drive_q_escape(q));
-            drive_list(&c, &token, &dq, "")
+    // The provider HTTP call blocks up to 30s; run it on the blocking-thread
+    // pool so typing a search never freezes the UI thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let provider = parse_remote(&account_id).map(|a| a.provider).unwrap_or_default();
+        let c = client();
+        match provider.as_str() {
+            "drive" => {
+                let token = crate::drive::drive_access_token(&conn, &account_id)?;
+                let dq = format!("name contains '{}' and trashed = false", drive_q_escape(&q));
+                drive_list(&c, &token, &dq, "")
+            }
+            "dropbox" => {
+                let token = crate::drive::dropbox_access_token(&conn, &account_id)?;
+                dropbox_search(&c, &token, &q)
+            }
+            _ => Ok(vec![]),
         }
-        "dropbox" => {
-            let token = crate::drive::dropbox_access_token(&conn, &account_id)?;
-            dropbox_search(&c, &token, q)
-        }
-        _ => Ok(vec![]),
-    }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Recent files for one account, newest first — server-side, no crawl. Drive uses
 /// `orderBy=modifiedTime desc`. Dropbox has no cheap "recent" endpoint, so it
 /// returns empty (the UI falls back to a hint).
 #[tauri::command]
-pub fn account_recent(app: tauri::AppHandle, account_id: String) -> Result<Vec<Value>, String> {
+pub async fn account_recent(app: tauri::AppHandle, account_id: String) -> Result<Vec<Value>, String> {
     let conn = conn(&app)?;
-    let provider = parse_remote(&account_id).map(|a| a.provider).unwrap_or_default();
-    let c = client();
-    match provider.as_str() {
-        "drive" => {
-            let token = crate::drive::drive_access_token(&conn, &account_id)?;
-            drive_list(&c, &token, "trashed = false and mimeType != 'application/vnd.google-apps.folder'", "&orderBy=modifiedTime%20desc")
+    tauri::async_runtime::spawn_blocking(move || {
+        let provider = parse_remote(&account_id).map(|a| a.provider).unwrap_or_default();
+        let c = client();
+        match provider.as_str() {
+            "drive" => {
+                let token = crate::drive::drive_access_token(&conn, &account_id)?;
+                drive_list(&c, &token, "trashed = false and mimeType != 'application/vnd.google-apps.folder'", "&orderBy=modifiedTime%20desc")
+            }
+            _ => Ok(vec![]),
         }
-        _ => Ok(vec![]),
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Enumerate every connected account (rclone remotes + Dropbox shared-links),
+/// mirroring `accounts::list_accounts` so all-drives search sees the same set.
+fn all_accounts(conn: &RcConnection, app: &tauri::AppHandle) -> Vec<crate::accounts::Account> {
+    let mut accounts: Vec<crate::accounts::Account> = Vec::new();
+    if let Ok(resp) = crate::rclone::supervisor::rc_post(conn, "config/listremotes", &json!({})) {
+        if let Some(arr) = resp.get("remotes").and_then(|v| v.as_array()) {
+            for name in arr.iter().filter_map(|v| v.as_str()) {
+                if let Some(a) = parse_remote(name) {
+                    accounts.push(a);
+                }
+            }
+        }
     }
+    accounts.extend(crate::dropbox::link_accounts(app));
+    accounts
+}
+
+/// Search a single account and tag each result with its origin account so the
+/// UI can show a drive badge and navigate cross-account. Errors are the
+/// caller's to isolate (one dead account must not blank the whole result).
+fn search_one(conn: &RcConnection, account_id: &str, provider: &str, q: &str) -> Result<Vec<Value>, String> {
+    let c = client();
+    let mut items = match provider {
+        "drive" => {
+            let token = crate::drive::drive_access_token(conn, account_id)?;
+            let dq = format!("name contains '{}' and trashed = false", drive_q_escape(q));
+            drive_list(&c, &token, &dq, "")?
+        }
+        "dropbox" => {
+            let token = crate::drive::dropbox_access_token(conn, account_id)?;
+            dropbox_search(&c, &token, q)?
+        }
+        _ => Vec::new(),
+    };
+    for it in items.iter_mut() {
+        if let Some(obj) = it.as_object_mut() {
+            obj.insert("AccountId".to_string(), json!(account_id));
+            obj.insert("Provider".to_string(), json!(provider));
+        }
+    }
+    Ok(items)
+}
+
+/// Live search across ALL connected drives at once. Fans out one blocking
+/// provider search per account onto its own thread and merges the tagged
+/// results — so it's as fast as the slowest single drive, not their sum, and a
+/// failing drive is skipped rather than failing the whole query.
+#[tauri::command]
+pub async fn search_all_accounts(app: tauri::AppHandle, query: String) -> Result<Vec<Value>, String> {
+    let q = query.trim().to_string();
+    if q.is_empty() {
+        return Ok(vec![]);
+    }
+    let conn = conn(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // Cap concurrent OS threads so a user with very many accounts can't hit
+        // the thread limit; fan out in chunks and merge each chunk's results.
+        const MAX_SEARCH_THREADS: usize = 12;
+        let accounts = all_accounts(&conn, &app);
+        let mut out: Vec<Value> = Vec::new();
+        for chunk in accounts.chunks(MAX_SEARCH_THREADS) {
+            let mut handles = Vec::with_capacity(chunk.len());
+            for acct in chunk {
+                let conn = conn.clone();
+                let q = q.clone();
+                let id = acct.id.clone();
+                let provider = acct.provider.clone();
+                handles.push(std::thread::spawn(move || {
+                    search_one(&conn, &id, &provider, &q).unwrap_or_default()
+                }));
+            }
+            for h in handles {
+                if let Ok(items) = h.join() {
+                    out.extend(items);
+                }
+            }
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
