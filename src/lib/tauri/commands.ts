@@ -192,6 +192,11 @@ export function revealPath(path: string): Promise<void> {
   return invoke("reveal_path", { path });
 }
 
+/** Really quit the app (runs cleanup then exits) — the close button only hides. */
+export function quitApp(): Promise<void> {
+  return invoke("quit_app");
+}
+
 /** Write base64-encoded bytes to a path on disk (used to save an exported PDF). */
 export function writeBinaryFile(path: string, base64: string): Promise<void> {
   return invoke("write_binary_file", { path, base64 });

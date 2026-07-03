@@ -19,7 +19,42 @@ pub mod wetransfer;
 use base64::Engine;
 use download::{JobsState, NativeJobsState};
 use rclone::supervisor::{start_rclone, stop_rclone, RcloneState};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
+
+/// True once the user has chosen to really quit (tray "Quit" or Settings →
+/// Quit). Closing the window normally only HIDES it (downloads keep running);
+/// this flag lets the close handler tell a genuine quit apart from a hide.
+#[derive(Default)]
+struct Quitting(AtomicBool);
+
+/// Run the shutdown cleanup that must happen on a REAL quit: kill the rclone
+/// daemon and clear the HLS segment cache. Idempotent, so it's safe to call
+/// from the quit path AND from the window `Destroyed` handler.
+fn shutdown_cleanup(app: &tauri::AppHandle) {
+    stop_rclone(&app.state::<RcloneState>());
+    hls::cleanup(app);
+}
+
+/// Reveal + focus the main window (from the tray icon / its menu).
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+    }
+}
+
+/// Really quit the app: mark quitting (so the close handler doesn't intercept),
+/// run cleanup, then exit. Invoked by the Settings "Quit" button.
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.state::<Quitting>().0.store(true, Ordering::SeqCst);
+    shutdown_cleanup(&app);
+    app.exit(0);
+}
 
 #[tauri::command]
 async fn rc_call(
@@ -62,6 +97,13 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Launch-on-startup. `--minimized` lets a startup launch come up hidden
+        // to the tray instead of popping the window (the frontend checks for it).
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
+        .manage(Quitting::default())
         .manage(RcloneState::default())
         .manage(JobsState::default())
         .manage(NativeJobsState::default())
@@ -73,6 +115,7 @@ pub fn run() {
         .manage(speedtest::SpeedTestState::default())
         .invoke_handler(tauri::generate_handler![
             rc_call,
+            quit_app,
             write_binary_file,
             stream::stream_base,
             hls::stream_mode,
@@ -111,6 +154,41 @@ pub fn run() {
             speedtest::cancel_speed_test,
         ])
         .setup(|app| {
+            // System-tray / menu-bar icon: left-click (or "Show") reveals the
+            // window; "Quit" is the ONLY thing that actually exits (close just
+            // hides — see the CloseRequested handler below). Building the tray is
+            // a quick UI call, safe to do synchronously here.
+            if let Some(icon) = app.default_window_icon().cloned() {
+                let show_i = MenuItem::with_id(app, "show", "Show FDM", true, None::<&str>)?;
+                let quit_i = MenuItem::with_id(app, "quit", "Quit FDM", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+                TrayIconBuilder::with_id("main-tray")
+                    .icon(icon)
+                    .tooltip("FDM")
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "show" => show_main_window(app),
+                        "quit" => {
+                            app.state::<Quitting>().0.store(true, Ordering::SeqCst);
+                            shutdown_cleanup(app);
+                            app.exit(0);
+                        }
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            show_main_window(tray.app_handle());
+                        }
+                    })
+                    .build(app)?;
+            }
+
             // CRITICAL: the setup closure runs on the main thread BEFORE Tauri's
             // event loop starts pumping, so anything blocking here freezes the
             // window at launch. `start_rclone` spawns the large unsigned
@@ -166,13 +244,24 @@ pub fn run() {
             });
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                let state = window.state::<RcloneState>();
-                stop_rclone(&state);
+        .on_window_event(|window, event| match event {
+            // Close hides the window to the tray / menu bar instead of quitting —
+            // rclone and any in-flight downloads keep running. A real quit (tray
+            // "Quit" / Settings) sets the Quitting flag first, so it falls through
+            // and the window actually closes. Minimize is untouched (it doesn't
+            // emit CloseRequested).
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                if !window.state::<Quitting>().0.load(Ordering::SeqCst) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+            tauri::WindowEvent::Destroyed => {
+                stop_rclone(&window.state::<RcloneState>());
                 // Best-effort: clear the HLS segment cache dir on exit.
                 hls::cleanup(window.app_handle());
             }
+            _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
