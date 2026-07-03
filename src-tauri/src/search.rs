@@ -228,7 +228,15 @@ pub async fn search_all_accounts(app: tauri::AppHandle, query: String) -> Result
         // Cap concurrent OS threads so a user with very many accounts can't hit
         // the thread limit; fan out in chunks and merge each chunk's results.
         const MAX_SEARCH_THREADS: usize = 12;
-        let accounts = all_accounts(&conn, &app);
+        // Dropbox shared-LINKS (`dropboxlink_*`) have no rclone remote and no
+        // per-link live-search endpoint, so search_one would just fail its token
+        // lookup and contribute nothing. Skip them explicitly rather than fan out
+        // a guaranteed-empty request per query (they're browsed via their crawled
+        // index instead).
+        let accounts: Vec<_> = all_accounts(&conn, &app)
+            .into_iter()
+            .filter(|a| !a.id.starts_with("dropboxlink_"))
+            .collect();
         let mut out: Vec<Value> = Vec::new();
         for chunk in accounts.chunks(MAX_SEARCH_THREADS) {
             let mut handles = Vec::with_capacity(chunk.len());

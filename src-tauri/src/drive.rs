@@ -87,6 +87,73 @@ pub(crate) fn drive_access_token(conn: &RcConnection, account_id: &str) -> Resul
     refresh_at("https://oauth2.googleapis.com/token", &client_id, &client_secret, &refresh)
 }
 
+/// Resolve a Drive file/folder id to the SAME path rclone would list it at, by
+/// walking `parents` up from the item.
+///
+/// Live Drive search (`files.list name contains`) returns no path — a hit only
+/// carries its id + bare name — so opening or downloading a non-root FOLDER hit
+/// needs the real path reconstructed. Drive itself has no path (a node can have
+/// several parents), but rclone picks the first-parent chain, and so do we:
+///   • My Drive owned folders → walk until a parent has no parents (the root),
+///     which we stop before adding → e.g. "Projects/Client/Renders".
+///   • Shared-with-me folders → the walk hits the share boundary when
+///     `files.get` on the owner's ancestor above the shared root returns 403/404;
+///     we stop there, which yields exactly rclone's shared_with_me mount path
+///     (the shared folder sits at the root by its name) → e.g. "Footage/RAW".
+/// Returns the account-root-relative path (no leading slash).
+#[tauri::command]
+pub async fn drive_folder_path(
+    rclone: tauri::State<'_, RcloneState>,
+    account_id: String,
+    file_id: String,
+) -> Result<String, String> {
+    let conn: RcConnection = rclone
+        .connection
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or_else(|| "rclone not started".to_string())?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let access = drive_access_token(&conn, &account_id)?;
+        let client = reqwest::blocking::Client::new();
+        // Walk first-parent chain, newest (deepest) first; bounded so a pathological
+        // parent cycle can't loop forever.
+        let mut names: Vec<String> = Vec::new();
+        let mut cur = file_id;
+        for _ in 0..64 {
+            let url = format!(
+                "https://www.googleapis.com/drive/v3/files/{cur}?fields=name,parents&supportsAllDrives=true"
+            );
+            let resp = client.get(&url).bearer_auth(&access).send().map_err(|e| e.to_string())?;
+            // A non-success (typically 404/403 on an owner's ancestor above a
+            // shared root) is the natural stop signal — we've walked as high as
+            // this account can see, which is where rclone roots the path.
+            if !resp.status().is_success() {
+                break;
+            }
+            let v: Value = resp.json().map_err(|e| e.to_string())?;
+            let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let parents = v.get("parents").and_then(|p| p.as_array());
+            match parents.and_then(|a| a.first()).and_then(|x| x.as_str()) {
+                // Has a parent → this node is a real path segment; record it and climb.
+                Some(parent) => {
+                    if !name.is_empty() {
+                        names.push(name);
+                    }
+                    cur = parent.to_string();
+                }
+                // No parents → `cur` is My Drive's root; don't add "My Drive".
+                None => break,
+            }
+        }
+        names.reverse();
+        Ok(names.join("/"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Query Drive for a file's uploader/owner display name. Returns Ok(None) when
 /// unavailable (e.g. no name on the record); Err only on hard failures.
 #[tauri::command]

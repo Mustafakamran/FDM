@@ -39,6 +39,9 @@ export interface IndexEntry {
 interface IndexState {
   byAccount: Record<string, IndexEntry>;
   ensure: (account: Account) => Promise<void>;
+  /** Like ensure(), but a no-op once the user has cancelled this account's
+   *  auto-crawl — so navigating away and back never silently restarts it. */
+  ensureAuto: (account: Account) => Promise<void>;
   recrawl: (account: Account) => Promise<void>;
   indexFolder: (account: Account, folderPath: string) => Promise<void>;
   cancel: (accountId: string) => Promise<void>;
@@ -46,6 +49,13 @@ interface IndexState {
   /** Optimistically drop a deleted file/folder from the cached index. */
   dropPath: (accountId: string, path: string) => void;
 }
+
+// Accounts whose background auto-index the user explicitly cancelled this
+// session. cancel() settles status back to "idle", which the auto-index effect
+// would otherwise treat as "never crawled" and restart on the next mount — so
+// ensureAuto() honors this set. An explicit user action (ensure/recrawl/
+// indexFolder) clears it, and remove() drops it with the account.
+const autoIndexCancelled = new Set<string>();
 
 const blankProgress = (): IndexProgressData => ({ done: 0, total: 0, files: 0, bytes: 0, dateMin: "", dateMax: "" });
 
@@ -110,6 +120,7 @@ export const useIndex = create<IndexState>((set, get) => {
     byAccount: {},
 
     ensure: async (account) => {
+      autoIndexCancelled.delete(account.id); // an explicit start re-enables auto
       const cur = get().byAccount[account.id];
       if (cur && cur.status !== "idle" && cur.status !== "error") return;
       await ensureListeners();
@@ -117,13 +128,20 @@ export const useIndex = create<IndexState>((set, get) => {
       await indexStart(account.id).catch((e) => patch(account.id, { status: "error", error: String(e) }));
     },
 
+    ensureAuto: async (account) => {
+      if (autoIndexCancelled.has(account.id)) return; // user stopped it; don't restart
+      await get().ensure(account);
+    },
+
     recrawl: async (account) => {
+      autoIndexCancelled.delete(account.id);
       await ensureListeners();
       patch(account.id, { status: "loading", index: get().byAccount[account.id]?.index ?? null });
       await indexRecrawl(account.id).catch((e) => patch(account.id, { status: "error", error: String(e) }));
     },
 
     indexFolder: async (account, folderPath) => {
+      autoIndexCancelled.delete(account.id);
       await ensureListeners();
       // Keep the current index visible — the backend merges this subtree in.
       patch(account.id, {
@@ -136,6 +154,8 @@ export const useIndex = create<IndexState>((set, get) => {
     },
 
     cancel: async (accountId) => {
+      // Remember the user stopped this one so ensureAuto() won't restart it.
+      autoIndexCancelled.add(accountId);
       // Optimistically settle the UI; a final index-ready/index-error still lands if the crawl flushes.
       const cur = get().byAccount[accountId];
       patch(accountId, { status: cur?.index ? "ready" : "idle", progress: blankProgress() });
@@ -143,6 +163,7 @@ export const useIndex = create<IndexState>((set, get) => {
     },
 
     remove: async (accountId) => {
+      autoIndexCancelled.delete(accountId);
       await indexRemove(accountId).catch(() => {});
       set((s) => {
         const b = { ...s.byAccount };

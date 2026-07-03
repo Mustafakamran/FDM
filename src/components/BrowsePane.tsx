@@ -323,7 +323,10 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     // provider on every visit to the account. The manual Re-index button still
     // lets the user retry. (ensure() itself skips loading/crawling/ready.)
     if (useIndex.getState().byAccount[account.id]?.status === "error") return;
-    void useIndex.getState().ensure(account);
+    // ensureAuto() (not ensure()) so a crawl the user cancelled — which settles
+    // status back to "idle" — is NOT silently restarted every time this pane
+    // remounts (e.g. after a search or account switch).
+    void useIndex.getState().ensureAuto(account);
   }, [account, autoIndex]);
 
   // Reset selection AND scroll position on navigation — otherwise the

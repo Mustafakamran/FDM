@@ -452,6 +452,14 @@ pub fn clear_finished_jobs(
     let conn = connection(&rclone)?;
     let mut jobs = jobs_state.jobs.lock().unwrap_or_else(|e| e.into_inner());
     jobs.retain(|j| {
+        // Uploads are cleared by the frontend's own dismiss flow (a finished
+        // upload stays on the Uploads screen until dismissed), so this
+        // "clear finished downloads" sweep — which also fires when a download is
+        // paused/auto-paused — must NOT drop them, or the Uploads history would
+        // silently empty out from under the user.
+        if j.kind == "upload" {
+            return true;
+        }
         if j.cancelled {
             return false;
         }

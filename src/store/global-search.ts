@@ -12,16 +12,30 @@ interface GlobalSearchState {
   error?: string;
   /** Debounced, cached, cancellable search across ALL connected drives. */
   run: (query: string) => void;
-  clear: () => void;
+  /** Drop the per-query cache — call when the set of accounts changes so a
+   *  removed drive's hits can't linger and navigate to a dead account. */
+  invalidateCache: () => void;
 }
 
 // Same "feels instant" recipe as per-account search: short debounce, a
 // per-query cache so re-typing resolves with no round-trip, and a single
 // supersede token so a slower older query can't overwrite a newer one.
 const DEBOUNCE_MS = 200;
+// Bounded so a long session of typing (one entry per query prefix) can't grow
+// the cache without limit; oldest entry is evicted past the cap.
+const CACHE_CAP = 24;
 const cache = new Map<string, GlobalHit[]>();
 let timer: ReturnType<typeof setTimeout> | undefined;
 let token = 0;
+
+function cachePut(key: string, items: GlobalHit[]) {
+  cache.delete(key); // re-insert so it counts as most-recently-used
+  cache.set(key, items);
+  if (cache.size > CACHE_CAP) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+}
 
 export const useGlobalSearch = create<GlobalSearchState>((set) => ({
   results: [],
@@ -46,7 +60,7 @@ export const useGlobalSearch = create<GlobalSearchState>((set) => ({
       void invoke<GlobalHit[]>("search_all_accounts", { query: q })
         .then((items) => {
           if (myToken !== token) return; // superseded by a newer query
-          cache.set(q.toLowerCase(), items);
+          cachePut(q.toLowerCase(), items);
           set({ results: items, loading: false, error: undefined });
         })
         .catch((e) => {
@@ -56,9 +70,9 @@ export const useGlobalSearch = create<GlobalSearchState>((set) => ({
     }, DEBOUNCE_MS);
   },
 
-  clear: () => {
-    token++;
+  invalidateCache: () => {
+    cache.clear();
+    token++; // abandon any in-flight query built against the old account set
     if (timer) clearTimeout(timer);
-    set({ results: [], loading: false, error: undefined });
   },
 }));

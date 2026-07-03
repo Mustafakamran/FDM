@@ -127,6 +127,15 @@ export function driveUploader(accountId: string, fileId: string): Promise<string
   return invoke<string | null>("drive_uploader", { accountId, fileId });
 }
 
+/**
+ * Resolve a Drive folder id to the account-root-relative path rclone lists it
+ * at (walks `parents`). Live Drive search returns no path, so opening or
+ * downloading a non-root Drive folder hit needs this first.
+ */
+export function driveFolderPath(accountId: string, fileId: string): Promise<string> {
+  return invoke<string>("drive_folder_path", { accountId, fileId });
+}
+
 /** The signed-in account's email (Drive about / Dropbox userinfo); null if unavailable. */
 export function accountEmail(accountId: string): Promise<string | null> {
   return invoke<string | null>("account_email", { accountId });

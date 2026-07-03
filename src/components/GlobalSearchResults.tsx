@@ -14,7 +14,7 @@ import { isPreviewable, extOf } from "../lib/review";
 import { formatBytes } from "../lib/format";
 import { FOLDER_KEY } from "../lib/ingest";
 import { loadRaw } from "../lib/persisted";
-import type { Account, DownloadItem, Provider } from "../lib/tauri/commands";
+import { driveFolderPath, type Account, type DownloadItem, type Provider } from "../lib/tauri/commands";
 
 /** One search hit, tagged with its drive. */
 function HitRow({
@@ -138,24 +138,57 @@ export function GlobalSearchResults() {
     return [...by.entries()];
   }, [results]);
 
-  const openFolder = (h: GlobalHit) => {
+  // Drive live-search returns no path (only id + bare name), so a Drive FOLDER
+  // hit's `Path` is just its name and can't be navigated/recursed directly.
+  // Resolve the real rclone path from the id before using it. Dropbox hits carry
+  // a real path_display, and Drive FILES are id-addressed (review/download key
+  // off the id), so only Drive folders need this round-trip.
+  const resolvePath = async (h: GlobalHit): Promise<string> => {
+    const provider = acctById.get(h.AccountId!)?.provider ?? h.Provider;
+    if (provider === "drive" && h.IsDir && h.ID) {
+      return await driveFolderPath(h.AccountId!, h.ID);
+    }
+    return h.Path;
+  };
+
+  const openFolder = async (h: GlobalHit) => {
     if (!h.AccountId) return;
+    let path = h.Path;
+    try {
+      path = await resolvePath(h);
+    } catch {
+      toast(`Couldn’t locate “${h.Name}” on the drive`, "error");
+      return;
+    }
     useSearch.getState().set("");
-    setView({ kind: "browse", accountId: h.AccountId, section: "all", path: h.Path });
+    setView({ kind: "browse", accountId: h.AccountId, section: "all", path });
   };
   const review = (h: GlobalHit) => {
     if (!h.AccountId) return;
+    // Clear the query FIRST — AppShell renders this overlay whenever the search
+    // query is non-empty, so without this the review view opens invisibly
+    // beneath it and "Open in review" appears to do nothing (openFolder does the
+    // same). Then navigate to the player. Files are id-addressed, so the bare
+    // Path is fine here.
+    useSearch.getState().set("");
     openReview(h.AccountId, { path: h.Path, name: h.Name, fileId: h.ID ?? "", size: h.Size > 0 ? h.Size : 0, ext: extOf(h.Name) });
   };
   const download = async (h: GlobalHit) => {
     if (!h.AccountId) return;
+    let path = h.Path;
+    try {
+      path = await resolvePath(h);
+    } catch {
+      toast(`Couldn’t locate “${h.Name}” on the drive`, "error");
+      return;
+    }
     let dest = loadRaw(FOLDER_KEY, "");
     if (!dest) {
       const picked = await open({ directory: true, multiple: false });
       if (typeof picked !== "string") return;
       dest = picked;
     }
-    const item: DownloadItem = { path: h.Path, name: h.Name, isDir: h.IsDir, size: h.Size > 0 ? h.Size : 0, id: h.ID ?? "" };
+    const item: DownloadItem = { path, name: h.Name, isDir: h.IsDir, size: h.Size > 0 ? h.Size : 0, id: h.ID ?? "" };
     enqueue(h.AccountId, [item], dest);
     toast(`Queued ${h.Name}`, "success");
   };

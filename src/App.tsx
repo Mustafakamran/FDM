@@ -36,6 +36,12 @@ export default function App() {
     // Listen for browser-extension captures (Rust emits "ingest-url" on a valid
     // POST /fdm/ingest) and enqueue them into the default download folder.
     const stopIngest = startIngestListener();
+    // When the window is closed to the tray (Rust emits "app-hidden"), pause any
+    // playing media — otherwise a review video keeps its audio going (and HLS
+    // keeps transcoding) with no visible UI to stop it.
+    const hiddenUnlisten = listen("app-hidden", () => {
+      document.querySelectorAll<HTMLMediaElement>("video, audio").forEach((el) => el.pause());
+    });
     // Check for an OTA update shortly after launch (silent if none / no runtime),
     // then on an interval so a release pushed while the app is open is noticed.
     const launch = setTimeout(() => void useUpdater.getState().check(), 3000);
@@ -46,6 +52,7 @@ export default function App() {
       stopWatching();
       stopIngest();
       void readyUnlisten.then((un) => un());
+      void hiddenUnlisten.then((un) => un());
     };
   }, [loadAccounts]);
 

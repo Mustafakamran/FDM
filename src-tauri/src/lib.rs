@@ -37,6 +37,20 @@ struct Quitting(AtomicBool);
 #[derive(Default)]
 struct TrayReady(AtomicBool);
 
+/// True when the app was launched with `--minimized` (the autostart plugin
+/// passes it at login) — the window should stay hidden in the tray instead of
+/// being revealed. Read by the frontend (via `start_hidden`) so it skips its
+/// first-paint show(), and by the launch failsafe so it doesn't force-show.
+#[derive(Default)]
+struct StartHidden(AtomicBool);
+
+/// True once the window has actually been shown to the user (frontend first
+/// paint, or a tray/Dock reveal). The launch failsafe only force-shows a window
+/// that was NEVER revealed — so it can't fight a window the user deliberately
+/// closed-to-tray, or one that intentionally started `--minimized`.
+#[derive(Default)]
+struct Revealed(AtomicBool);
+
 /// Run the shutdown cleanup that must happen on a REAL quit: kill the rclone
 /// daemon and clear the HLS segment cache. Idempotent, so it's safe to call
 /// from the quit path AND from the window `Destroyed` handler.
@@ -45,13 +59,30 @@ fn shutdown_cleanup(app: &tauri::AppHandle) {
     hls::cleanup(app);
 }
 
-/// Reveal + focus the main window (from the tray icon / its menu).
+/// Reveal + focus the main window (from the tray icon / its menu / Dock).
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
+        app.state::<Revealed>().0.store(true, Ordering::SeqCst);
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
     }
+}
+
+/// Whether this launch should start hidden to the tray (`--minimized`). The
+/// frontend awaits this before its first-paint show() so an autostart-at-login
+/// launch comes up silently instead of popping the window.
+#[tauri::command]
+fn start_hidden(state: tauri::State<StartHidden>) -> bool {
+    state.0.load(Ordering::SeqCst)
+}
+
+/// Frontend tells us it has revealed the window (called right after its
+/// first-paint show()), so the launch failsafe knows a healthy reveal happened
+/// and won't fire.
+#[tauri::command]
+fn mark_revealed(state: tauri::State<Revealed>) {
+    state.0.store(true, Ordering::SeqCst);
 }
 
 /// Really quit the app: mark quitting (so the close handler doesn't intercept),
@@ -117,6 +148,8 @@ pub fn run() {
         ))
         .manage(Quitting::default())
         .manage(TrayReady::default())
+        .manage(StartHidden::default())
+        .manage(Revealed::default())
         .manage(RcloneState::default())
         .manage(JobsState::default())
         .manage(NativeJobsState::default())
@@ -129,6 +162,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             rc_call,
             quit_app,
+            start_hidden,
+            mark_revealed,
             write_binary_file,
             stream::stream_base,
             hls::stream_mode,
@@ -153,6 +188,7 @@ pub fn run() {
             download::clear_finished_jobs,
             download::delete_item,
             drive::drive_uploader,
+            drive::drive_folder_path,
             index::index_start,
             index::index_recrawl,
             index::index_folder,
@@ -216,19 +252,35 @@ pub fn run() {
             // instantly, the daemon comes up asynchronously, and the frontend
             // (which already tolerates a not-ready daemon and re-loads on the
             // "rclone-ready" event below) catches up once it's live.
+            // A login autostart launch passes `--minimized`; record it so the
+            // frontend's first-paint show() and the failsafe below both leave the
+            // window hidden in the tray.
+            if std::env::args().any(|a| a == "--minimized") {
+                app.state::<StartHidden>().0.store(true, Ordering::SeqCst);
+            }
+
             // FAILSAFE: the window starts hidden (visible:false) and the
             // frontend reveals it after its first paint — but if that reveal
             // ever fails (JS error, missing capability, webview stall), the
             // app would sit invisible in the task manager forever. Force-show
-            // after a short grace period; showing an already-visible window
-            // is a no-op, so the healthy path is unaffected.
+            // after a short grace period.
+            //
+            // Guards so the failsafe only rescues a genuinely-stuck launch:
+            //  • start_hidden → an intentional --minimized launch; leave hidden.
+            //  • Revealed     → the window was already shown once (healthy paint,
+            //    or a tray/Dock reveal), so a currently-hidden window means the
+            //    user deliberately closed it to the tray — don't pop it back.
             let show_handle = app.handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(4));
+                let start_hidden = show_handle.state::<StartHidden>().0.load(Ordering::SeqCst);
+                let revealed = show_handle.state::<Revealed>().0.load(Ordering::SeqCst);
+                if start_hidden || revealed {
+                    return;
+                }
                 if let Some(win) = show_handle.get_webview_window("main") {
                     if !win.is_visible().unwrap_or(true) {
-                        let _ = win.show();
-                        let _ = win.set_focus();
+                        show_main_window(&show_handle);
                     }
                 }
             });
@@ -274,6 +326,11 @@ pub fn run() {
                 if !quitting && tray_ready {
                     api.prevent_close();
                     let _ = window.hide();
+                    // The window is now hidden but the webview keeps running, so
+                    // a playing review video would keep its audio going (and HLS
+                    // keep transcoding) with no visible UI. Tell the frontend to
+                    // pause media while hidden.
+                    let _ = window.emit("app-hidden", ());
                 }
             }
             tauri::WindowEvent::Destroyed => {
@@ -283,6 +340,14 @@ pub fn run() {
             }
             _ => {}
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // macOS: clicking the Dock icon while the window is hidden (closed to
+            // the tray) sends Reopen — restore the window, matching the platform
+            // convention that activating the app brings a window back.
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_main_window(app);
+            }
+        });
 }

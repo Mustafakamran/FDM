@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { listAccounts, removeAccount, type Account } from "../lib/tauri/commands";
 import { useIndex } from "./index-store";
+import { useGlobalSearch } from "./global-search";
 import { useToasts } from "./toast";
 import { prettyLabel } from "./account-meta";
 import type { Category } from "../lib/categories";
@@ -29,6 +30,19 @@ export type View =
   | { kind: "accounts" };
 
 export type DownloadFilter = "all" | "active" | "completed" | "failed";
+
+/**
+ * Whether a view can still render given the currently-connected account ids.
+ * `browse` and `review` views are pinned to one account; if it was removed they
+ * can't render (a review would stream from a deleted remote and error out), so
+ * loadAccounts() uses this to reset the current view and prune Back/Forward
+ * history. Views not bound to an account (home/accounts/downloads/uploads) are
+ * always valid. Pure, so it's unit-testable without the store.
+ */
+export function viewValidForAccounts(v: View, accountIds: Set<string>): boolean {
+  if (v.kind === "browse" || v.kind === "review") return accountIds.has(v.accountId);
+  return true;
+}
 
 /** A video file opened in the review player. */
 export interface ReviewTarget {
@@ -156,6 +170,12 @@ export const useApp = create<AppState>((set, get) => {
   loadAccounts: async () => {
     const accounts = await listAccounts();
     set((s) => {
+      // When the set of accounts changes (add/remove), drop the all-drives
+      // search cache so hits for a removed drive can't linger and navigate to a
+      // dead account.
+      const prevIds = s.accounts.map((a) => a.id).join(",");
+      const nextIds = accounts.map((a) => a.id).join(",");
+      if (prevIds !== nextIds) useGlobalSearch.getState().invalidateCache();
       let view = s.view;
       const first = (): View => ({ kind: "browse", accountId: accounts[0].id, section: "all", path: "" });
       if (accounts.length === 0) {
@@ -163,14 +183,14 @@ export const useApp = create<AppState>((set, get) => {
       } else if (view.kind === "accounts") {
         // First load with accounts present → land on the dashboard.
         view = { kind: "home" };
-      } else if (view.kind === "browse") {
-        const id = view.accountId;
-        if (!accounts.some((a) => a.id === id)) view = first();
       }
-      // Drop history entries that point at accounts that no longer exist, so
-      // Back/Forward can never land on a removed account (which would render
-      // ConnectView instead of the expected folder).
-      const valid = (v: View) => v.kind !== "browse" || accounts.some((a) => a.id === v.accountId);
+      // Both browse AND review views are pinned to an account; if that account
+      // was removed, they can no longer render (a review would try to stream
+      // from a deleted rclone remote and fall into an error screen). Reset the
+      // current view and drop such entries from Back/Forward history.
+      const ids = new Set(accounts.map((a) => a.id));
+      const valid = (v: View) => viewValidForAccounts(v, ids);
+      if (!valid(view)) view = first();
       return { accounts, accountsLoaded: true, view, back: s.back.filter(valid), forward: s.forward.filter(valid) };
     });
   },
