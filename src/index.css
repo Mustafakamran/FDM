@@ -349,6 +349,22 @@ input,
   transform-origin: top left;
 }
 
+/* Flash a row/card that was jumped to (e.g. from a search result) so the eye
+   catches it. Pulses the accent tint a couple of times, then settles. */
+@keyframes flashrow {
+  0%,
+  100% {
+    background-color: transparent;
+  }
+  25%,
+  75% {
+    background-color: var(--accent-weak);
+  }
+}
+.animate-flash {
+  animation: flashrow 0.6s ease-in-out 2;
+}
+
 /* Tooltip fade-in (positioning transform is applied inline, so only fade here). */
 @keyframes tip {
   from {

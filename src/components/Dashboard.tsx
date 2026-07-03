@@ -1,30 +1,24 @@
 import { useEffect, type ReactNode } from "react";
-import { HardDrive, Download, Database, FileStack, Globe, ArrowRight, CheckCircle2 } from "lucide-react";
+import { HardDrive, Download, Database, FolderPlus, Globe, ArrowRight } from "lucide-react";
 import { useApp } from "../store/app";
 import { useStorage } from "../store/storage";
 import { useTransfers } from "../store/transfers";
 import { useHistory } from "../store/history";
-import { useIndex } from "../store/index-store";
-import { useAccountMeta, accountLabel } from "../store/account-meta";
-import { ProviderIcon, providerName } from "./icons";
 import { formatBytes, formatSpeed } from "../lib/format";
+import { useNewFolders } from "../lib/use-new-folders";
 import { SpeedTestCard } from "./SpeedTestCard";
-import { Skeleton } from "./ui";
 
-/** At-a-glance landing: accounts, storage, live downloads, indexed files. */
+/** At-a-glance landing: accounts, active downloads, storage, and new folders. */
 export function Dashboard() {
   const accounts = useApp((s) => s.accounts);
-  const accountsLoaded = useApp((s) => s.accountsLoaded);
-  const selectAccount = useApp((s) => s.selectAccount);
   const showDownloads = useApp((s) => s.showDownloads);
-  const showWebDownloads = useApp((s) => s.showWebDownloads);
+  const showNewFolders = useApp((s) => s.showNewFolders);
   const storage = useStorage((s) => s.byAccount);
   const fetchStorage = useStorage((s) => s.fetch);
   const jobs = useTransfers((s) => s.jobs);
   const queue = useTransfers((s) => s.queue);
   const history = useHistory((s) => s.items);
-  const indexEntries = useIndex((s) => s.byAccount);
-  const meta = useAccountMeta((s) => s.byId);
+  const { count: newFolderCount, totalSize: newFolderSize, allSized } = useNewFolders();
 
   useEffect(() => {
     for (const a of accounts) void fetchStorage(a);
@@ -37,13 +31,6 @@ export function Dashboard() {
 
   const totalUsed = accounts.reduce((s, a) => s + (storage[a.id]?.used ?? 0), 0);
   const totalCap = accounts.reduce((s, a) => s + (storage[a.id]?.total ?? 0), 0);
-
-  // Files counted only from accounts that have been indexed (opt-in), so this is
-  // "known files" — zero when nothing's been indexed yet.
-  const filesIndexed = Object.values(indexEntries).reduce((n, e) => {
-    if (!e.index) return n;
-    return n + Object.values(e.index.tree).reduce((m, arr) => m + arr.filter((i) => !i.IsDir).length, 0);
-  }, 0);
 
   return (
     <div className="h-full overflow-auto px-8 py-7">
@@ -73,100 +60,19 @@ export function Dashboard() {
           onClick={() => showDownloads("active")}
         />
         <Stat icon={<Database size={18} />} label="Storage used" value={formatBytes(totalUsed)} sub={totalCap > 0 ? `of ${formatBytes(totalCap)}` : "—"} />
-        <Stat icon={<FileStack size={18} />} label="Files indexed" value={filesIndexed > 0 ? filesIndexed.toLocaleString() : "—"} sub={filesIndexed > 0 ? "across indexed drives" : "index a drive to count"} />
+        <Stat
+          icon={<FolderPlus size={18} />}
+          label="New folders"
+          value={newFolderCount > 0 ? String(newFolderCount) : "—"}
+          sub={newFolderCount > 0 ? `${formatBytes(newFolderSize)}${allSized ? "" : "+"} to download` : "nothing new"}
+          accent={newFolderCount > 0}
+          onClick={() => showNewFolders()}
+        />
       </div>
-
-      {/* Active downloads */}
-      <Section title="Live downloads" action={activeCount > 0 ? { label: "Open Downloads", onClick: () => showDownloads("active") } : undefined}>
-        {active.length === 0 ? (
-          <div className="flex items-center gap-3 rounded-[15px] border border-[var(--line)] bg-[var(--card)] px-5 py-6 text-[13px] text-[var(--faint)]">
-            <CheckCircle2 size={16} className="text-[var(--ok)]" /> No active downloads. Pick files in a drive and hit Download, or grab a URL from the web.
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2.5">
-            {active.slice(0, 4).map((j) => {
-              const pct = j.totalBytes > 0 ? Math.min(100, Math.round((j.bytes / j.totalBytes) * 100)) : 0;
-              return (
-                <div key={j.jobId} className="rounded-[14px] border border-[var(--line)] bg-[var(--card)] p-4">
-                  <div className="mb-2.5 flex items-center gap-3">
-                    <span className="truncate text-[13px] font-semibold text-[var(--ink)]">{j.name}</span>
-                    <span className="tnum ml-auto text-[12.5px] font-semibold text-[var(--dl)]">{pct}%</span>
-                  </div>
-                  <div className="h-[6px] overflow-hidden rounded-full bg-[var(--soft)]">
-                    <div className="h-full rounded-full bg-[var(--dl)]" style={{ width: `${pct}%` }} />
-                  </div>
-                  <div className="mt-2 font-mono text-[11.5px] text-[var(--faint)]">
-                    {formatBytes(j.bytes)} of {formatBytes(j.totalBytes || j.bytes)} · <span className="text-[var(--dl)]">{formatSpeed(j.speed)}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Section>
 
       {/* Connection speed */}
       <Section title="Connection">
         <SpeedTestCard />
-      </Section>
-
-      {/* Accounts */}
-      <Section title="Your drives" action={{ label: "Web downloads", onClick: () => showWebDownloads() }}>
-        {!accountsLoaded && accounts.length === 0 ? (
-          <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
-            {Array.from({ length: 2 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-3 rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4">
-                <Skeleton className="h-[38px] w-[38px] shrink-0 rounded-[11px]" />
-                <div className="min-w-0 flex-1">
-                  <Skeleton className="mb-1.5 h-3.5 w-32" />
-                  <Skeleton className="h-3 w-20" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : accounts.length === 0 ? (
-          <div className="rounded-[15px] border border-dashed border-[var(--line2)] px-5 py-8 text-center text-[13px] text-[var(--faint)]">
-            No drives yet — connect Google Drive or Dropbox from the sidebar.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
-            {accounts.map((a) => {
-              const st = storage[a.id];
-              const pct = st && st.total > 0 ? Math.min(100, Math.round((st.used / st.total) * 100)) : null;
-              return (
-                <button
-                  key={a.id}
-                  onClick={() => selectAccount(a.id)}
-                  className="group flex flex-col gap-3 rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4 text-left hover:border-[var(--line2)]"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] border border-[var(--line)] bg-[var(--soft)]">
-                      <ProviderIcon provider={a.provider} size={19} />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[14px] font-semibold text-[var(--ink)]">{accountLabel(meta[a.id]?.label, a)}</div>
-                      <div className="truncate text-[12px] text-[var(--faint)]">{providerName(a.provider)}{meta[a.id]?.email ? ` · ${meta[a.id]?.email}` : ""}</div>
-                    </div>
-                    <ArrowRight size={16} className="text-[var(--faint)] opacity-0 transition-opacity group-hover:opacity-100" />
-                  </div>
-                  {pct != null ? (
-                    <div>
-                      <div className="tnum mb-1 flex justify-between font-mono text-[11px] text-[var(--faint)]">
-                        <span>{formatBytes(st!.used)} of {formatBytes(st!.total)}</span>
-                        <span>{pct}%</span>
-                      </div>
-                      <div className="h-[6px] overflow-hidden rounded-full bg-[var(--soft)]">
-                        <div className="h-full rounded-full bg-[var(--acc)]" style={{ width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-[11.5px] text-[var(--faint)]">Storage usage unavailable</div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        )}
       </Section>
 
       {/* Quick stat footer */}

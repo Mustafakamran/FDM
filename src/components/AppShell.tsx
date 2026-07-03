@@ -15,7 +15,8 @@ import { DownloadsDock } from "./DownloadsDock";
 import { ToastHost } from "./ToastHost";
 import { NotificationsPanel } from "./NotificationsPanel";
 import { SettingsDialog } from "./SettingsDialog";
-import { CommandPalette } from "./CommandPalette";
+import { PreviewOverlay } from "./PreviewOverlay";
+import { NewFoldersView } from "./NewFoldersView";
 import { UpdateBanner } from "./UpdateBanner";
 import { TooltipLayer } from "./ui/Tooltip";
 
@@ -93,7 +94,7 @@ export function AppShell() {
       <ToastHost />
       <NotificationsPanel />
       <SettingsDialog />
-      <CommandPalette />
+      <PreviewOverlay />
       <TooltipLayer />
 
       <div className="flex min-h-0 flex-1 gap-2.5 px-2.5 pb-2.5">
@@ -105,6 +106,7 @@ export function AppShell() {
             ) : (
               <>
                 {view.kind === "home" && <Dashboard />}
+                {view.kind === "new-folders" && <NewFoldersView />}
                 {view.kind === "accounts" && <ConnectView />}
                 {view.kind === "downloads" && <DownloadsView filter={view.filter} />}
                 {view.kind === "uploads" && <UploadsView filter={view.filter} />}

@@ -1,11 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Search, Settings as SettingsIcon, Bell, Minus, Square, X } from "lucide-react";
 import { useApp } from "../store/app";
 import { useSearch } from "../store/search";
 import { useNotifications, unreadCount } from "../store/notifications";
 import { useUI } from "../store/ui";
-import { usePalette } from "../store/palette";
 import { Logo } from "./ui/Logo";
 
 const appWindow = getCurrentWindow();
@@ -19,7 +18,9 @@ export function TopBar() {
   const notifications = useNotifications((s) => s.items);
   const togglePanel = useNotifications((s) => s.togglePanel);
   const unread = unreadCount(notifications);
-  const openPalette = usePalette((s) => s.setOpen);
+  const focusSeq = useSearch((s) => s.focusSeq);
+  const requestFocus = useSearch((s) => s.focus);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -29,6 +30,26 @@ export function TopBar() {
       un.then((f) => f()).catch(() => {});
     };
   }, []);
+
+  // Cmd/Ctrl+K focuses the one search box — it IS the command palette now
+  // (files + commands live in the results). Works from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        requestFocus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [requestFocus]);
+
+  // Focus + select the input whenever focus is requested (Cmd+K bumps focusSeq).
+  useEffect(() => {
+    if (focusSeq === 0) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [focusSeq]);
 
   return (
     <header data-tauri-drag-region className="flex h-14 shrink-0 select-none items-center gap-3 bg-transparent pl-4 pr-2">
@@ -41,24 +62,26 @@ export function TopBar() {
       <div className="mx-auto flex w-full max-w-xl items-center gap-2 rounded-[11px] border border-[var(--line)] bg-[var(--card)] px-3.5 py-2 text-sm focus-within:border-[var(--acc)]">
         <Search size={15} className="text-[var(--faint)]" />
         <input
+          ref={inputRef}
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search files and folders…"
+          placeholder="Search files, folders, or jump to anything…"
           className="w-full bg-transparent text-[var(--ink)] placeholder:text-[var(--faint)] focus:outline-none"
         />
-        {q && (
+        {q ? (
           <button onClick={() => setQ("")} aria-label="Clear search" className="text-[var(--faint)] hover:text-[var(--ink)]">
             <X size={14} />
           </button>
+        ) : (
+          <button
+            onClick={() => requestFocus()}
+            aria-label="Focus search"
+            data-tip="Search & jump to anything"
+            className="shrink-0 rounded-[5px] border border-[var(--line)] bg-[var(--soft)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--faint)] hover:text-[var(--mut)]"
+          >
+            {isMac ? "⌘K" : "Ctrl K"}
+          </button>
         )}
-        <button
-          onClick={() => openPalette(true)}
-          aria-label="Open command palette"
-          data-tip="Jump to anything"
-          className="shrink-0 rounded-[5px] border border-[var(--line)] bg-[var(--soft)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--faint)] hover:text-[var(--mut)]"
-        >
-          {isMac ? "⌘K" : "Ctrl K"}
-        </button>
       </div>
 
       {/* Actions */}

@@ -12,6 +12,7 @@ import { useBrowse } from "../store/browse";
 import { useTransfers } from "../store/transfers";
 import { useStarred } from "../store/starred";
 import { useSearch } from "../store/search";
+import { useSelection } from "../store/selection";
 import { buildIndex } from "../lib/account-index";
 import type { Account } from "../lib/tauri/commands";
 import type { RcItem } from "../lib/rc/browse";
@@ -34,6 +35,7 @@ beforeEach(() => {
   useTransfers.setState({ jobs: [], queue: [], concurrency: 1, dockOpen: true });
   useStarred.setState({ byAccount: {} });
   useSearch.setState({ q: "" });
+  useSelection.setState({ byAccount: {} });
   invokeMock.mockImplementation((cmd: string, args?: { endpoint?: string; params?: { remote?: string } }) => {
     if (cmd === "start_download") return Promise.resolve([]);
     if (cmd === "list_jobs") return Promise.resolve([]);

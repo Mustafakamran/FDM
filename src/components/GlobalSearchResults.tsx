@@ -1,19 +1,24 @@
-import { useEffect, useMemo } from "react";
-import { Download, Eye, Loader2, AlertCircle, FileSearch, Folder } from "lucide-react";
+import { useMemo } from "react";
+import { Download, Eye, Play, Loader2, AlertCircle, FileSearch, Folder, FolderOpen, FolderSearch, HardDrive, Globe } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp } from "../store/app";
-import { useSearch } from "../store/search";
-import { useGlobalSearch, type GlobalHit } from "../store/global-search";
+import { useSearch, type SearchScope } from "../store/search";
+import { type GlobalHit } from "../store/global-search";
+import { usePreview } from "../store/preview";
+import { useHighlight } from "../store/highlight";
+import { useIndex } from "../store/index-store";
 import { useTransfers } from "../store/transfers";
 import { useToasts } from "../store/toast";
 import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { ProviderIcon } from "./icons";
 import { EmptyState, Skeleton } from "./ui";
 import { fileType } from "../lib/file-types";
-import { isPreviewable, extOf } from "../lib/review";
+import { isPreviewable, isVideo, extOf } from "../lib/review";
 import { formatBytes } from "../lib/format";
 import { FOLDER_KEY } from "../lib/ingest";
 import { loadRaw } from "../lib/persisted";
+import { useScopedSearch } from "../lib/use-scoped-search";
+import { useCommands, filterCommands } from "../lib/use-commands";
 import { driveFolderPath, type Account, type DownloadItem, type Provider } from "../lib/tauri/commands";
 
 /** One search hit, tagged with its drive. */
@@ -21,14 +26,16 @@ function HitRow({
   hit,
   account,
   label,
-  onOpenFolder,
+  onOpenLocation,
+  onPreview,
   onReview,
   onDownload,
 }: {
   hit: GlobalHit;
   account: Account | undefined;
   label: string;
-  onOpenFolder: (h: GlobalHit) => void;
+  onOpenLocation: (h: GlobalHit) => void;
+  onPreview: (h: GlobalHit) => void;
   onReview: (h: GlobalHit) => void;
   onDownload: (h: GlobalHit) => void;
 }) {
@@ -47,7 +54,10 @@ function HitRow({
     </span>
   );
 
-  const openName = () => (hit.IsDir ? onOpenFolder(hit) : previewable ? onReview(hit) : undefined);
+  const isVid = !hit.IsDir && isVideo(hit.Name);
+  // Clicking a hit's name takes you to WHERE it lives (open the folder, or jump
+  // to a file's containing folder) — preview/review are the explicit icon actions.
+  const openName = () => onOpenLocation(hit);
 
   return (
     <div className="group flex items-center gap-3 rounded-[9px] px-3 py-2 hover:bg-[var(--hover)]">
@@ -66,12 +76,22 @@ function HitRow({
       <div className="flex shrink-0 items-center gap-0.5">
         {previewable && (
           <button
-            onClick={() => onReview(hit)}
-            data-tip="Open in review"
-            aria-label={`Review ${hit.Name}`}
+            onClick={() => onPreview(hit)}
+            data-tip="Preview"
+            aria-label={`Preview ${hit.Name}`}
             className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--faint)] opacity-0 hover:bg-[var(--soft)] hover:text-[var(--acc)] group-hover:opacity-100"
           >
             <Eye size={14} />
+          </button>
+        )}
+        {isVid && (
+          <button
+            onClick={() => onReview(hit)}
+            data-tip="Review"
+            aria-label={`Review ${hit.Name}`}
+            className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--faint)] opacity-0 hover:bg-[var(--soft)] hover:text-[var(--acc)] group-hover:opacity-100"
+          >
+            <Play size={14} />
           </button>
         )}
         <button
@@ -92,10 +112,8 @@ function HitRow({
  *  which drive it lives on and opens/downloads against that drive directly. */
 export function GlobalSearchResults() {
   const q = useSearch((s) => s.q);
-  const run = useGlobalSearch((s) => s.run);
-  const results = useGlobalSearch((s) => s.results);
-  const loading = useGlobalSearch((s) => s.loading);
-  const error = useGlobalSearch((s) => s.error);
+  const setScope = useSearch((s) => s.setScope);
+  const { scope, available, hits, loading, error, folderPath, folderRecursive, account: scopeAccount } = useScopedSearch();
 
   const accounts = useApp((s) => s.accounts);
   const setView = useApp((s) => s.setView);
@@ -104,9 +122,9 @@ export function GlobalSearchResults() {
   const toast = useToasts((s) => s.push);
   const meta = useAccountMeta((s) => s.byId);
 
-  useEffect(() => {
-    run(q);
-  }, [q, run]);
+  // Commands (nav/actions) that match the query — files AND commands live in the
+  // same results now, so the search box is the command palette.
+  const commands = filterCommands(useCommands(), q);
 
   const acctById = useMemo(() => {
     const m = new Map<string, Account>();
@@ -118,12 +136,12 @@ export function GlobalSearchResults() {
     const a = acctById.get(id);
     return a ? accountLabel(meta[id]?.label, a) : id;
   };
+  const results = hits;
 
-  // Group hits by drive so results read as "from all your drives", then sort
-  // each group folders-first, then by name (stable, case-insensitive).
+  // Group hits by drive, then sort each group folders-first, then by name.
   const groups = useMemo(() => {
     const by = new Map<string, GlobalHit[]>();
-    for (const h of results) {
+    for (const h of hits) {
       const id = h.AccountId ?? "";
       const arr = by.get(id) ?? [];
       arr.push(h);
@@ -136,7 +154,7 @@ export function GlobalSearchResults() {
       });
     }
     return [...by.entries()];
-  }, [results]);
+  }, [hits]);
 
   // Drive live-search returns no path (only id + bare name), so a Drive FOLDER
   // hit's `Path` is just its name and can't be navigated/recursed directly.
@@ -151,25 +169,42 @@ export function GlobalSearchResults() {
     return h.Path;
   };
 
-  const openFolder = async (h: GlobalHit) => {
+  // Go to WHERE a hit lives: open a folder hit; for a file hit, navigate to its
+  // containing folder (its real path resolved from the id for Drive, whose search
+  // returns only the bare name).
+  const openLocation = async (h: GlobalHit) => {
     if (!h.AccountId) return;
-    let path = h.Path;
+    let full = h.Path;
     try {
-      path = await resolvePath(h);
+      const provider = acctById.get(h.AccountId)?.provider ?? h.Provider;
+      // driveFolderPath walks parents from any id (file or folder), so it yields
+      // the item's full account-relative path either way.
+      if (provider === "drive" && h.ID) full = await driveFolderPath(h.AccountId, h.ID);
     } catch {
       toast(`Couldn’t locate “${h.Name}” on the drive`, "error");
       return;
     }
+    // Folder → open it; file → open the folder that contains it.
+    const target = h.IsDir ? full : full.includes("/") ? full.slice(0, full.lastIndexOf("/")) : "";
+    // Flag the item so the browse view flashes + selects it once it lands there,
+    // so you can see exactly which file the search meant.
+    useHighlight.getState().set(h.AccountId, full);
     useSearch.getState().set("");
-    setView({ kind: "browse", accountId: h.AccountId, section: "all", path });
+    setView({ kind: "browse", accountId: h.AccountId, section: "all", path: target });
+  };
+  // Preview is a modal overlay that sits ON TOP of the search results, so unlike
+  // review/openFolder it must NOT clear the query — closing the preview returns
+  // the user to their results. Files are id-addressed, so the bare Path is fine.
+  const preview = (h: GlobalHit) => {
+    if (!h.AccountId) return;
+    usePreview.getState().open(h.AccountId, { path: h.Path, name: h.Name, fileId: h.ID ?? "", size: h.Size > 0 ? h.Size : 0, ext: extOf(h.Name) });
   };
   const review = (h: GlobalHit) => {
     if (!h.AccountId) return;
     // Clear the query FIRST — AppShell renders this overlay whenever the search
     // query is non-empty, so without this the review view opens invisibly
-    // beneath it and "Open in review" appears to do nothing (openFolder does the
-    // same). Then navigate to the player. Files are id-addressed, so the bare
-    // Path is fine here.
+    // beneath it and Review appears to do nothing (openFolder does the same).
+    // Then navigate to the player. Files are id-addressed, so the bare Path is fine.
     useSearch.getState().set("");
     openReview(h.AccountId, { path: h.Path, name: h.Name, fileId: h.ID ?? "", size: h.Size > 0 ? h.Size : 0, ext: extOf(h.Name) });
   };
@@ -193,22 +228,74 @@ export function GlobalSearchResults() {
     toast(`Queued ${h.Name}`, "success");
   };
 
+  const folderName = folderPath ? folderPath.split("/").pop() : "";
+  const scopeLabel =
+    scope === "folder" ? `in ${folderName || "this folder"}` : scope === "drive" ? `in ${labelFor(scopeAccount?.id)}` : "across all drives";
+  const runCommand = (c: { run: () => void }) => {
+    c.run();
+    useSearch.getState().set(""); // a nav command dismisses the search overlay
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 px-6 py-4 text-[15px]">
+      <div className="flex flex-wrap items-center gap-2 px-6 py-4 text-[15px]">
         <FileSearch size={18} className="text-[var(--acc)]" />
         <span className="text-[var(--text-2)]">
-          Search across all drives for “<span className="font-medium text-[var(--ink)]">{q}</span>”
+          Search {scopeLabel} for “<span className="font-medium text-[var(--ink)]">{q}</span>”
         </span>
         {loading && <Loader2 size={15} className="animate-spin text-[var(--faint)]" />}
-        {!loading && results.length > 0 && (
-          <span className="ml-auto text-[12.5px] text-[var(--faint)]">
-            {results.length} result{results.length === 1 ? "" : "s"} · {groups.length} drive{groups.length === 1 ? "" : "s"}
-          </span>
-        )}
+
+        {/* Scope chips — pick where to look. Only the scopes that make sense in
+            the current context are shown; "All drives" is always available. */}
+        <div className="ml-auto flex items-center gap-1.5">
+          {available.map((s) => {
+            const on = s === scope;
+            const meta_ = SCOPE_META[s];
+            return (
+              <button
+                key={s}
+                onClick={() => setScope(s)}
+                className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-semibold ${
+                  on ? "border-[var(--acc)] bg-[var(--acc)] text-[var(--onacc)]" : "border-[var(--line)] text-[var(--mut)] hover:border-[var(--line2)]"
+                }`}
+              >
+                <meta_.Icon size={12} /> {meta_.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-4 pb-4">
+        {/* Commands (nav/actions) matching the query, above file results. */}
+        {commands.length > 0 && (
+          <div className="mb-4">
+            <div className="px-3 py-1.5 text-[12px] font-semibold text-[var(--mut)]">Commands</div>
+            {commands.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => runCommand(c)}
+                className="flex w-full items-center gap-3 rounded-[9px] px-3 py-2.5 text-left text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+              >
+                <span className="shrink-0 text-[var(--text-3)]">{c.icon}</span>
+                <span className="min-w-0 flex-1 truncate">{c.label}</span>
+                {c.hint && <span className="shrink-0 text-xs text-[var(--text-3)]">{c.hint}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Folder scope on a non-indexed drive only sees the folder's direct
+            contents — offer to index for a full-subtree search. */}
+        {scope === "folder" && !folderRecursive && scopeAccount && folderPath && (
+          <button
+            onClick={() => void useIndex.getState().indexFolder(scopeAccount, folderPath)}
+            className="mb-3 flex w-full items-center gap-2 rounded-[9px] border border-dashed border-[var(--line2)] px-3 py-2 text-left text-[12.5px] text-[var(--faint)] hover:text-[var(--text-2)]"
+          >
+            <FolderSearch size={14} /> Searching this folder’s contents only — index it to search every subfolder too.
+          </button>
+        )}
+
         {loading && results.length === 0 ? (
           <div className="px-2 py-2">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -220,25 +307,28 @@ export function GlobalSearchResults() {
           </div>
         ) : error ? (
           <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-sm text-[var(--mut)]">
-            <AlertCircle size={18} className="text-[var(--err)]" /> Couldn’t search your drives. Check the connection and try again.
+            <AlertCircle size={18} className="text-[var(--err)]" /> Couldn’t search. Check the connection and try again.
           </div>
         ) : results.length === 0 ? (
-          <EmptyState icon={<FileSearch size={20} />} title="No matches" body={`Nothing across your drives matches “${q}”. Try a different search.`} />
+          commands.length === 0 && (
+            <EmptyState icon={<FileSearch size={20} />} title="No matches" body={`Nothing ${scopeLabel} matches “${q}”. Try a different search or scope.`} />
+          )
         ) : (
-          groups.map(([id, hits]) => (
+          groups.map(([id, groupHits]) => (
             <div key={id || "unknown"} className="mb-4">
               <div className="sticky top-0 z-10 flex items-center gap-2 bg-[var(--surface)] px-3 py-1.5 text-[12px] font-semibold text-[var(--mut)]">
-                <ProviderIcon provider={(acctById.get(id)?.provider ?? hits[0]?.Provider ?? "drive") as Provider} size={13} />
+                <ProviderIcon provider={(acctById.get(id)?.provider ?? groupHits[0]?.Provider ?? "drive") as Provider} size={13} />
                 <span className="truncate">{labelFor(id)}</span>
-                <span className="text-[var(--faint)]">· {hits.length}</span>
+                <span className="text-[var(--faint)]">· {groupHits.length}</span>
               </div>
-              {hits.map((h) => (
+              {groupHits.map((h) => (
                 <HitRow
                   key={`${id}:${h.ID || h.Path}:${h.Name}`}
                   hit={h}
                   account={acctById.get(id)}
                   label={labelFor(id)}
-                  onOpenFolder={openFolder}
+                  onOpenLocation={openLocation}
+                  onPreview={preview}
                   onReview={review}
                   onDownload={download}
                 />
@@ -250,3 +340,9 @@ export function GlobalSearchResults() {
     </div>
   );
 }
+
+const SCOPE_META: Record<SearchScope, { label: string; Icon: typeof FolderOpen }> = {
+  folder: { label: "This folder", Icon: FolderOpen },
+  drive: { label: "This drive", Icon: HardDrive },
+  all: { label: "All drives", Icon: Globe },
+};

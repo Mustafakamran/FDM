@@ -8,6 +8,9 @@ import { useBrowse, browseKey, browseSearchKey, browseRecentKey } from "../store
 import { useTransfers } from "../store/transfers";
 import { useToasts } from "../store/toast";
 import { useStarred } from "../store/starred";
+import { useSelection, totalSelectedCount, totalSelectedSize, selectedDriveCount, type SelectedItem } from "../store/selection";
+import { usePreview } from "../store/preview";
+import { useHighlight } from "../store/highlight";
 import { useVisited } from "../store/visited";
 import { useHistory } from "../store/history";
 import { useSearch } from "../store/search";
@@ -104,6 +107,9 @@ function FolderBadge({ hasDownloads, visited }: { hasDownloads: boolean; visited
 interface RowActions {
   toggle: (p: string, shiftKey?: boolean) => void;
   openFolder: (p: string) => void;
+  /** Single-click: lightweight preview overlay. */
+  openPreview: (item: RcItem) => void;
+  /** Right-click → Review: the full reviewer screen. */
   openReview: (item: RcItem) => void;
   download: (item: RcItem) => void;
   indexFolder: (p: string) => void;
@@ -156,7 +162,11 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   };
   const displayLabel = accountLabel(useAccountMeta((s) => s.byId[account.id]?.label), account);
 
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Selection lives in a global store keyed by drive, so it PERSISTS across
+  // folder and drive navigation — you can build up a selection across drives
+  // and download it all at once.
+  const selectionForAccount = useSelection((s) => s.byAccount[account.id]);
+  const selected = useMemo(() => new Set(Object.keys(selectionForAccount ?? {})), [selectionForAccount]);
   const lastToggledPath = useRef<string | null>(null);
   const [grid, setGrid] = useState(false);
   const [sort, setSort] = useState<SortState>(loadSort);
@@ -287,7 +297,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
         fails.push(`${it.Name}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    setSelected(new Set());
+    useSelection.getState().clearAccount(account.id);
     if (ok) toast(`Deleted ${ok} item${ok > 1 ? "s" : ""} (moved to Trash)`, "success");
     if (fails.length) toast(`Delete failed: ${fails[0]}${fails.length > 1 ? ` (+${fails.length - 1} more)` : ""}`, "error");
     setDeleting(false);
@@ -329,14 +339,18 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     void useIndex.getState().ensureAuto(account);
   }, [account, autoIndex]);
 
-  // Reset selection AND scroll position on navigation — otherwise the
-  // virtualization window below would briefly compute from the PREVIOUS
-  // folder's scroll offset before the browser catches up.
+  // Reset scroll position on navigation (selection now persists — it lives in
+  // the global store, not here). Otherwise the virtualization window below would
+  // briefly compute from the PREVIOUS folder's scroll offset.
   useEffect(() => {
-    setSelected(new Set());
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
     setScrollTop(0);
   }, [section, path, q]);
+
+  // A pending highlight (e.g. jumped here from a search result): once this folder
+  // has loaded the item, select it, scroll it into view, and flash it briefly so
+  // you can see exactly which file the search meant.
+  const [blinkPath, setBlinkPath] = useState<string | null>(null);
 
   const base: RcItem[] = useMemo(() => {
     // Search + Recent are LIVE server-side queries (no crawl). Starred reads from
@@ -373,8 +387,40 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const virtualRange = grid ? { start: 0, end: items.length } : computeVirtualRange(scrollTop, viewportH, rowHeight, items.length);
   const visibleItems = items.slice(virtualRange.start, virtualRange.end);
 
+  // Consume a pending highlight for THIS folder: select the item, scroll it into
+  // view, and flash it. Runs once the target is present in `items`.
+  const hlAccount = useHighlight((s) => s.accountId);
+  const hlPath = useHighlight((s) => s.path);
+  useEffect(() => {
+    if (hlAccount !== account.id || !hlPath) return;
+    const idx = items.findIndex((i) => i.Path === hlPath);
+    if (idx === -1) return; // not loaded yet — wait for items to fill in
+    const it = items[idx];
+    useSelection.getState().add(account.id, [{ item: it, size: sizeOf(it) }]);
+    // Center the row in the viewport (list view is virtualized by scrollTop).
+    if (!grid && bodyRef.current && rowHeight > 0) {
+      const target = Math.max(0, idx * rowHeight - bodyRef.current.clientHeight / 2 + rowHeight);
+      bodyRef.current.scrollTop = target;
+      setScrollTop(target);
+    }
+    setBlinkPath(hlPath);
+    useHighlight.getState().clear();
+    const t = setTimeout(() => setBlinkPath(null), 1800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hlAccount, hlPath, items, rowHeight, grid, account.id]);
+
   const allSelected = items.length > 0 && items.every((i) => selected.has(i.Path));
-  const totalSelected = items.filter((i) => selected.has(i.Path)).reduce((s, i) => s + sizeOf(i), 0);
+  // Totals span EVERY drive's selection (the bar aggregates cross-drive).
+  const selectionAll = useSelection((s) => s.byAccount);
+  const globalCount = totalSelectedCount(selectionAll);
+  const globalSize = totalSelectedSize(selectionAll);
+  const globalDrives = selectedDriveCount(selectionAll);
+
+  const entryFor = (p: string): SelectedItem | null => {
+    const it = items.find((i) => i.Path === p);
+    return it ? { item: it, size: sizeOf(it) } : null;
+  };
 
   // Shift+Click selects everything between the last-toggled row and this one
   // (inclusive) — the conventional Finder/Explorer/Gmail range-select. Only a
@@ -386,21 +432,14 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
       const b = paths.indexOf(p);
       if (a !== -1 && b !== -1) {
         const [lo, hi] = a < b ? [a, b] : [b, a];
-        const range = paths.slice(lo, hi + 1);
-        setSelected((prev) => {
-          const n = new Set(prev);
-          range.forEach((rp) => n.add(rp));
-          return n;
-        });
+        const range = paths.slice(lo, hi + 1).map(entryFor).filter((e): e is SelectedItem => !!e);
+        useSelection.getState().add(account.id, range);
         lastToggledPath.current = p;
         return;
       }
     }
-    setSelected((prev) => {
-      const n = new Set(prev);
-      n.has(p) ? n.delete(p) : n.add(p);
-      return n;
-    });
+    const e = entryFor(p);
+    if (e) useSelection.getState().toggle(account.id, e);
     lastToggledPath.current = p;
   }
 
@@ -441,10 +480,27 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     toast(`Queued ${chosen.length} download${chosen.length === 1 ? "" : "s"}`, "success");
   }
 
+  // Download EVERY selected item across ALL drives (the selection persists across
+  // drives), then clear the whole selection.
   async function download() {
-    if (selected.size === 0) return;
-    await enqueueItems(items.filter((i) => selected.has(i.Path)));
-    setSelected(new Set());
+    const byAccount = useSelection.getState().byAccount;
+    if (totalSelectedCount(byAccount) === 0) return;
+    let dest = loadRaw(FOLDER_KEY, "");
+    if (!dest) {
+      const picked = await open({ directory: true, multiple: false });
+      if (typeof picked !== "string") return;
+      dest = picked;
+    }
+    let queued = 0;
+    for (const [accId, map] of Object.entries(byAccount)) {
+      const entries = Object.values(map);
+      if (entries.length === 0) continue;
+      const chosen: DownloadItem[] = entries.map((e) => ({ path: e.item.Path, name: e.item.Name, isDir: e.item.IsDir, size: e.size, id: e.item.ID ?? "" }));
+      enqueue(accId, chosen, dest);
+      queued += chosen.length;
+    }
+    useSelection.getState().clearAll();
+    toast(`Queued ${queued} download${queued === 1 ? "" : "s"}`, "success");
   }
 
   // Stable row-facing callbacks: FileRow/FileGridItem are memoized, and every
@@ -456,6 +512,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   actionsRef.current = {
     toggle,
     openFolder: (p) => setView({ kind: "browse", accountId: account.id, section: "all", path: p }),
+    openPreview: (item) => usePreview.getState().open(account.id, reviewTarget(item)),
     openReview: (item) => openReview(account.id, reviewTarget(item)),
     download: (item) => void enqueueItems([item]),
     indexFolder,
@@ -467,6 +524,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const rowActions = useRef<RowActions>({
     toggle: (p, shiftKey) => actionsRef.current.toggle(p, shiftKey),
     openFolder: (p) => actionsRef.current.openFolder(p),
+    openPreview: (item) => actionsRef.current.openPreview(item),
     openReview: (item) => actionsRef.current.openReview(item),
     download: (item) => actionsRef.current.download(item),
     indexFolder: (p) => actionsRef.current.indexFolder(p),
@@ -485,7 +543,8 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
       out.push({ label: "Calculate size", icon: Calculator, onClick: () => calcSize(item.Path) });
       out.push({ label: folderIndexed(item.Path) ? "Re-index folder" : "Index folder", icon: FolderSearch, disabled: showCrawl, onClick: () => indexFolder(item.Path) });
     } else if (isPreviewable(item.Name)) {
-      out.push({ label: "Open in review", icon: Play, onClick: () => openReview(account.id, reviewTarget(item)) });
+      out.push({ label: "Preview", icon: Eye, onClick: () => usePreview.getState().open(account.id, reviewTarget(item)) });
+      out.push({ label: "Review", icon: Play, onClick: () => openReview(account.id, reviewTarget(item)) });
     }
     out.push({ label: "Download", icon: Download, onClick: () => void enqueueItems([item]) });
     out.push({ label: isStar ? "Unstar" : "Star", icon: Star, onClick: () => toggleStar(account.id, item.Path) });
@@ -738,6 +797,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                 key={item.Path}
                 item={item}
                 isSelected={selected.has(item.Path)}
+                blink={item.Path === blinkPath}
                 folderSize={folderSizeState(item.Path)}
                 folderCount={fileCountOf(item)}
                 visited={item.IsDir && visitedSet.has(item.Path)}
@@ -750,7 +810,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           <table className="w-full table-fixed border-collapse text-sm">
             <thead>
               <tr className="sticky top-0 z-10 bg-[var(--surface)] text-left text-xs text-[var(--text-3)]">
-                <th className="w-9 py-2.5 pl-1"><input type="checkbox" aria-label="Select all" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(items.map((i) => i.Path)))} /></th>
+                <th className="w-9 py-2.5 pl-1"><input type="checkbox" aria-label="Select all" checked={allSelected} onChange={() => (allSelected ? useSelection.getState().clearAccount(account.id) : useSelection.getState().add(account.id, items.map((i) => ({ item: i, size: sizeOf(i) }))))} /></th>
                 <th className="py-2.5 font-medium">Name</th>
                 <th className="w-44 whitespace-nowrap py-2.5 font-medium">Modified</th>
                 <th className="w-28 whitespace-nowrap py-2.5 text-right font-medium">Size</th>
@@ -771,6 +831,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                   key={item.Path}
                   item={item}
                   isSelected={selected.has(item.Path)}
+                  blink={item.Path === blinkPath}
                   isStarred={starred.includes(item.Path)}
                   dateStr={formatDate(dateOf(item))}
                   folderSize={folderSizeState(item.Path)}
@@ -841,20 +902,21 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
         </div>
       )}
 
-      {/* Selection bar */}
-      {selected.size > 0 && (
+      {/* Selection bar — spans EVERY drive's selection (persists across drives). */}
+      {globalCount > 0 && (
         <div className="flex items-center justify-between gap-4 border-t border-[var(--border)] bg-[var(--surface)] px-6 py-3">
           <span className="text-sm text-[var(--text-2)]">
-            Selected: <span className="tnum text-[var(--text)]">{selected.size}</span> items · <span className="tnum text-[var(--text)]">{formatBytes(totalSelected)}</span>
+            Selected: <span className="tnum text-[var(--text)]">{globalCount}</span> item{globalCount === 1 ? "" : "s"} · <span className="tnum text-[var(--text)]">{formatBytes(globalSize)}</span>
+            {globalDrives > 1 && <span className="text-[var(--faint)]"> · across {globalDrives} drives</span>}
           </span>
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              onClick={() => setPendingDelete(items.filter((i) => selected.has(i.Path)))}
-            >
-              <Trash2 size={16} /> Delete
-            </Button>
-            <Button variant="download" onClick={download}><Download size={16} /> Download</Button>
+            <Button variant="ghost" onClick={() => useSelection.getState().clearAll()}>Clear</Button>
+            {selected.size > 0 && (
+              <Button variant="ghost" onClick={() => setPendingDelete(items.filter((i) => selected.has(i.Path)))}>
+                <Trash2 size={16} /> Delete{globalDrives > 1 ? " here" : ""}
+              </Button>
+            )}
+            <Button variant="download" onClick={download}><Download size={16} /> Download{globalDrives > 1 ? " all" : ""}</Button>
           </div>
         </div>
       )}
@@ -937,6 +999,7 @@ function RowAction({
 const FileRow = memo(function FileRow({
   item,
   isSelected,
+  blink,
   isStarred,
   dateStr,
   folderSize,
@@ -949,6 +1012,7 @@ const FileRow = memo(function FileRow({
 }: {
   item: RcItem;
   isSelected: boolean;
+  blink: boolean;
   isStarred: boolean;
   dateStr: string;
   folderSize: FolderSizeState;
@@ -995,13 +1059,13 @@ const FileRow = memo(function FileRow({
   const nameCell = item.IsDir ? (
     <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => actions.openFolder(item.Path)}>{body}</button>
   ) : previewableFlag ? (
-    <button className="flex min-w-0 flex-1 items-center gap-3 text-left" data-tip="Open in review" onClick={() => actions.openReview(item)}>{body}</button>
+    <button className="flex min-w-0 flex-1 items-center gap-3 text-left" data-tip="Preview (right-click → Review)" onClick={() => actions.openPreview(item)}>{body}</button>
   ) : (
     <span className="flex min-w-0 flex-1 items-center gap-3">{body}</span>
   );
 
   return (
-    <tr data-row onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }} className={`group border-b border-[var(--border)]/60 ${isSelected ? "bg-[var(--card)]" : "hover:bg-[var(--hover)]"}`}>
+    <tr data-row onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }} className={`group border-b border-[var(--border)]/60 ${blink ? "animate-flash" : isSelected ? "bg-[var(--card)]" : "hover:bg-[var(--hover)]"}`}>
       <td className="w-9 py-2.5 pl-1">
         <input
           type="checkbox"
@@ -1018,8 +1082,13 @@ const FileRow = memo(function FileRow({
               so revealing it on hover never shifts the layout. */}
           <div className="flex shrink-0 items-center gap-0.5">
             {previewableFlag && (
-              <RowAction onClick={() => actions.openReview(item)} tip="Open in review" label={`Review ${item.Name}`}>
-                {video ? <Play size={14} /> : <Eye size={14} />}
+              <RowAction onClick={() => actions.openPreview(item)} tip="Preview" label={`Preview ${item.Name}`}>
+                <Eye size={14} />
+              </RowAction>
+            )}
+            {video && (
+              <RowAction onClick={() => actions.openReview(item)} tip="Review" label={`Review ${item.Name}`}>
+                <Play size={14} />
               </RowAction>
             )}
             <RowAction onClick={() => actions.download(item)} tip="Download" label={`Download ${item.Name}`} green>
@@ -1060,6 +1129,7 @@ const FileRow = memo(function FileRow({
 (prev, next) =>
   prev.item === next.item &&
   prev.isSelected === next.isSelected &&
+  prev.blink === next.blink &&
   prev.isStarred === next.isStarred &&
   prev.dateStr === next.dateStr &&
   prev.folderCount === next.folderCount &&
@@ -1073,6 +1143,7 @@ const FileRow = memo(function FileRow({
 const FileGridItem = memo(function FileGridItem({
   item,
   isSelected,
+  blink,
   folderSize,
   folderCount,
   visited,
@@ -1081,6 +1152,7 @@ const FileGridItem = memo(function FileGridItem({
 }: {
   item: RcItem;
   isSelected: boolean;
+  blink: boolean;
   folderSize: FolderSizeState;
   folderCount: number | undefined;
   visited: boolean;
@@ -1091,7 +1163,7 @@ const FileGridItem = memo(function FileGridItem({
   return (
     <div
       onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }}
-      className={`relative flex flex-col items-center gap-3 rounded-[11px] border p-5 ${isSelected ? "border-[var(--accent)] bg-[var(--card)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
+      className={`relative flex flex-col items-center gap-3 rounded-[11px] border p-5 ${blink ? "animate-flash border-[var(--acc)]" : isSelected ? "border-[var(--accent)] bg-[var(--card)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
     >
       <input
         type="checkbox"
@@ -1103,7 +1175,7 @@ const FileGridItem = memo(function FileGridItem({
       />
       <button
         className="flex flex-col items-center gap-2 text-center"
-        onClick={() => (item.IsDir ? actions.openFolder(item.Path) : isPreviewable(item.Name) && actions.openReview(item))}
+        onClick={() => (item.IsDir ? actions.openFolder(item.Path) : isPreviewable(item.Name) && actions.openPreview(item))}
       >
         <span className="relative flex items-center justify-center">
           <ft.Icon size={30} style={{ color: ft.color }} />
@@ -1123,6 +1195,7 @@ const FileGridItem = memo(function FileGridItem({
 (prev, next) =>
   prev.item === next.item &&
   prev.isSelected === next.isSelected &&
+  prev.blink === next.blink &&
   prev.folderCount === next.folderCount &&
   prev.visited === next.visited &&
   prev.hasDownloads === next.hasDownloads &&

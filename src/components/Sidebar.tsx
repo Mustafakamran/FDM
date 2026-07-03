@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Plus, Home, FolderOpen, Download, Upload, AlertCircle, Globe, Trash2, Loader2, Link as LinkIcon, Sun, Moon } from "lucide-react";
+import { Plus, Home, FolderOpen, Download, Upload, AlertCircle, Globe, Trash2, Loader2, Link as LinkIcon, Sun, Moon, FolderPlus } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useApp } from "../store/app";
 import { useTransfers } from "../store/transfers";
@@ -12,11 +12,12 @@ import { Skeleton } from "./ui";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { AddLinkDialog } from "./AddLinkDialog";
 import { formatBytes, formatSpeed } from "../lib/format";
+import { useNewFolders } from "../lib/use-new-folders";
 import { laneOf } from "../lib/lane";
 import type { Account, Provider } from "../lib/tauri/commands";
 
 export function Sidebar() {
-  const { view, accounts, accountsLoaded, selectAccount, removeAccount, showDownloads, showUploads, showWebDownloads, setView } = useApp(
+  const { view, accounts, accountsLoaded, selectAccount, removeAccount, showDownloads, showUploads, showWebDownloads, showNewFolders, setView } = useApp(
     useShallow((s) => ({
       view: s.view,
       accounts: s.accounts,
@@ -26,6 +27,7 @@ export function Sidebar() {
       showDownloads: s.showDownloads,
       showUploads: s.showUploads,
       showWebDownloads: s.showWebDownloads,
+      showNewFolders: s.showNewFolders,
       setView: s.setView,
     })),
   );
@@ -34,6 +36,8 @@ export function Sidebar() {
   const onUploads = view.kind === "uploads";
   const onFiles = view.kind === "browse";
   const onHome = view.kind === "home";
+  const onNewFolders = view.kind === "new-folders";
+  const newFolderCount = useNewFolders().count;
   const jobs = useTransfers((s) => s.jobs);
   const queue = useTransfers((s) => s.queue);
   const uploads = useTransfers((s) => s.uploads);
@@ -99,6 +103,7 @@ export function Sidebar() {
       <div className="flex flex-col gap-0.5 px-3 pt-4">
         <NavItem icon={<Home size={16} />} label="Home" active={onHome} onClick={() => setView({ kind: "home" })} />
         <NavItem icon={<FolderOpen size={16} />} label="Files" active={onFiles} onClick={goFiles} />
+        <NavItem icon={<FolderPlus size={16} />} label="New folders" active={onNewFolders} onClick={showNewFolders} badge={newFolderCount || undefined} />
         <NavItem icon={<Download size={16} />} label="Downloads" active={onDownloads} onClick={() => showDownloads("active")} badge={counts.downloading || undefined} />
         <NavItem icon={<Upload size={16} />} label="Uploads" active={onUploads} onClick={() => showUploads("active")} badge={activeUploads || undefined} />
         <NavItem icon={<Globe size={16} />} label="Web Downloads" active={onWeb} onClick={() => showWebDownloads()} badge={counts.web || undefined} />

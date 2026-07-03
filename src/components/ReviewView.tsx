@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ChevronLeft, MessageSquarePlus, Trash2, Check, FileDown, Loader2, AlertCircle, Clock, Lock, Unlock } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useApp, type ReviewTarget } from "../store/app";
 import { useReview, fileKey, type FileReview } from "../store/review";
 import { useAccountMeta, accountLabel } from "../store/account-meta";
-import { useHistory } from "../store/history";
 import { useToasts } from "../store/toast";
 import { writeBinaryFile } from "../lib/tauri/commands";
-import { streamUrl, isPlayable, isImage, timecode } from "../lib/review";
+import { timecode } from "../lib/review";
+import { useMediaSource } from "../lib/use-media-source";
 import { ReviewPlayer } from "./ReviewPlayer";
 import { Button } from "./ui";
 
@@ -25,73 +25,19 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
   const email = useAccountMeta((s) => s.byId[accountId]?.email);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [url, setUrl] = useState<string | null>(null);
-  const [hlsUrl, setHlsUrl] = useState<string | null>(null);
-  const [err, setErr] = useState("");
   const [duration, setDuration] = useState(0);
   const [curTime, setCurTime] = useState(0);
   const [locked, setLocked] = useState(false);
   const [lockedTime, setLockedTime] = useState(0);
   const [noCors, setNoCors] = useState(false);
-  const [diag, setDiag] = useState("");
   const [text, setText] = useState("");
   const [exporting, setExporting] = useState(false);
 
-  const playable = isPlayable(target.name);
-  const isImg = isImage(target.name);
-  const previewable = playable || isImg;
+  // Source resolution (direct vs JIT-transcode, local-first, image vs video) is
+  // shared with the lightweight preview overlay via this hook.
+  const { url, hlsUrl, isImg, isVideoFile, err, setErr, diag } = useMediaSource(accountId, target);
   const parent = target.path.includes("/") ? target.path.slice(0, target.path.lastIndexOf("/")) : "";
   const stampTime = locked ? lockedTime : curTime;
-
-  // If this exact file was already downloaded (a completed job in history for
-  // this account + path), grab its destination folder — the backend then
-  // serves straight from that local copy instead of the cloud: instant, and
-  // works with no internet connection at all.
-  const historyItems = useHistory((s) => s.items);
-  const localDest = useMemo(
-    () => historyItems.find((h) => h.status === "success" && h.accountId === accountId && h.item?.path === target.path)?.dest,
-    [historyItems, accountId, target.path],
-  );
-
-  useEffect(() => {
-    if (!previewable) return;
-    let alive = true;
-    setUrl(null);
-    setHlsUrl(null);
-    setErr("");
-    setDiag("");
-    setNoCors(false);
-    // DIRECT NATIVE PLAYBACK ONLY — no transcoding, no ffmpeg, no HLS.
-    // We hand the player the direct /media URL and let the browser stream the
-    // file over HTTP range requests, exactly like watching it on Drive/Dropbox
-    // inside their web UI. hlsUrl stays null, so ReviewPlayer uses <video src>.
-    // (Pro codecs like ProRes/RAW can't decode in ANY browser; those surface the
-    // "download to review" message — the same thing a provider's preview shows.)
-    streamUrl(accountId, target, localDest)
-      .then(async (u) => {
-        if (!alive) return;
-        setUrl(u);
-        if (isImg) return; // <img onError> handles failures; no video-specific probing needed.
-        // Background-probe the direct /media URL only to capture a real error
-        // message we can surface IF playback fails, never block playback on it.
-        fetch(u)
-          .then(async (res) => {
-            if (!res.ok) {
-              const body = await res.text().catch(() => "");
-              if (alive) setDiag(`Stream error ${res.status}${body ? `, ${body.slice(0, 300)}` : ""}`);
-            } else {
-              res.body?.cancel?.();
-            }
-          })
-          .catch(() => {
-            /* probe blocked (e.g. fetch CORS), ignore; the video may still play */
-          });
-      })
-      .catch((e) => alive && setErr(e instanceof Error ? e.message : String(e)));
-    return () => {
-      alive = false;
-    };
-  }, [accountId, target, previewable, isImg, localDest]);
 
   const comments = useMemo(() => [...review.comments].sort((a, b) => a.time - b.time), [review.comments]);
 
@@ -156,7 +102,7 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
 
       for (let i = 0; i < comments.length; i++) {
         const c = comments[i];
-        const frame = video && playable ? await grabFrame(video, canvas, c.time) : null;
+        const frame = video && isVideoFile ? await grabFrame(video, canvas, c.time) : null;
         const imgH = frame ? imgW * (canvas.height / canvas.width) : 0;
         const lines = doc.splitTextToSize(c.text, imgW);
         const blockH = 18 + imgH + 8 + lines.length * 13 + 18;
@@ -250,10 +196,10 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
                 )}
               </div>
             )
-          ) : !playable ? (
+          ) : !isVideoFile ? (
             <Fallback
               title="Can't preview this format in-app"
-              body={`.${target.name.split(".").pop()} (ProRes / RAW / MXF and similar pro codecs can't play in the app). Download it to review in your editor, comments here still export to PDF.`}
+              body={`.${target.name.split(".").pop()} can't be shown in the app (e.g. a RAW still). Download it to review in your editor, comments here still export to PDF.`}
             />
           ) : err ? (
             <Fallback title="Couldn't load the video" body={err} />

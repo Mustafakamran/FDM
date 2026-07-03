@@ -21,16 +21,79 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tiny_http::{Header, Response, Server};
 
-/// Bytes per range response. The player asks for more as it plays.
-const CHUNK: u64 = 4 * 1024 * 1024;
+/// Bytes per range response. The player asks for more as it plays. Larger chunks
+/// mean fewer round-trips for a big clip (a 10 GB file is ~1300 chunks at 8 MiB
+/// vs ~2600 at 4 MiB) while keeping per-request memory bounded.
+const CHUNK: u64 = 8 * 1024 * 1024;
 
-/// Holds the proxy's base URL (http://127.0.0.1:port/secret) for the frontend.
-#[derive(Default)]
+/// Provider access tokens live ~3600s; reuse a cached one for this long before
+/// refreshing (comfortably under the real lifetime).
+const TOKEN_TTL: Duration = Duration::from_secs(3000);
+
+/// Holds the proxy's base URL (http://127.0.0.1:port/secret) for the frontend,
+/// plus the shared HTTP client + token cache that make streaming fast.
 pub struct StreamState {
     pub base: Mutex<Option<String>>,
+    /// ONE keep-alive HTTP client, built once and reused for every range fetch,
+    /// so each 8 MiB chunk reuses the connection pool instead of paying a fresh
+    /// TCP + TLS handshake per request (`Client::new()` per chunk was a major
+    /// cause of the crawling playback throughput).
+    client: reqwest::blocking::Client,
+    /// Cached provider access token per token-owning account, with when it was
+    /// fetched. Streaming a large clip pulls hundreds/thousands of chunks; the
+    /// old code did a FULL OAuth refresh (config/dump + token POST) on EVERY
+    /// chunk, which Google then throttled — throttling throughput to ~KB/s. With
+    /// the cache the token is fetched roughly once per hour, not per chunk.
+    token_cache: Mutex<HashMap<String, (String, Instant)>>,
+}
+
+impl Default for StreamState {
+    fn default() -> Self {
+        StreamState {
+            base: Mutex::new(None),
+            client: reqwest::blocking::Client::builder()
+                .pool_max_idle_per_host(8)
+                .build()
+                .unwrap_or_default(),
+            token_cache: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+/// Get a provider access token for `token_acct`, reusing a cached one while it's
+/// still fresh. `force_refresh` bypasses the cache (used to recover from a 401).
+fn cached_token(
+    state: &StreamState,
+    conn: &RcConnection,
+    kind: provider::Kind,
+    token_acct: &str,
+    force_refresh: bool,
+) -> Result<String, String> {
+    if !force_refresh {
+        if let Some((tok, at)) = state
+            .token_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(token_acct)
+        {
+            if at.elapsed() < TOKEN_TTL {
+                return Ok(tok.clone());
+            }
+        }
+    }
+    let tok = provider::fetch_token(conn, kind, token_acct)?;
+    if !tok.is_empty() {
+        state
+            .token_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(token_acct.to_string(), (tok.clone(), Instant::now()));
+    }
+    Ok(tok)
 }
 
 /// The streaming proxy base URL (frontend appends `/media?...`).
@@ -121,10 +184,118 @@ fn header(k: &str, v: &str) -> Header {
     Header::from_bytes(k.as_bytes(), v.as_bytes()).expect("valid header")
 }
 
+/// Parallel sub-connections used to pull ONE range response. The single-connection
+/// stream proxy topped out well below a Drive/Dropbox account's real throughput,
+/// so a high-bitrate clip couldn't stream in real time even though the (parallel)
+/// downloader saturates the link. Splitting each chunk across several concurrent
+/// range requests — exactly how transfer.rs downloads — closes that gap. Kept at
+/// the downloader's default so it's no more likely to hit a provider rate limit.
+const STREAM_CONNECTIONS: u64 = 4;
+/// Below this, a chunk is fetched on one connection (parallelism isn't worth the
+/// thread + extra-request overhead for tiny ranges, e.g. the player's probe reads).
+const SUBRANGE_MIN: u64 = 1024 * 1024;
+
+/// Per-fetch failure. `auth` marks a 401 (a stale/revoked token → refresh + retry);
+/// everything else is transient (rate limit, network, short read) and triggers the
+/// single-connection fallback rather than a token refresh.
+struct FetchErr {
+    auth: bool,
+    msg: String,
+}
+
+/// One range request on one connection. `exact`: require the response to contain
+/// EXACTLY `end-start+1` bytes. Parallel sub-ranges MUST be exact — a short read
+/// would misalign the concatenation into corrupt data (the cause of the ffmpeg
+/// "partial file / invalid data" decode failures) — so a wrong length is rejected
+/// and the caller falls back to a single contiguous fetch. The contiguous fallback
+/// passes `exact=false`: one connection is inherently in-order, so a short read is
+/// harmless (the response just carries fewer bytes and Content-Range is set from
+/// the actual length by build_response).
+#[allow(clippy::too_many_arguments)]
+fn fetch_one(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    kind: provider::Kind,
+    fid: &str,
+    path: &str,
+    link: &str,
+    start: u64,
+    end: u64,
+    exact: bool,
+) -> Result<Vec<u8>, FetchErr> {
+    let resp = provider::send_range(client, token, kind, fid, path, link, start, end, false)
+        .map_err(|e| FetchErr { auth: false, msg: e.to_string() })?;
+    let status = resp.status();
+    // Only a 401 means the token is bad; 403/429 are rate limits (retrying with a
+    // fresh token wouldn't help), 5xx/network are transient — all fall back.
+    if status.as_u16() == 401 {
+        return Err(FetchErr { auth: true, msg: format!("401 {}", resp.text().unwrap_or_default()) });
+    }
+    if !status.is_success() {
+        return Err(FetchErr { auth: false, msg: format!("range fetch {status}: {}", resp.text().unwrap_or_default()) });
+    }
+    let data = resp.bytes().map_err(|e| FetchErr { auth: false, msg: e.to_string() })?.to_vec();
+    if exact {
+        let want = (end - start + 1) as usize;
+        if data.len() != want {
+            return Err(FetchErr { auth: false, msg: format!("short range: got {} want {}", data.len(), want) });
+        }
+    }
+    Ok(data)
+}
+
+/// Fetch [start, end] across up to STREAM_CONNECTIONS concurrent exact sub-ranges,
+/// concatenated in order. Any sub-range that isn't exactly its requested length
+/// fails the whole fetch (so the caller can fall back), guaranteeing the assembled
+/// bytes are never misaligned.
+#[allow(clippy::too_many_arguments)]
+fn fetch_parallel(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    kind: provider::Kind,
+    fid: &str,
+    path: &str,
+    link: &str,
+    start: u64,
+    end: u64,
+) -> Result<Vec<u8>, FetchErr> {
+    let total = end - start + 1;
+    if total <= SUBRANGE_MIN || STREAM_CONNECTIONS <= 1 {
+        return fetch_one(client, token, kind, fid, path, link, start, end, true);
+    }
+    let sub = total.div_ceil(STREAM_CONNECTIONS);
+    let mut handles = Vec::new();
+    let mut i = 0u64;
+    while start + i * sub <= end {
+        let s = start + i * sub;
+        let e = (s + sub - 1).min(end);
+        let (client, token, fid, path, link) =
+            (client.clone(), token.to_string(), fid.to_string(), path.to_string(), link.to_string());
+        handles.push(std::thread::spawn(move || fetch_one(&client, &token, kind, &fid, &path, &link, s, e, true)));
+        i += 1;
+    }
+    let mut out = Vec::with_capacity(total as usize);
+    for h in handles {
+        let part = h.join().map_err(|_| FetchErr { auth: false, msg: "sub-fetch thread panicked".into() })??;
+        out.extend_from_slice(&part);
+    }
+    Ok(out)
+}
+
 /// Fetch byte range [start, end] (inclusive) for a file from its provider.
+///
+/// Strategy: try the fast parallel path first; if the token is stale (401),
+/// refresh once and retry; on any OTHER failure (rate limit, transient network,
+/// or a non-exact sub-range) fall back to a single contiguous connection, which
+/// can't corrupt data and is far less likely to trip a provider rate limit. The
+/// returned length may be shorter than requested — build_response sets the
+/// Content-Range from the ACTUAL length so the HTTP response is always
+/// self-consistent (no truncated-read errors on the client).
+#[allow(clippy::too_many_arguments)]
 fn fetch_range(
     app: &AppHandle,
     conn: &RcConnection,
+    state: &StreamState,
     acct: &str,
     fid: &str,
     path: &str,
@@ -133,16 +304,34 @@ fn fetch_range(
 ) -> Result<Vec<u8>, String> {
     let kind = provider::kind_of(acct);
     let (token_acct, link) = provider::token_account(app, acct);
-    let token = provider::fetch_token(conn, kind, &token_acct)?;
-    let client = reqwest::blocking::Client::new();
-    let resp = provider::send_range(&client, &token, kind, fid, path, &link, start, end, false)
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        let s = resp.status();
-        let b = resp.text().unwrap_or_default();
-        return Err(format!("range fetch {s}: {b}"));
+
+    // Fast path: parallel, with one token refresh on a 401.
+    let mut force = false;
+    loop {
+        let token = cached_token(state, conn, kind, &token_acct, force)?;
+        match fetch_parallel(&state.client, &token, kind, fid, path, &link, start, end) {
+            Ok(data) => return Ok(data),
+            Err(e) if e.auth && !force && !token.is_empty() => {
+                force = true;
+                continue;
+            }
+            Err(_) => break, // fall through to the single-connection fallback
+        }
     }
-    Ok(resp.bytes().map_err(|e| e.to_string())?.to_vec())
+
+    // Robust fallback: one contiguous connection (accepts a short read).
+    let mut force = false;
+    loop {
+        let token = cached_token(state, conn, kind, &token_acct, force)?;
+        match fetch_one(&state.client, &token, kind, fid, path, &link, start, end, false) {
+            Ok(data) => return Ok(data),
+            Err(e) if e.auth && !force && !token.is_empty() => {
+                force = true;
+                continue;
+            }
+            Err(e) => return Err(e.msg),
+        }
+    }
 }
 
 /// Resolve a request into (data, start, end, total, content-type).
@@ -201,7 +390,17 @@ fn build_response(
         .unwrap_or_else(|e| e.into_inner())
         .clone()
         .ok_or_else(|| "rclone not started".to_string())?;
-    let data = fetch_range(app, &conn, acct, fid, &path, start, end)?;
+    let state = app.state::<StreamState>();
+    let data = fetch_range(app, &conn, &state, acct, fid, &path, start, end)?;
+    if data.is_empty() {
+        return Err("empty range response".into());
+    }
+    // Set the response's end from the ACTUAL bytes returned, not the requested
+    // end. The fetch may return fewer bytes (a fallback short read); reporting the
+    // real length keeps Content-Range == Content-Length so the client (the player
+    // AND ffmpeg) never sees a truncated response — it just requests the next
+    // range from where this one ended.
+    let end = start + data.len() as u64 - 1;
     Ok((data, start, end, size, mime_for_ext(ext)))
 }
 

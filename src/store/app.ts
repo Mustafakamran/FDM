@@ -24,6 +24,8 @@ export type View =
   | { kind: "downloads"; filter: DownloadFilter; web?: boolean; detail?: string; category?: WebCategoryFilter }
   // The Uploads area — a mirror of Downloads for local → cloud transfers.
   | { kind: "uploads"; filter: DownloadFilter }
+  // "New folders" — root folders recently added to any drive (see NewFoldersView).
+  | { kind: "new-folders" }
   | { kind: "review"; accountId: string; target: ReviewTarget }
   // Dashboard / landing: at-a-glance stats (accounts, storage, downloads, files).
   | { kind: "home" }
@@ -84,6 +86,7 @@ interface AppState {
   showDownloads: (filter: DownloadFilter) => void;
   /** Open the Uploads view (local → cloud transfers). */
   showUploads: (filter: DownloadFilter) => void;
+  showNewFolders: () => void;
   /** Open the GENERAL / WEB DOWNLOADS view (secondary-lane http/ytdlp jobs). */
   showWebDownloads: () => void;
   /** Pin (or, with undefined, clear) one web download in the detail panel. */
@@ -145,6 +148,8 @@ export const useApp = create<AppState>((set, get) => {
   showDownloads: (filter) => set((s) => navTo(s, { kind: "downloads", filter })),
 
   showUploads: (filter) => set((s) => navTo(s, { kind: "uploads", filter })),
+
+  showNewFolders: () => set((s) => navTo(s, { kind: "new-folders" })),
 
   showWebDownloads: () => set((s) => navTo(s, { kind: "downloads", filter: "all", web: true, category: "All" })),
 
