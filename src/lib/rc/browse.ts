@@ -30,11 +30,16 @@ export interface SizeResult {
   count: number;
 }
 
-/** Recursively compute a folder's total size via rclone (Drive/Dropbox don't expose it). */
+/**
+ * Recursively compute a folder's total size via rclone (Drive/Dropbox don't
+ * expose it). NOTE: `operations/size` sizes the ENTIRE `fs` and ignores any
+ * `remote` subpath — so the folder path MUST be folded into the fs connection
+ * string (`…:<path>`). Passing it as `remote` (as this once did) made every
+ * on-demand size return the whole account's usage instead of the folder's.
+ */
 export async function folderSize(account: Account, path: string): Promise<SizeResult> {
   const res = await new RcClient().call<{ bytes?: number; count?: number }>("operations/size", {
-    fs: buildFs(account),
-    remote: path,
+    fs: `${buildFs(account)}${path}`,
   });
   return { bytes: res?.bytes ?? 0, count: res?.count ?? 0 };
 }
