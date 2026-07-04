@@ -340,7 +340,7 @@ const AccountTile = memo(function AccountTile({
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
             setMenuPos({ x: r.right, y: r.bottom + 4 });
           }}
-          className="shrink-0 text-[var(--faint)] opacity-0 transition hover:text-[var(--ink)] group-hover:opacity-100"
+          className="shrink-0 scale-75 text-[var(--faint)] opacity-0 transition hover:text-[var(--ink)] group-hover:scale-100 group-hover:opacity-100"
         >
           <MoreHorizontal size={15} />
         </button>

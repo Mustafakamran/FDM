@@ -35,8 +35,8 @@ export function TextField({
   ...rest
 }: { label: string } & InputHTMLAttributes<HTMLInputElement>) {
   return (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium text-[var(--text-2)]">{label}</span>
+    <label className="group/field flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-[var(--text-2)] transition-colors group-focus-within/field:text-[var(--accent)]">{label}</span>
       <input
         className={`focus-accent rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-3)] ${className}`}
         {...rest}

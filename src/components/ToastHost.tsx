@@ -22,7 +22,7 @@ export function ToastHost() {
       {toasts.map((t) => (
         <div
           key={t.id}
-          className="animate-rise pointer-events-auto flex items-center gap-2.5 rounded-[9px] border border-[var(--border-strong)] bg-[var(--card)] py-2.5 pl-3 pr-2.5 text-sm text-[var(--text)] shadow-[var(--shadow-lg)]"
+          className={`${t.leaving ? "animate-toast-out" : "animate-rise"} pointer-events-auto flex items-center gap-2.5 rounded-[9px] border border-[var(--border-strong)] bg-[var(--card)] py-2.5 pl-3 pr-2.5 text-sm text-[var(--text)] shadow-[var(--shadow-lg)]`}
           style={{ minWidth: 240, maxWidth: 360 }}
         >
           <span style={{ color: color[t.type] }} className="shrink-0">

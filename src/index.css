@@ -433,6 +433,21 @@ input[type="checkbox"]:active {
   animation: spin-once 0.5s var(--ease-out);
 }
 
+/* Toast dismissal — slide + fade out to the right before unmounting. */
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(14px) scale(0.98);
+  }
+}
+.animate-toast-out {
+  animation: toast-out 0.2s var(--ease-out) both;
+}
+
 /* Tooltip fade-in (positioning transform is applied inline, so only fade here). */
 @keyframes tip {
   from {
@@ -453,7 +468,8 @@ input[type="checkbox"]:active {
   .animate-item,
   .animate-badge,
   .animate-fade,
-  .animate-spin-once {
+  .animate-spin-once,
+  .animate-toast-out {
     animation: none;
   }
 }
@@ -493,9 +509,10 @@ input[type="checkbox"]:active {
   border-radius: 6px;
   border: 2px solid transparent;
   background-clip: padding-box;
+  transition: background-color var(--dur-base) ease;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--border-strong);
+  background: var(--text-3);
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-track {

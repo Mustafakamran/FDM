@@ -644,7 +644,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             disabled={!canGoBack}
             aria-label="Back"
             data-tip="Back (Alt+←)"
-            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:opacity-30 disabled:hover:bg-transparent"
+            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] transition-colors hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
           >
             <ChevronLeft size={17} />
           </button>
@@ -653,7 +653,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             disabled={!canGoForward}
             aria-label="Forward"
             data-tip="Forward (Alt+→)"
-            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:opacity-30 disabled:hover:bg-transparent"
+            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] transition-colors hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
           >
             <ChevronRight size={17} />
           </button>
@@ -662,7 +662,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             disabled={!path}
             aria-label="Up one folder"
             data-tip="Up one folder"
-            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:opacity-30 disabled:hover:bg-transparent"
+            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] transition-colors hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
           >
             <CornerLeftUp size={16} />
           </button>
@@ -859,10 +859,11 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           <BrowseEmptyState q={q} section={section} />
         ) : grid ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3 py-2">
-            {items.map((item) => (
+            {items.map((item, gi) => (
               <FileGridItem
                 key={item.ID ?? item.Path}
                 item={item}
+                gridIndex={gi}
                 isSelected={selected.has(item.Path)}
                 blink={item.Path === blinkPath}
                 folderSize={folderSizeState(item.Path)}
@@ -1223,6 +1224,7 @@ const FileGridItem = memo(function FileGridItem({
   visited,
   hasDownloads,
   status,
+  gridIndex,
   actions,
 }: {
   item: RcItem;
@@ -1233,13 +1235,15 @@ const FileGridItem = memo(function FileGridItem({
   visited: boolean;
   hasDownloads: boolean;
   status: FolderStatus | undefined;
+  gridIndex: number;
   actions: RowActions;
 }) {
   const ft = fileType(item.Name, item.IsDir);
   return (
     <div
       onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }}
-      className={`relative flex flex-col items-center gap-3 rounded-[11px] border p-5 transition-colors duration-150 ${blink ? "animate-flash border-[var(--acc)]" : isSelected ? "border-[var(--accent)] bg-[var(--card)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
+      style={{ animationDelay: `${Math.min(gridIndex, 16) * 22}ms` }}
+      className={`animate-item relative flex flex-col items-center gap-3 rounded-[11px] border p-5 transition-colors duration-150 ${blink ? "animate-flash border-[var(--acc)]" : isSelected ? "border-[var(--accent)] bg-[var(--card)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
     >
       <input
         type="checkbox"
@@ -1277,6 +1281,7 @@ const FileGridItem = memo(function FileGridItem({
   prev.visited === next.visited &&
   prev.hasDownloads === next.hasDownloads &&
   prev.status === next.status &&
+  prev.gridIndex === next.gridIndex &&
   folderSizeEqual(prev.folderSize, next.folderSize));
 
 /** Shimmer placeholder rows shown while a folder/index loads, shaped like the
