@@ -134,20 +134,38 @@ fn normalize_path(folder: &str, raw: &str) -> String {
     }
 }
 
-/// Whether an ISO modified-time is plausible (not stamped in the future). Some
-/// devices with a wrong clock write file dates years ahead (e.g. 2027, 2049),
-/// which would otherwise become the crawl's `date_max` and show a nonsense
-/// "latest" date. Reject anything past next year (a one-year grace so timezone
-/// skew never trims a genuinely-recent file).
-fn date_plausible(mod_time: &str) -> bool {
-    if mod_time.len() < 4 {
-        return false;
-    }
-    let ceiling = std::time::SystemTime::now()
+/// Civil (year, month, day) from days since the Unix epoch — Howard Hinnant's
+/// algorithm, dep-free. Used to turn "now" into a YYYY-MM-DD ceiling.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// Today's date + 2 days as "YYYY-MM-DD" — the ceiling for a plausible file date.
+/// (2-day grace absorbs timezone skew; anything past it is a wrong-clock artifact.)
+fn future_date_ceiling() -> String {
+    let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| 1970 + d.as_secs() as i64 / 31_557_600 + 1)
-        .unwrap_or(9999);
-    mod_time[..4].parse::<i64>().map(|y| y <= ceiling).unwrap_or(false)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(i64::MAX / 2);
+    let (y, m, d) = civil_from_days(secs / 86_400 + 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Whether an ISO modified-time is plausible (not stamped in the future). Some
+/// devices with a wrong clock write file dates ahead of today (seen: 2027, 2049),
+/// which would otherwise become the crawl's `date_max` and show a nonsense
+/// "latest" date. Compares the YYYY-MM-DD prefix against today+2d.
+fn date_plausible(mod_time: &str) -> bool {
+    mod_time.len() >= 10 && mod_time[..10] <= *future_date_ceiling()
 }
 
 /// Running file/size/date totals, folded over file entries during a crawl.
@@ -314,8 +332,9 @@ struct Crawl {
     queue: Mutex<VecDeque<Entry>>,
     out: Mutex<Vec<Entry>>,
     stats: Mutex<CrawlStats>,
-    /// Folder IDs already enqueued, so the shortcut/shared_with_me graph is
-    /// crawled as a set (each folder once), not a tree that re-counts subtrees.
+    /// IDs already accounted for: folder IDs (deduped at enqueue so the
+    /// shortcut/shared_with_me graph is crawled once, not re-counted) AND file IDs
+    /// (a file reached via multiple shortcuts is counted once, not per reference).
     seen: Mutex<HashSet<String>>,
     done: AtomicUsize,  // folders processed
     total: AtomicUsize, // folders discovered so far
@@ -392,18 +411,28 @@ fn bfs_crawl(
 
             let mut local = CrawlStats::default();
             let mut subdirs: Vec<Entry> = Vec::new();
+            let mut keep: Vec<Entry> = Vec::with_capacity(children.len());
             {
-                let mut acc = lock(&crawl.out);
+                // Count each FILE once by Drive ID: a file reached from several
+                // folders (Drive shortcuts / multi-parent) would otherwise have its
+                // bytes counted per reference — this is what the folder-only dedup
+                // missed (105TB → 45TB but still ~8x). Folder traversal is deduped at
+                // enqueue (retain_unseen); folder entries are kept as-is here (size 0,
+                // so a repeat is harmless). ID-less entries (no-ID providers, e.g.
+                // Dropbox) are always kept — their paths are already unique.
+                let mut seen = lock(&crawl.seen);
                 for mut it in children {
                     it.path = normalize_path(&dir.path, &it.path);
                     if it.is_dir {
                         subdirs.push(it.clone());
-                    } else {
+                        keep.push(it);
+                    } else if it.id.is_empty() || seen.insert(it.id.clone()) {
                         local.fold(&it);
+                        keep.push(it);
                     }
-                    acc.push(it);
                 }
             }
+            lock(&crawl.out).extend(keep);
             // Enqueue discovered subfolders, skipping any folder id already seen
             // (reached via another shortcut / shared_with_me path) so its subtree
             // isn't re-crawled and re-counted. Grow the discovered-total by the
@@ -813,6 +842,14 @@ mod tests {
         assert_eq!(s.date_max, "2026-03-01T00:00:00Z");
         assert_eq!(s.files, 2);
         assert_eq!(s.bytes, 200);
+    }
+
+    #[test]
+    fn civil_from_days_matches_known_dates() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1)); // unix epoch
+        assert_eq!(civil_from_days(18262), (2020, 1, 1)); // 1577836800 / 86400
+        assert_eq!(civil_from_days(19723), (2024, 1, 1)); // 1704067200 / 86400
+        assert_eq!(civil_from_days(20544), (2026, 4, 1)); // 1775001600 / 86400
     }
 
     #[test]
