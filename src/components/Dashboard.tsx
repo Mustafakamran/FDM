@@ -87,7 +87,7 @@ function Stat({ icon, label, value, sub, accent, onClick }: { icon: ReactNode; l
   const Comp = onClick ? "button" : "div";
   return (
     <Comp onClick={onClick} className={`flex flex-col gap-3 rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4 text-left ${onClick ? "hover:border-[var(--line2)]" : ""}`}>
-      <span className={`flex h-9 w-9 items-center justify-center rounded-[10px] ${accent ? "bg-[var(--dl)] text-white" : "bg-[var(--accw)] text-[var(--acc)]"}`}>{icon}</span>
+      <span className={`flex h-9 w-9 items-center justify-center rounded-[10px] ${accent ? "bg-[var(--accent)] text-[var(--accent-ink)]" : "bg-[var(--accw)] text-[var(--acc)]"}`}>{icon}</span>
       <div className="min-w-0">
         <div className="tnum truncate text-[24px] font-bold leading-none tracking-[-0.02em] text-[var(--ink)]">{value}</div>
         <div className="mt-1.5 truncate text-[12.5px] font-medium text-[var(--mut)]">{label}</div>

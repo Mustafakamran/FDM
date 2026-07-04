@@ -228,7 +228,7 @@ function NavItem({ icon, label, active, onClick, badge }: { icon: ReactNode; lab
     >
       <span className="flex w-[18px] shrink-0 justify-center">{icon}</span>
       <span className="flex-1 text-left">{label}</span>
-      {badge != null && <span className="tnum rounded-full bg-[var(--dl)] px-[7px] py-px text-[11px] font-semibold text-white">{badge}</span>}
+      {badge != null && <span className="tnum rounded-full bg-[var(--accent)] px-[7px] py-px text-[11px] font-semibold text-[var(--accent-ink)]">{badge}</span>}
     </button>
   );
 }

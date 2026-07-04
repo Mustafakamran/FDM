@@ -1,21 +1,41 @@
-import { FolderPlus, Folder, Loader2, ChevronRight } from "lucide-react";
+import { useState } from "react";
+import { FolderPlus, Folder, Loader2, ChevronRight, Download, Pause, Check, HardDrive } from "lucide-react";
 import { useApp } from "../store/app";
 import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { useNewFolders } from "../lib/use-new-folders";
 import { formatBytes, formatDate } from "../lib/format";
 import { ProviderIcon } from "./icons";
 import { EmptyState } from "./ui";
+import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
+import { StatusBadge } from "./ui/StatusBadge";
+import { useFolderStatus, FOLDER_STATUS_META, FOLDER_STATUS_ORDER } from "../store/folder-status";
 import type { SizeValue } from "../store/browse";
+
+const STATUS_ICON = { downloading: Download, on_hold: Pause, downloaded: Check, copied: HardDrive } as const;
 
 /**
  * "New folders" — top-level folders a client has added to any connected drive
- * since it was last seen (within the recent window), that you haven't downloaded
- * yet. Clicking a folder jumps to its location in the normal browse view.
+ * since it was last seen, that you haven't downloaded yet. Click jumps to the
+ * folder in the browser; right-click sets a workflow status (Downloading / On
+ * hold / Downloaded / Copied).
  */
 export function NewFoldersView() {
   const setView = useApp((s) => s.setView);
   const meta = useAccountMeta((s) => s.byId);
   const { groups, count, totalSize, allSized, sizeOf } = useNewFolders();
+  const statusByAccount = useFolderStatus((s) => s.byAccount);
+  const setFolderStatus = useFolderStatus((s) => s.set);
+  const [menu, setMenu] = useState<{ x: number; y: number; accountId: string; path: string } | null>(null);
+
+  const menuItems = (accountId: string, path: string): MenuItem[] => {
+    const cur = statusByAccount[accountId]?.[path];
+    return FOLDER_STATUS_ORDER.map((st, i) => ({
+      label: cur === st ? `${FOLDER_STATUS_META[st].label} ✓` : `Mark ${FOLDER_STATUS_META[st].label}`,
+      icon: STATUS_ICON[st],
+      separator: i === 0,
+      onClick: () => setFolderStatus(accountId, path, cur === st ? null : st),
+    }));
+  };
 
   return (
     <div className="h-full overflow-auto px-8 py-7">
@@ -41,7 +61,7 @@ export function NewFoldersView() {
         <EmptyState
           icon={<FolderPlus size={20} />}
           title="Nothing new right now"
-          body={`When a client adds a folder to one of your drives, it appears here so you know what still needs downloading. Folders you've already downloaded are hidden.`}
+          body={`When a client adds a folder to one of your drives, it appears here so you know what still needs downloading. Right-click a folder to mark it Downloading / On hold / Downloaded / Copied. Folders you've already downloaded are hidden.`}
         />
       ) : (
         <div className="flex flex-col gap-6">
@@ -53,28 +73,40 @@ export function NewFoldersView() {
                 <span className="tnum text-[var(--faint)]">· {g.folders.length}</span>
               </div>
               <div className="overflow-hidden rounded-[13px] border border-[var(--line)]">
-                {g.folders.map((f, i) => (
-                  <button
-                    key={f.Path}
-                    onClick={() => setView({ kind: "browse", accountId: g.account.id, section: "all", path: f.Path })}
-                    className={`group flex w-full items-center gap-3 bg-[var(--card)] px-4 py-3 text-left hover:bg-[var(--hover)] ${i > 0 ? "border-t border-[var(--line)]" : ""}`}
-                  >
-                    <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] bg-[var(--accw)]">
-                      <Folder size={18} className="text-[var(--acc)]" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13.5px] font-medium text-[var(--ink)]">{f.Name}</span>
-                      <span className="block truncate text-[11.5px] text-[var(--faint)]">Added {formatDate(f.ModTime)}</span>
-                    </span>
-                    <SizeLabel size={sizeOf(g.account.id, f.Path)} />
-                    <ChevronRight size={16} className="shrink-0 text-[var(--faint)] opacity-0 transition-opacity group-hover:opacity-100" />
-                  </button>
-                ))}
+                {g.folders.map((f, i) => {
+                  const status = statusByAccount[g.account.id]?.[f.Path];
+                  return (
+                    <button
+                      key={f.Path}
+                      onClick={() => setView({ kind: "browse", accountId: g.account.id, section: "all", path: f.Path })}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setMenu({ x: e.clientX, y: e.clientY, accountId: g.account.id, path: f.Path });
+                      }}
+                      className={`group flex w-full items-center gap-3 bg-[var(--card)] px-4 py-3 text-left hover:bg-[var(--hover)] ${i > 0 ? "border-t border-[var(--line)]" : ""}`}
+                    >
+                      <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] bg-[var(--accw)]">
+                        <Folder size={18} className="text-[var(--acc)]" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5">
+                          <span className="truncate text-[13.5px] font-medium text-[var(--ink)]">{f.Name}</span>
+                          {status && <StatusBadge status={status} />}
+                        </span>
+                        <span className="block truncate text-[11.5px] text-[var(--faint)]">Added {formatDate(f.ModTime)}</span>
+                      </span>
+                      <SizeLabel size={sizeOf(g.account.id, f.Path)} />
+                      <ChevronRight size={16} className="shrink-0 text-[var(--faint)] opacity-0 transition-opacity group-hover:opacity-100" />
+                    </button>
+                  );
+                })}
               </div>
             </div>
           ))}
         </div>
       )}
+
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.accountId, menu.path)} onClose={() => setMenu(null)} />}
     </div>
   );
 }

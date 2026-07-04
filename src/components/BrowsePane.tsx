@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, ChevronLeft, ChevronRight, CornerLeftUp, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X } from "lucide-react";
+import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, ChevronLeft, ChevronRight, CornerLeftUp, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X, Pause, HardDrive } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
 import { isVideo, isPreviewable, extOf } from "../lib/review";
@@ -19,6 +19,8 @@ import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { ProviderIcon } from "./icons";
 import { Button, Skeleton, EmptyState } from "./ui";
 import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
+import { useFolderStatus, FOLDER_STATUS_META, FOLDER_STATUS_ORDER, type FolderStatus } from "../store/folder-status";
+import { StatusBadge } from "./ui/StatusBadge";
 import { fileType } from "../lib/file-types";
 import { itemAt } from "../lib/account-index";
 import { IndexProgress } from "./IndexProgress";
@@ -138,6 +140,8 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const q = useSearch((s) => s.q);
   const starred = useStarred((s) => s.byAccount[account.id]) ?? EMPTY_STARS;
   const toggleStar = useStarred((s) => s.toggle);
+  const folderStatusMap = useFolderStatus((s) => s.byAccount[account.id]);
+  const setFolderStatus = useFolderStatus((s) => s.set);
 
   // Folder badges: "visited" (opened at least once) persists across restarts;
   // "has downloads" is derived from history rather than stored separately, so
@@ -542,6 +546,17 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
       out.push({ label: "Open", icon: FolderOpen, onClick: () => setView({ kind: "browse", accountId: account.id, section: "all", path: item.Path }) });
       out.push({ label: "Calculate size", icon: Calculator, onClick: () => calcSize(item.Path) });
       out.push({ label: folderIndexed(item.Path) ? "Re-index folder" : "Index folder", icon: FolderSearch, disabled: showCrawl, onClick: () => indexFolder(item.Path) });
+      // Manual workflow status — mark (or, by clicking the active one, clear).
+      const cur = folderStatusMap?.[item.Path];
+      const STATUS_ICON = { downloading: Download, on_hold: Pause, downloaded: Check, copied: HardDrive } as const;
+      FOLDER_STATUS_ORDER.forEach((st, i) => {
+        out.push({
+          label: cur === st ? `${FOLDER_STATUS_META[st].label} ✓` : `Mark ${FOLDER_STATUS_META[st].label}`,
+          icon: STATUS_ICON[st],
+          separator: i === 0,
+          onClick: () => setFolderStatus(account.id, item.Path, cur === st ? null : st),
+        });
+      });
     } else if (isPreviewable(item.Name)) {
       out.push({ label: "Preview", icon: Eye, onClick: () => usePreview.getState().open(account.id, reviewTarget(item)) });
       out.push({ label: "Review", icon: Play, onClick: () => openReview(account.id, reviewTarget(item)) });
@@ -806,6 +821,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                 folderCount={fileCountOf(item)}
                 visited={item.IsDir && visitedSet.has(item.Path)}
                 hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
+                status={folderStatusMap?.[item.Path]}
                 actions={rowActions}
               />
             ))}
@@ -844,6 +860,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                   folderIndexedFlag={folderIndexed(item.Path)}
                   visited={item.IsDir && visitedSet.has(item.Path)}
                   hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
+                  status={folderStatusMap?.[item.Path]}
                   actions={rowActions}
                 />
               ))}
@@ -1012,6 +1029,7 @@ const FileRow = memo(function FileRow({
   folderIndexedFlag,
   visited,
   hasDownloads,
+  status,
   actions,
 }: {
   item: RcItem;
@@ -1025,6 +1043,7 @@ const FileRow = memo(function FileRow({
   folderIndexedFlag: boolean;
   visited: boolean;
   hasDownloads: boolean;
+  status: FolderStatus | undefined;
   actions: RowActions;
 }) {
   const ft = fileType(item.Name, item.IsDir);
@@ -1053,6 +1072,7 @@ const FileRow = memo(function FileRow({
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[13.5px] font-medium text-[var(--ink)]">{item.Name}</span>
+          {status && <StatusBadge status={status} />}
           {isStarred && <Star size={11} fill="currentColor" className="shrink-0 text-[var(--warn)]" />}
           {video && <Play size={11} className="shrink-0 text-[var(--faint)] opacity-0 group-hover:opacity-100" />}
         </span>
@@ -1141,6 +1161,7 @@ const FileRow = memo(function FileRow({
   prev.folderIndexedFlag === next.folderIndexedFlag &&
   prev.visited === next.visited &&
   prev.hasDownloads === next.hasDownloads &&
+  prev.status === next.status &&
   folderSizeEqual(prev.folderSize, next.folderSize));
 
 /** One grid-view card — same memoization rationale as FileRow. */
@@ -1152,6 +1173,7 @@ const FileGridItem = memo(function FileGridItem({
   folderCount,
   visited,
   hasDownloads,
+  status,
   actions,
 }: {
   item: RcItem;
@@ -1161,6 +1183,7 @@ const FileGridItem = memo(function FileGridItem({
   folderCount: number | undefined;
   visited: boolean;
   hasDownloads: boolean;
+  status: FolderStatus | undefined;
   actions: RowActions;
 }) {
   const ft = fileType(item.Name, item.IsDir);
@@ -1186,6 +1209,7 @@ const FileGridItem = memo(function FileGridItem({
           {item.IsDir && <FolderBadge hasDownloads={hasDownloads} visited={visited} />}
         </span>
         <span className="line-clamp-2 text-sm text-[var(--text)]">{item.Name}</span>
+        {status && <StatusBadge status={status} />}
       </button>
       <span className="tnum text-xs text-[var(--text-3)]">
         <SizeCell item={item} folderSize={folderSize} onCalcSize={actions.calcSize} />
@@ -1203,6 +1227,7 @@ const FileGridItem = memo(function FileGridItem({
   prev.folderCount === next.folderCount &&
   prev.visited === next.visited &&
   prev.hasDownloads === next.hasDownloads &&
+  prev.status === next.status &&
   folderSizeEqual(prev.folderSize, next.folderSize));
 
 /** Shimmer placeholder rows shown while a folder/index loads, shaped like the
