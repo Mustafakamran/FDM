@@ -84,7 +84,7 @@ function PreviewBody() {
             <img
               src={url}
               alt={target.name}
-              className="max-h-full max-w-full rounded-[8px] object-contain"
+              className="animate-fade max-h-full max-w-full rounded-[8px] object-contain"
               onError={() =>
                 setErr(
                   "This image format doesn’t decode in the app on this OS (HEIC previews on macOS but generally not on Windows). Download it to view.",

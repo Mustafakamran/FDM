@@ -222,7 +222,7 @@ function NavItem({ icon, label, active, onClick, badge }: { icon: ReactNode; lab
   return (
     <button
       onClick={onClick}
-      className={`flex h-10 items-center gap-3 rounded-[11px] px-[13px] text-[13.5px] ${
+      className={`flex h-10 items-center gap-3 rounded-[11px] px-[13px] text-[13.5px] transition active:translate-y-px ${
         active ? "bg-[var(--accw)] font-semibold text-[var(--acc)]" : "font-medium text-[var(--mut)] hover:bg-[var(--soft)]"
       }`}
     >

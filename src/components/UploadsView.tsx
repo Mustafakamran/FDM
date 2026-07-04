@@ -78,7 +78,7 @@ export function UploadsView({ filter }: { filter: DownloadFilter }) {
             <div className="mb-3 font-mono text-[11px] font-semibold tracking-[0.06em] text-[var(--faint)]">IN PROGRESS</div>
             <div className="flex flex-col gap-3">
               {active.map((u) => (
-                <div key={u.jobId} className="rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4">
+                <div key={u.jobId} className="rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4 transition-colors hover:border-[var(--line2)]">
                   <div className="mb-3 flex items-center gap-3">
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] bg-[var(--accw)]">
                       <Upload size={16} className="text-[var(--dl)]" />

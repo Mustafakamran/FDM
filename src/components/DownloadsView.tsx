@@ -152,7 +152,7 @@ function PrimaryDownloads({ filter }: { filter: DownloadFilter }) {
             <div className="mb-3 font-mono text-[11px] font-semibold tracking-[0.06em] text-[var(--faint)]">IN PROGRESS</div>
             <div className="flex flex-col gap-3">
               {active.map((j) => (
-                <div key={j.jobId} className="rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4">
+                <div key={j.jobId} className="rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4 transition-colors hover:border-[var(--line2)]">
                   <div className="mb-3 flex items-center gap-3">
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] bg-[var(--accw)] font-mono text-[10px] font-semibold text-[var(--mut)]">{ext(j.name)}</span>
                     <div className="min-w-0 flex-1">
@@ -183,7 +183,7 @@ function PrimaryDownloads({ filter }: { filter: DownloadFilter }) {
                 </div>
               ))}
               {primaryQueue.map((q, i) => (
-                <div key={q.id} className="flex items-center gap-3 rounded-[15px] border border-[var(--line)] p-4">
+                <div key={q.id} className="flex items-center gap-3 rounded-[15px] border border-[var(--line)] p-4 transition-colors hover:border-[var(--line2)]">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] bg-[var(--soft)] font-mono text-[10px] font-semibold text-[var(--faint)]">{ext(q.item.name)}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">

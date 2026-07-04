@@ -94,7 +94,7 @@ export function TopBar() {
         >
           <Bell size={16} />
           {unread > 0 && (
-            <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--dl)] px-1 text-[10px] font-semibold text-white">
+            <span key={unread} className="animate-badge absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold text-[var(--accent-ink)]">
               {unread > 9 ? "9+" : unread}
             </span>
           )}

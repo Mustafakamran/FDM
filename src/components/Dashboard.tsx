@@ -7,6 +7,7 @@ import { useHistory } from "../store/history";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { useNewFolders } from "../lib/use-new-folders";
 import { SpeedTestCard } from "./SpeedTestCard";
+import { CountUp } from "./ui/CountUp";
 
 /** At-a-glance landing: accounts, active downloads, storage, and new folders. */
 export function Dashboard() {
@@ -50,11 +51,11 @@ export function Dashboard() {
           range below 1024px. Step through 3 at the floor, 4 once there's
           genuinely room. */}
       <div className="grid grid-cols-2 gap-3.5 md:grid-cols-3 xl:grid-cols-4">
-        <Stat icon={<HardDrive size={18} />} label="Connected drives" value={String(accounts.length)} sub={accountProviders(accounts)} />
+        <Stat icon={<HardDrive size={18} />} label="Connected drives" value={<CountUp value={accounts.length} />} sub={accountProviders(accounts)} />
         <Stat
           icon={<Download size={18} />}
           label="Active downloads"
-          value={String(activeCount)}
+          value={<CountUp value={activeCount} />}
           sub={totalSpeed > 0 ? `${formatSpeed(totalSpeed)} now` : "none running"}
           accent={activeCount > 0}
           onClick={() => showDownloads("active")}
@@ -63,7 +64,7 @@ export function Dashboard() {
         <Stat
           icon={<FolderPlus size={18} />}
           label="New folders"
-          value={newFolderCount > 0 ? String(newFolderCount) : "—"}
+          value={newFolderCount > 0 ? <CountUp value={newFolderCount} /> : "—"}
           sub={newFolderCount > 0 ? `${formatBytes(newFolderSize)}${allSized ? "" : "+"} to download` : "nothing new"}
           accent={newFolderCount > 0}
           onClick={() => showNewFolders()}
@@ -83,7 +84,7 @@ export function Dashboard() {
   );
 }
 
-function Stat({ icon, label, value, sub, accent, onClick }: { icon: ReactNode; label: string; value: string; sub?: string; accent?: boolean; onClick?: () => void }) {
+function Stat({ icon, label, value, sub, accent, onClick }: { icon: ReactNode; label: string; value: ReactNode; sub?: string; accent?: boolean; onClick?: () => void }) {
   const Comp = onClick ? "button" : "div";
   return (
     <Comp onClick={onClick} className={`flex flex-col gap-3 rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4 text-left transition-colors duration-150 ${onClick ? "hover:border-[var(--line2)] active:translate-y-px" : ""}`}>

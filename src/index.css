@@ -365,6 +365,63 @@ input,
   animation: flashrow 0.6s ease-in-out 2;
 }
 
+/* Staggered list-item entrance — fade + small rise. Each item sets its own
+   animation-delay inline (capped) so a list cascades in instead of snapping. */
+@keyframes item-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-item {
+  animation: item-in var(--dur-base) var(--ease-out) both;
+}
+
+/* Count / notification badge pop — a quick scale bump to draw the eye. */
+@keyframes badge-pop {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.animate-badge {
+  animation: badge-pop 0.3s var(--ease-out) both;
+}
+
+/* Fade content in once it's ready (media, late-loading panels). */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fade {
+  animation: fade-in var(--dur-slow) ease-out both;
+}
+
+/* One-shot spin (e.g. a refresh control acknowledging a click). */
+@keyframes spin-once {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-spin-once {
+  animation: spin-once 0.5s var(--ease-out);
+}
+
 /* Tooltip fade-in (positioning transform is applied inline, so only fade here). */
 @keyframes tip {
   from {
@@ -381,7 +438,11 @@ input,
 @media (prefers-reduced-motion: reduce) {
   .animate-rise,
   .animate-pop,
-  .animate-tip {
+  .animate-tip,
+  .animate-item,
+  .animate-badge,
+  .animate-fade,
+  .animate-spin-once {
     animation: none;
   }
 }
