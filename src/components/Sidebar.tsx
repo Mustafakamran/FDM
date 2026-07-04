@@ -1,11 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Plus, Home, FolderOpen, Download, Upload, AlertCircle, Globe, Trash2, Loader2, Link as LinkIcon, Sun, Moon, FolderPlus } from "lucide-react";
+import { Plus, Home, FolderOpen, Download, Upload, AlertCircle, Globe, Trash2, Loader2, Link as LinkIcon, Sun, Moon, FolderPlus, MoreHorizontal, Pencil, FolderSearch, ArrowUp, ArrowDown } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useApp } from "../store/app";
 import { useTransfers } from "../store/transfers";
 import { useStorage, type Storage } from "../store/storage";
 import { useAccountMeta, accountLabel, type Meta } from "../store/account-meta";
 import { useIndex, type IndexEntry } from "../store/index-store";
+import { useAccountOrder, orderAccounts } from "../store/account-order";
+import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
 import { useTheme } from "../store/theme";
 import { ProviderIcon, providerName } from "./icons";
 import { Skeleton } from "./ui";
@@ -97,6 +99,14 @@ export function Sidebar() {
     [removeAccount],
   );
 
+  // User-arranged account order (drag-free: move up/down from the tile menu).
+  const accountOrder = useAccountOrder((s) => s.order);
+  const orderedAccounts = useMemo(() => orderAccounts(accounts, accountOrder), [accounts, accountOrder]);
+  const onMoveAccount = useCallback(
+    (id: string, dir: -1 | 1) => useAccountOrder.getState().move(id, dir, orderedAccounts.map((a) => a.id)),
+    [orderedAccounts],
+  );
+
   return (
     <aside className="flex w-[236px] shrink-0 flex-col overflow-hidden rounded-[14px] border border-[var(--line)] bg-[var(--card)]">
       {/* Primary nav (the brand lives in the top bar now). */}
@@ -135,7 +145,7 @@ export function Sidebar() {
               )
               : null}
 
-          {accounts.map((a) => (
+          {orderedAccounts.map((a) => (
             <AccountTile
               key={a.id}
               account={a}
@@ -149,6 +159,7 @@ export function Sidebar() {
               onRemove={handleRemove}
               onRetryEmail={fetchEmail}
               onToggleConfirm={toggleConfirmRemove}
+              onMove={onMoveAccount}
             />
           ))}
         </div>
@@ -251,6 +262,7 @@ const AccountTile = memo(function AccountTile({
   onRemove,
   onRetryEmail,
   onToggleConfirm,
+  onMove,
 }: {
   account: Account;
   isActive: boolean;
@@ -263,13 +275,22 @@ const AccountTile = memo(function AccountTile({
   onRemove: (id: string) => void;
   onRetryEmail: (id: string, force?: boolean) => void;
   onToggleConfirm: (id: string) => void;
+  onMove: (id: string, dir: -1 | 1) => void;
 }) {
   const indexing = ie && (ie.status === "crawling" || ie.status === "loading");
   const pct = st && st.total > 0 ? Math.min(100, Math.round((st.used / st.total) * 100)) : null;
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameVal, setRenameVal] = useState("");
+  const commitRename = () => {
+    const v = renameVal.trim();
+    if (v) useAccountMeta.getState().setLabel(a.id, v);
+    setRenaming(false);
+  };
 
   return (
     <div
-      className={`group cursor-pointer rounded-[11px] px-[11px] py-2 ${isActive ? "bg-[var(--soft)]" : "hover:bg-[var(--soft)]"}`}
+      className={`group cursor-pointer rounded-[11px] px-[11px] py-2 transition-colors ${isActive ? "bg-[var(--soft)]" : "hover:bg-[var(--soft)]"}`}
       onClick={() => onSelect(a.id)}
     >
       <div className="flex items-center gap-2.5">
@@ -277,7 +298,22 @@ const AccountTile = memo(function AccountTile({
           <ProviderIcon provider={a.provider} size={17} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[12.5px] font-semibold text-[var(--ink)]">{accountLabel(m?.label, a)}</div>
+          {renaming ? (
+            <input
+              autoFocus
+              value={renameVal}
+              onChange={(e) => setRenameVal(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitRename();
+                else if (e.key === "Escape") setRenaming(false);
+              }}
+              onBlur={commitRename}
+              className="w-full rounded-[6px] border border-[var(--accent)] bg-[var(--card)] px-1.5 py-0.5 text-[12.5px] font-semibold text-[var(--ink)] focus-accent"
+            />
+          ) : (
+            <div className="truncate text-[12.5px] font-semibold text-[var(--ink)]">{accountLabel(m?.label, a)}</div>
+          )}
           <div className="flex items-center gap-1.5 truncate text-[11px] text-[var(--faint)]">
             <span className="truncate" data-tip={m?.email}>
               {providerName(a.provider)}
@@ -296,14 +332,35 @@ const AccountTile = memo(function AccountTile({
           </div>
         </div>
         <button
-          aria-label={`Remove ${a.label}`}
-          data-tip={`Remove ${a.label}`}
-          onClick={(e) => { e.stopPropagation(); onToggleConfirm(a.id); }}
-          className="shrink-0 text-[var(--faint)] opacity-0 hover:text-[var(--err)] group-hover:opacity-100"
+          aria-label={`${a.label} options`}
+          data-tip="Options"
+          onClick={(e) => {
+            e.stopPropagation();
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            setMenuPos({ x: r.right, y: r.bottom + 4 });
+          }}
+          className="shrink-0 text-[var(--faint)] opacity-0 transition hover:text-[var(--ink)] group-hover:opacity-100"
         >
-          <Trash2 size={14} />
+          <MoreHorizontal size={15} />
         </button>
       </div>
+
+      {menuPos && (
+        <ContextMenu
+          x={menuPos.x}
+          y={menuPos.y}
+          onClose={() => setMenuPos(null)}
+          items={
+            [
+              { label: "Rename", icon: Pencil, onClick: () => { setRenameVal(accountLabel(m?.label, a)); setRenaming(true); } },
+              { label: "Move up", icon: ArrowUp, onClick: () => onMove(a.id, -1) },
+              { label: "Move down", icon: ArrowDown, onClick: () => onMove(a.id, 1) },
+              { label: "Re-index", icon: FolderSearch, onClick: () => useIndex.getState().recrawl(a) },
+              { label: "Remove", icon: Trash2, danger: true, separator: true, onClick: () => onToggleConfirm(a.id) },
+            ] as MenuItem[]
+          }
+        />
+      )}
 
       {pct != null && (
         <div className="mt-2">

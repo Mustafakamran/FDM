@@ -4,6 +4,8 @@ import { useBrowse, browseKey, type SizeValue } from "../store/browse";
 import { useHistory } from "../store/history";
 import { useIndex } from "../store/index-store";
 import { useNewFoldersBaseline, pickNewFolders } from "../store/new-folders";
+import { useFolderStatus } from "../store/folder-status";
+import { useVisited } from "../store/visited";
 import type { Account } from "./tauri/commands";
 import type { RcItem } from "./rc/browse";
 
@@ -43,6 +45,8 @@ export function useNewFolders(): NewFoldersResult {
   const indexEntries = useIndex((s) => s.byAccount);
   const baseline = useNewFoldersBaseline((s) => s.baseline);
   const historyItems = useHistory((s) => s.items);
+  const statusByAccount = useFolderStatus((s) => s.byAccount);
+  const visitedByAccount = useVisited((s) => s.byAccount);
 
   // Ensure each drive's ROOT listing is loaded (one cheap call each; the browse
   // store caches + background-refreshes, so this is a no-op once warm).
@@ -87,11 +91,20 @@ export function useNewFolders(): NewFoldersResult {
     for (const a of accounts) {
       const roots = listings[browseKey(a.id, "")];
       if (!roots || baseline[a.id] === undefined) continue; // not loaded / not yet seeded
-      const news = pickNewFolders(roots, new Set(baseline[a.id]), (p) => isDownloadedUnder(a.id, p));
+      const statuses = statusByAccount[a.id] ?? {};
+      // Once you HANDLE a folder (Downloaded / Copied / Downloading) it's no longer
+      // "new" and drops off the screen — EXCEPT "On hold", which you deliberately
+      // keep visible. Unstatused folders stay until handled.
+      const news = pickNewFolders(roots, new Set(baseline[a.id]), (p) => isDownloadedUnder(a.id, p)).filter(
+        (f) => {
+          const st = statuses[f.Path];
+          return !st || st === "on_hold";
+        },
+      );
       if (news.length) out.push({ account: a, folders: news });
     }
     return out;
-  }, [accounts, listings, baseline, downloadedByAccount]);
+  }, [accounts, listings, baseline, downloadedByAccount, statusByAccount]);
 
   // Kick off (lazy, concurrency-limited) size computation for each new folder
   // that isn't already sized by the index.
@@ -113,7 +126,12 @@ export function useNewFolders(): NewFoldersResult {
     }
   }, [groups, indexEntries, sizes]);
 
-  const count = groups.reduce((n, g) => n + g.folders.length, 0);
+  // The badge counts only folders you HAVEN'T opened yet — opening one clears it
+  // from the badge (it stays listed, dimmed, so you can still act on it).
+  const count = groups.reduce((n, g) => {
+    const seen = new Set(visitedByAccount[g.account.id] ?? []);
+    return n + g.folders.filter((f) => !seen.has(f.Path)).length;
+  }, 0);
   let totalSize = 0;
   let allSized = true;
   for (const g of groups) {

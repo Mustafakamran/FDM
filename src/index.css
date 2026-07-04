@@ -313,6 +313,17 @@ input,
     transform 0.08s ease;
 }
 
+/* Checkboxes get a small press feedback so ticking a file feels tactile. */
+input[type="checkbox"] {
+  cursor: pointer;
+  transition:
+    accent-color var(--dur-base) ease,
+    transform 0.1s var(--ease-out);
+}
+input[type="checkbox"]:active {
+  transform: scale(0.85);
+}
+
 .focus-accent:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);

@@ -10,6 +10,7 @@ import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
 import { StatusBadge } from "./ui/StatusBadge";
 import { SharePopover } from "./SharePopover";
 import { useFolderStatus, FOLDER_STATUS_META, FOLDER_STATUS_ORDER } from "../store/folder-status";
+import { useVisited } from "../store/visited";
 import type { SizeValue } from "../store/browse";
 import type { Account } from "../lib/tauri/commands";
 import type { RcItem } from "../lib/rc/browse";
@@ -28,6 +29,7 @@ export function NewFoldersView() {
   const { groups, count, totalSize, allSized, sizeOf } = useNewFolders();
   const statusByAccount = useFolderStatus((s) => s.byAccount);
   const setFolderStatus = useFolderStatus((s) => s.set);
+  const visitedByAccount = useVisited((s) => s.byAccount);
   const [menu, setMenu] = useState<{ x: number; y: number; account: Account; folder: RcItem } | null>(null);
   const [share, setShare] = useState<{ account: Account; item: RcItem } | null>(null);
 
@@ -81,6 +83,7 @@ export function NewFoldersView() {
               <div className="overflow-hidden rounded-[13px] border border-[var(--line)]">
                 {g.folders.map((f, i) => {
                   const status = statusByAccount[g.account.id]?.[f.Path];
+                  const opened = (visitedByAccount[g.account.id] ?? []).includes(f.Path);
                   return (
                     <button
                       key={f.Path}
@@ -89,7 +92,7 @@ export function NewFoldersView() {
                         e.preventDefault();
                         setMenu({ x: e.clientX, y: e.clientY, account: g.account, folder: f });
                       }}
-                      className={`group flex w-full items-center gap-3 bg-[var(--card)] px-4 py-3 text-left hover:bg-[var(--hover)] ${i > 0 ? "border-t border-[var(--line)]" : ""}`}
+                      className={`group flex w-full items-center gap-3 bg-[var(--card)] px-4 py-3 text-left transition-colors hover:bg-[var(--hover)] ${i > 0 ? "border-t border-[var(--line)]" : ""} ${opened ? "opacity-60" : ""}`}
                     >
                       <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] bg-[var(--accw)]">
                         <Folder size={18} className="text-[var(--acc)]" />
@@ -99,7 +102,7 @@ export function NewFoldersView() {
                           <span className="truncate text-[13.5px] font-medium text-[var(--ink)]">{f.Name}</span>
                           {status && <StatusBadge status={status} />}
                         </span>
-                        <span className="block truncate text-[11.5px] text-[var(--faint)]">Added {formatDate(f.ModTime)}</span>
+                        <span className="block truncate text-[11.5px] text-[var(--faint)]">Added {formatDate(f.ModTime)}{opened ? " · opened" : ""}</span>
                       </span>
                       <SizeLabel size={sizeOf(g.account.id, f.Path)} />
                       <ChevronRight size={16} className="shrink-0 text-[var(--faint)] opacity-0 transition-opacity group-hover:opacity-100" />
