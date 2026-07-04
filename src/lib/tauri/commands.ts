@@ -136,6 +136,16 @@ export function driveFolderPath(accountId: string, fileId: string): Promise<stri
   return invoke<string>("drive_folder_path", { accountId, fileId });
 }
 
+/** Create/fetch an "anyone with the link" Google Drive share URL for a folder/file id. */
+export function driveShareLink(accountId: string, fileId: string): Promise<string> {
+  return invoke<string>("drive_share_link", { accountId, fileId });
+}
+
+/** Create/fetch a Dropbox shared link URL for a path (rclone path, no leading slash). */
+export function dropboxShareLink(accountId: string, path: string): Promise<string> {
+  return invoke<string>("dropbox_share_link", { accountId, path });
+}
+
 /** The signed-in account's email (Drive about / Dropbox userinfo); null if unavailable. */
 export function accountEmail(accountId: string): Promise<string | null> {
   return invoke<string | null>("account_email", { accountId });

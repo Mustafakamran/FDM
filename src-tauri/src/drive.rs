@@ -204,6 +204,121 @@ pub async fn drive_uploader(
     .map_err(|e| e.to_string())?
 }
 
+/// Create (or fetch) an "anyone with the link can view" shareable link for a
+/// Google Drive folder/file by ID, and return its URL. Granting the public
+/// permission is best-effort — it works for items you OWN; for a shared-with-me
+/// item you can't reshare, so we still return its `webViewLink` (which opens for
+/// anyone who already has access), or a clear error if none is available.
+#[tauri::command]
+pub async fn drive_share_link(
+    rclone: tauri::State<'_, RcloneState>,
+    account_id: String,
+    file_id: String,
+) -> Result<String, String> {
+    let conn: RcConnection = rclone
+        .connection
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or_else(|| "rclone not started".to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let access = drive_access_token(&conn, &account_id)?;
+        let client = reqwest::blocking::Client::new();
+        // Best-effort: grant "anyone with the link, reader" (works for owned items).
+        let _ = client
+            .post(format!(
+                "https://www.googleapis.com/drive/v3/files/{file_id}/permissions?supportsAllDrives=true"
+            ))
+            .bearer_auth(&access)
+            .header("Content-Type", "application/json")
+            .body(r#"{"role":"reader","type":"anyone"}"#)
+            .send();
+        // Fetch the shareable link.
+        let resp = client
+            .get(format!(
+                "https://www.googleapis.com/drive/v3/files/{file_id}?fields=webViewLink&supportsAllDrives=true"
+            ))
+            .bearer_auth(&access)
+            .send()
+            .map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(format!("drive files.get {status}: {}", body.chars().take(200).collect::<String>()));
+        }
+        let text = resp.text().map_err(|e| e.to_string())?;
+        let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        v.get("webViewLink")
+            .and_then(|x| x.as_str())
+            .map(String::from)
+            .ok_or_else(|| "No shareable link available — you may not have permission to share this item. Ask the owner to share it.".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Create (or fetch the existing) Dropbox shared link for a path, return its URL.
+/// `path` is the rclone path (no leading slash); the API needs one, so we add it.
+#[tauri::command]
+pub async fn dropbox_share_link(
+    rclone: tauri::State<'_, RcloneState>,
+    account_id: String,
+    path: String,
+) -> Result<String, String> {
+    let conn: RcConnection = rclone
+        .connection
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or_else(|| "rclone not started".to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let access = dropbox_access_token(&conn, &account_id)?;
+        let dbx_path = if path.starts_with('/') { path.clone() } else { format!("/{path}") };
+        let client = reqwest::blocking::Client::new();
+        // Try to create a link.
+        let create = client
+            .post("https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings")
+            .bearer_auth(&access)
+            .header("Content-Type", "application/json")
+            .body(serde_json::json!({ "path": dbx_path }).to_string())
+            .send()
+            .map_err(|e| e.to_string())?;
+        if create.status().is_success() {
+            let text = create.text().map_err(|e| e.to_string())?;
+            let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+            return v
+                .get("url")
+                .and_then(|x| x.as_str())
+                .map(String::from)
+                .ok_or_else(|| "Dropbox: no url in create_shared_link response".to_string());
+        }
+        // Link already exists (409) or other — look up the existing one.
+        let list = client
+            .post("https://api.dropboxapi.com/2/sharing/list_shared_links")
+            .bearer_auth(&access)
+            .header("Content-Type", "application/json")
+            .body(serde_json::json!({ "path": dbx_path, "direct_only": true }).to_string())
+            .send()
+            .map_err(|e| e.to_string())?;
+        if !list.status().is_success() {
+            let status = list.status();
+            let body = list.text().unwrap_or_default();
+            return Err(format!("dropbox share {status}: {}", body.chars().take(200).collect::<String>()));
+        }
+        let text = list.text().map_err(|e| e.to_string())?;
+        let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        v.get("links")
+            .and_then(|l| l.as_array())
+            .and_then(|a| a.first())
+            .and_then(|x| x.get("url"))
+            .and_then(|x| x.as_str())
+            .map(String::from)
+            .ok_or_else(|| "No Dropbox share link available for this item.".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// The Drive account's email via the native about endpoint (rclone doesn't
 /// expose it). Best-effort: Err/None when unavailable.
 pub fn drive_email(conn: &RcConnection, account_id: &str) -> Result<Option<String>, String> {

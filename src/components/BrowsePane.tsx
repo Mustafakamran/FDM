@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, ChevronLeft, ChevronRight, CornerLeftUp, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X, Pause, HardDrive } from "lucide-react";
+import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, ChevronLeft, ChevronRight, CornerLeftUp, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X, Pause, HardDrive, Link2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
 import { isVideo, isPreviewable, extOf } from "../lib/review";
@@ -21,6 +21,7 @@ import { Button, Skeleton, EmptyState } from "./ui";
 import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
 import { useFolderStatus, FOLDER_STATUS_META, FOLDER_STATUS_ORDER, type FolderStatus } from "../store/folder-status";
 import { StatusBadge } from "./ui/StatusBadge";
+import { SharePopover } from "./SharePopover";
 import { fileType } from "../lib/file-types";
 import { itemAt } from "../lib/account-index";
 import { IndexProgress } from "./IndexProgress";
@@ -285,6 +286,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const [pendingDelete, setPendingDelete] = useState<RcItem[] | null>(null);
   // Right-click context menu (cursor-anchored, one item at a time).
   const [menu, setMenu] = useState<{ x: number; y: number; item: RcItem } | null>(null);
+  const [share, setShare] = useState<RcItem | null>(null);
   const [deleting, setDeleting] = useState(false);
   async function confirmDelete() {
     const list = pendingDelete;
@@ -563,7 +565,8 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     }
     out.push({ label: "Download", icon: Download, onClick: () => void enqueueItems([item]) });
     out.push({ label: isStar ? "Unstar" : "Star", icon: Star, onClick: () => toggleStar(account.id, item.Path) });
-    out.push({ label: "Copy name", icon: Copy, separator: true, onClick: () => void navigator.clipboard?.writeText(item.Name) });
+    out.push({ label: "Copy link", icon: Link2, separator: true, onClick: () => setShare(item) });
+    out.push({ label: "Copy name", icon: Copy, onClick: () => void navigator.clipboard?.writeText(item.Name) });
     out.push({ label: "Delete", icon: Trash2, danger: true, separator: true, onClick: () => setPendingDelete([item]) });
     return out;
   };
@@ -969,6 +972,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
 
       {/* Right-click context menu */}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.item)} onClose={() => setMenu(null)} />}
+      {share && <SharePopover account={account} item={share} onClose={() => setShare(null)} />}
     </div>
   );
 }
@@ -1089,7 +1093,7 @@ const FileRow = memo(function FileRow({
   );
 
   return (
-    <tr data-row onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }} className={`group border-b border-[var(--border)]/60 ${blink ? "animate-flash" : isSelected ? "bg-[var(--card)]" : "hover:bg-[var(--hover)]"}`}>
+    <tr data-row onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }} className={`group border-b border-[var(--border)]/60 transition-colors duration-150 ${blink ? "animate-flash" : isSelected ? "bg-[var(--card)]" : "hover:bg-[var(--hover)]"}`}>
       <td className="w-9 py-2.5 pl-1">
         <input
           type="checkbox"
@@ -1190,7 +1194,7 @@ const FileGridItem = memo(function FileGridItem({
   return (
     <div
       onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }}
-      className={`relative flex flex-col items-center gap-3 rounded-[11px] border p-5 ${blink ? "animate-flash border-[var(--acc)]" : isSelected ? "border-[var(--accent)] bg-[var(--card)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
+      className={`relative flex flex-col items-center gap-3 rounded-[11px] border p-5 transition-colors duration-150 ${blink ? "animate-flash border-[var(--acc)]" : isSelected ? "border-[var(--accent)] bg-[var(--card)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
     >
       <input
         type="checkbox"

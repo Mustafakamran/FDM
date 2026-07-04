@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FolderPlus, Folder, Loader2, ChevronRight, Download, Pause, Check, HardDrive } from "lucide-react";
+import { FolderPlus, Folder, Loader2, ChevronRight, Download, Pause, Check, HardDrive, Link2 } from "lucide-react";
 import { useApp } from "../store/app";
 import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { useNewFolders } from "../lib/use-new-folders";
@@ -8,8 +8,11 @@ import { ProviderIcon } from "./icons";
 import { EmptyState } from "./ui";
 import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
 import { StatusBadge } from "./ui/StatusBadge";
+import { SharePopover } from "./SharePopover";
 import { useFolderStatus, FOLDER_STATUS_META, FOLDER_STATUS_ORDER } from "../store/folder-status";
 import type { SizeValue } from "../store/browse";
+import type { Account } from "../lib/tauri/commands";
+import type { RcItem } from "../lib/rc/browse";
 
 const STATUS_ICON = { downloading: Download, on_hold: Pause, downloaded: Check, copied: HardDrive } as const;
 
@@ -25,16 +28,19 @@ export function NewFoldersView() {
   const { groups, count, totalSize, allSized, sizeOf } = useNewFolders();
   const statusByAccount = useFolderStatus((s) => s.byAccount);
   const setFolderStatus = useFolderStatus((s) => s.set);
-  const [menu, setMenu] = useState<{ x: number; y: number; accountId: string; path: string } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; account: Account; folder: RcItem } | null>(null);
+  const [share, setShare] = useState<{ account: Account; item: RcItem } | null>(null);
 
-  const menuItems = (accountId: string, path: string): MenuItem[] => {
-    const cur = statusByAccount[accountId]?.[path];
-    return FOLDER_STATUS_ORDER.map((st, i) => ({
+  const menuItems = (account: Account, folder: RcItem): MenuItem[] => {
+    const cur = statusByAccount[account.id]?.[folder.Path];
+    const items: MenuItem[] = FOLDER_STATUS_ORDER.map((st, i) => ({
       label: cur === st ? `${FOLDER_STATUS_META[st].label} ✓` : `Mark ${FOLDER_STATUS_META[st].label}`,
       icon: STATUS_ICON[st],
       separator: i === 0,
-      onClick: () => setFolderStatus(accountId, path, cur === st ? null : st),
+      onClick: () => setFolderStatus(account.id, folder.Path, cur === st ? null : st),
     }));
+    items.push({ label: "Copy link", icon: Link2, separator: true, onClick: () => setShare({ account, item: folder }) });
+    return items;
   };
 
   return (
@@ -81,7 +87,7 @@ export function NewFoldersView() {
                       onClick={() => setView({ kind: "browse", accountId: g.account.id, section: "all", path: f.Path })}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        setMenu({ x: e.clientX, y: e.clientY, accountId: g.account.id, path: f.Path });
+                        setMenu({ x: e.clientX, y: e.clientY, account: g.account, folder: f });
                       }}
                       className={`group flex w-full items-center gap-3 bg-[var(--card)] px-4 py-3 text-left hover:bg-[var(--hover)] ${i > 0 ? "border-t border-[var(--line)]" : ""}`}
                     >
@@ -106,7 +112,8 @@ export function NewFoldersView() {
         </div>
       )}
 
-      {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.accountId, menu.path)} onClose={() => setMenu(null)} />}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.account, menu.folder)} onClose={() => setMenu(null)} />}
+      {share && <SharePopover account={share.account} item={share.item} onClose={() => setShare(null)} />}
     </div>
   );
 }

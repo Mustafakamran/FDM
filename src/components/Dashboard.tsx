@@ -86,7 +86,7 @@ export function Dashboard() {
 function Stat({ icon, label, value, sub, accent, onClick }: { icon: ReactNode; label: string; value: string; sub?: string; accent?: boolean; onClick?: () => void }) {
   const Comp = onClick ? "button" : "div";
   return (
-    <Comp onClick={onClick} className={`flex flex-col gap-3 rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4 text-left ${onClick ? "hover:border-[var(--line2)]" : ""}`}>
+    <Comp onClick={onClick} className={`flex flex-col gap-3 rounded-[15px] border border-[var(--line)] bg-[var(--card)] p-4 text-left transition-colors duration-150 ${onClick ? "hover:border-[var(--line2)] active:translate-y-px" : ""}`}>
       <span className={`flex h-9 w-9 items-center justify-center rounded-[10px] ${accent ? "bg-[var(--accent)] text-[var(--accent-ink)]" : "bg-[var(--accw)] text-[var(--acc)]"}`}>{icon}</span>
       <div className="min-w-0">
         <div className="tnum truncate text-[24px] font-bold leading-none tracking-[-0.02em] text-[var(--ink)]">{value}</div>
