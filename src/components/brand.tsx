@@ -1,23 +1,23 @@
+// Provider marks render in the app's accent color (var(--accent)) rather than
+// their native brand colors, so every accent-worthy element stays unified with
+// the selected theme — pick Red and the Drive/Dropbox marks turn red too.
 export function GoogleDriveLogo({ size = 18 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 87.3 78" aria-hidden="true">
-      <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da" />
-      <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44c-.8 1.4-1.2 2.95-1.2 4.5h27.5z" fill="#00ac47" />
-      <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335" />
-      <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d" />
-      <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc" />
-      <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00" />
+    <svg width={size} height={size} viewBox="0 0 87.3 78" aria-hidden="true" fill="var(--accent)">
+      <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" />
+      <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44c-.8 1.4-1.2 2.95-1.2 4.5h27.5z" />
+      <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" />
+      <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" />
+      <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" />
+      <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" />
     </svg>
   );
 }
 
 export function DropboxLogo({ size = 18 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 235.45 200" aria-hidden="true">
-      <path
-        fill="#0061FF"
-        d="M58.86 0L0 37.5l58.86 37.5L117.7 37.5zM176.59 0L117.7 37.5l58.89 37.5 58.86-37.5zM0 112.5l58.86 37.5L117.7 112.5 58.86 75zM176.59 75L117.7 112.5l58.89 37.5L235.45 112.5zM58.86 162.5l58.84 37.5 58.89-37.5-58.89-37.5z"
-      />
+    <svg width={size} height={size} viewBox="0 0 235.45 200" aria-hidden="true" fill="var(--accent)">
+      <path d="M58.86 0L0 37.5l58.86 37.5L117.7 37.5zM176.59 0L117.7 37.5l58.89 37.5 58.86-37.5zM0 112.5l58.86 37.5L117.7 112.5 58.86 75zM176.59 75L117.7 112.5l58.89 37.5L235.45 112.5zM58.86 162.5l58.84 37.5 58.89-37.5-58.89-37.5z" />
     </svg>
   );
 }

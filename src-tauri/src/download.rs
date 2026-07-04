@@ -150,6 +150,25 @@ pub fn account_fs(account_id: &str) -> Result<String, String> {
     })
 }
 
+/// rclone fs for the FULL background index crawl. Unlike `account_fs` (which
+/// surfaces "Shared with me" so browsing sees everything), the auto-index covers
+/// ONLY the account's OWNED content: for Drive that's plain My Drive with
+/// shortcuts skipped, so the crawl never follows shortcuts/shares into clients'
+/// entire drives and reports tens of TB the user doesn't own. Shared folders are
+/// still browsed live and can be indexed on demand (`index_folder` keeps using
+/// `account_fs`); only the automatic whole-account crawl is bounded to what the
+/// account actually stores.
+pub fn index_fs(account_id: &str) -> Result<String, String> {
+    let acct = parse_remote(account_id).ok_or_else(|| format!("bad account id: {account_id}"))?;
+    if account_id.starts_with("drivelink_") {
+        return Ok(format!("{account_id}:"));
+    }
+    Ok(match acct.provider.as_str() {
+        "drive" => format!("{account_id},skip_shortcuts=true:"),
+        _ => format!("{account_id}:"),
+    })
+}
+
 /// Build the rc (endpoint, params) for downloading one item to `dest`.
 /// File → operations/copyfile; folder → sync/copy into `dest/<name>`.
 pub fn build_copy(account_fs: &str, item: &DownloadItem, dest: &str) -> (&'static str, Value) {
@@ -545,6 +564,16 @@ mod tests {
         assert_eq!(account_fs("dropbox_y").unwrap(), "dropbox_y:");
         assert_eq!(account_fs("drivelink_client_a").unwrap(), "drivelink_client_a:");
         assert!(account_fs("bogus").is_err());
+    }
+
+    #[test]
+    fn index_fs_drive_is_owned_only() {
+        // The auto-index crawls owned My Drive with shortcuts skipped (NOT
+        // shared_with_me), so it never follows shortcuts into shared content.
+        assert_eq!(index_fs("drive_x").unwrap(), "drive_x,skip_shortcuts=true:");
+        assert_eq!(index_fs("dropbox_y").unwrap(), "dropbox_y:");
+        assert_eq!(index_fs("drivelink_client_a").unwrap(), "drivelink_client_a:");
+        assert!(index_fs("bogus").is_err());
     }
 
     #[test]

@@ -8,7 +8,7 @@
 //! be cancelled between folders. Progress is emitted as throttled Tauri events;
 //! the finished index ({tree, agg}) is handed to the frontend once via `index_get`.
 
-use crate::download::account_fs;
+use crate::download::{account_fs, index_fs};
 use crate::rclone::supervisor::{rc_post, RcConnection, RcloneState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -527,7 +527,9 @@ fn do_crawl(app: &AppHandle, account_id: &str, cancel: &Arc<AtomicBool>) -> Resu
         return Ok(CrawlOutcome::Done(crawl_dropbox_link(app, account_id)?));
     }
     let conn = lock(&app.state::<RcloneState>().connection).clone().ok_or_else(|| "rclone not started".to_string())?;
-    let fs = account_fs(account_id)?;
+    // Auto-crawl the OWNED account only (Drive: My Drive, shortcuts skipped) so a
+    // few shared shortcuts can't drag clients' whole drives into the index.
+    let fs = index_fs(account_id)?;
     let root = list_op(&conn, &fs, "", false)?;
     let root_dirs: Vec<Entry> = root.iter().filter(|e| e.is_dir).cloned().collect();
     let base_stats = stats_of(&root);
