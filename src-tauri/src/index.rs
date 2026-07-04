@@ -134,6 +134,22 @@ fn normalize_path(folder: &str, raw: &str) -> String {
     }
 }
 
+/// Whether an ISO modified-time is plausible (not stamped in the future). Some
+/// devices with a wrong clock write file dates years ahead (e.g. 2027, 2049),
+/// which would otherwise become the crawl's `date_max` and show a nonsense
+/// "latest" date. Reject anything past next year (a one-year grace so timezone
+/// skew never trims a genuinely-recent file).
+fn date_plausible(mod_time: &str) -> bool {
+    if mod_time.len() < 4 {
+        return false;
+    }
+    let ceiling = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| 1970 + d.as_secs() as i64 / 31_557_600 + 1)
+        .unwrap_or(9999);
+    mod_time[..4].parse::<i64>().map(|y| y <= ceiling).unwrap_or(false)
+}
+
 /// Running file/size/date totals, folded over file entries during a crawl.
 #[derive(Clone, Default)]
 struct CrawlStats {
@@ -151,7 +167,7 @@ impl CrawlStats {
         }
         self.files += 1;
         self.bytes += e.size.max(0);
-        if !e.mod_time.is_empty() {
+        if !e.mod_time.is_empty() && date_plausible(&e.mod_time) {
             if self.date_min.is_empty() || e.mod_time < self.date_min {
                 self.date_min = e.mod_time.clone();
             }
@@ -786,6 +802,17 @@ mod tests {
         assert_eq!(s.bytes, 1507);
         assert_eq!(s.date_min, "2026-01-02T00:00:00Z");
         assert_eq!(s.date_max, "2026-03-01T00:00:00Z");
+    }
+
+    #[test]
+    fn fold_ignores_implausible_future_dates() {
+        let mut s = CrawlStats::default();
+        s.fold(&f("A/real.mxf", 100, "2026-03-01T00:00:00Z"));
+        s.fold(&f("A/badclock.wav", 100, "2049-01-09T00:00:00Z")); // recorder clock set wrong
+        // The future date is ignored for the date range, but the file still counts.
+        assert_eq!(s.date_max, "2026-03-01T00:00:00Z");
+        assert_eq!(s.files, 2);
+        assert_eq!(s.bytes, 200);
     }
 
     #[test]
