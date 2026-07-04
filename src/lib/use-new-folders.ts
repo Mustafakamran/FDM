@@ -75,9 +75,6 @@ export function useNewFolders(): NewFoldersResult {
   }, [historyItems]);
 
   const groups = useMemo(() => {
-    // Coarse day-resolution "now" so the window is stable within a session and
-    // the memo doesn't churn on every render.
-    const nowMs = Date.now();
     const isDownloadedUnder = (accountId: string, folderPath: string) => {
       const set = downloadedByAccount.get(accountId);
       if (!set) return false;
@@ -90,7 +87,7 @@ export function useNewFolders(): NewFoldersResult {
     for (const a of accounts) {
       const roots = listings[browseKey(a.id, "")];
       if (!roots || baseline[a.id] === undefined) continue; // not loaded / not yet seeded
-      const news = pickNewFolders(roots, new Set(baseline[a.id]), (p) => isDownloadedUnder(a.id, p), nowMs);
+      const news = pickNewFolders(roots, new Set(baseline[a.id]), (p) => isDownloadedUnder(a.id, p));
       if (news.length) out.push({ account: a, folders: news });
     }
     return out;

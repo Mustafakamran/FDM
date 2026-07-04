@@ -4,9 +4,6 @@ import type { RcItem } from "../lib/rc/browse";
 
 const KEY = "new_folders_baseline_v1";
 
-/** How recent a root folder's modified-time must be to count as "newly added". */
-export const NEW_FOLDER_WINDOW_DAYS = 30;
-
 const load = () => loadJson<Record<string, string[]>>(KEY, {});
 
 interface BaselineState {
@@ -40,27 +37,23 @@ export const useNewFoldersBaseline = create<BaselineState>((set, get) => ({
   },
 }));
 
-/** Whether an ISO modified-time is within the last `windowDays` of `nowMs`. */
-function withinWindow(modTime: string, nowMs: number, windowDays: number): boolean {
-  if (!modTime) return false; // no date → don't guess it's new
-  const t = Date.parse(modTime);
-  return Number.isFinite(t) && t >= nowMs - windowDays * 86_400_000;
-}
-
 /**
  * The "newly added" root folders from a drive's top-level listing: a folder that
  * is (a) NOT in the seeded baseline — i.e. appeared since we first saw this drive
- * — AND (b) modified within the date window — AND (c) not already downloaded.
+ * — AND (b) not already downloaded.
+ *
+ * Detection is deliberately NOT gated on the folder's modified-time: a folder a
+ * client newly *shares* keeps its original content date (a 3-month-old shoot
+ * shared today still reads as 3 months old), so a modified-time window wrongly
+ * hides exactly the folders this screen exists to surface. "Appeared since we
+ * started watching this drive" (the baseline diff) is the correct signal.
+ *
  * Pure, so it's unit-tested without the store.
  */
 export function pickNewFolders(
   rootItems: RcItem[],
   baseline: Set<string>,
   isDownloaded: (path: string) => boolean,
-  nowMs: number,
-  windowDays: number = NEW_FOLDER_WINDOW_DAYS,
 ): RcItem[] {
-  return rootItems.filter(
-    (i) => i.IsDir && !baseline.has(i.Path) && !isDownloaded(i.Path) && withinWindow(i.ModTime, nowMs, windowDays),
-  );
+  return rootItems.filter((i) => i.IsDir && !baseline.has(i.Path) && !isDownloaded(i.Path));
 }

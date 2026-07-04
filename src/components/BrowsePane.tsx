@@ -590,7 +590,11 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
       {folderView && liveError && (
         <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-5 py-2.5 text-sm text-[var(--error)]">
           <AlertCircle size={15} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate" title={liveError}>Couldn’t list this folder: {liveError}</span>
+          <span className="min-w-0 flex-1 truncate" title={liveError}>
+            {/not found/i.test(liveError)
+              ? "This folder isn’t available anymore — it may have been unshared, renamed, or moved on the cloud. Go back and Refresh."
+              : `Couldn’t list this folder: ${liveError}`}
+          </span>
           <button className="shrink-0 underline hover:text-[var(--text)]" onClick={() => void useBrowse.getState().ensure(account, path)}>Retry</button>
         </div>
       )}

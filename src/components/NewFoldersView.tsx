@@ -2,7 +2,6 @@ import { FolderPlus, Folder, Loader2, ChevronRight } from "lucide-react";
 import { useApp } from "../store/app";
 import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { useNewFolders } from "../lib/use-new-folders";
-import { NEW_FOLDER_WINDOW_DAYS } from "../store/new-folders";
 import { formatBytes, formatDate } from "../lib/format";
 import { ProviderIcon } from "./icons";
 import { EmptyState } from "./ui";
@@ -33,7 +32,7 @@ export function NewFoldersView() {
               {!allSized && <span className="text-[var(--faint)]"> +</span>} total
             </>
           ) : (
-            `Top-level folders added in the last ${NEW_FOLDER_WINDOW_DAYS} days show up here.`
+            `Top-level folders a client has added to your drives, that you haven't downloaded yet, show up here.`
           )}
         </p>
       </div>
@@ -42,7 +41,7 @@ export function NewFoldersView() {
         <EmptyState
           icon={<FolderPlus size={20} />}
           title="Nothing new right now"
-          body={`When a client adds a folder to one of your drives, it appears here so you know what still needs downloading. Only folders from the last ${NEW_FOLDER_WINDOW_DAYS} days that you haven't downloaded yet are shown.`}
+          body={`When a client adds a folder to one of your drives, it appears here so you know what still needs downloading. Folders you've already downloaded are hidden.`}
         />
       ) : (
         <div className="flex flex-col gap-6">
