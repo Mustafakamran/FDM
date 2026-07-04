@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, ChevronLeft, ChevronRight, CornerLeftUp, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X, Pause, HardDrive, Link2 } from "lucide-react";
+import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, ChevronLeft, ChevronRight, CornerLeftUp, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X, Pause, HardDrive, Link2, FolderPlus } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
 import { isVideo, isPreviewable, extOf } from "../lib/review";
@@ -29,6 +29,7 @@ import { formatBytes, formatDate, formatSpeed } from "../lib/format";
 import { sortItems, DEFAULT_SORT, type SortField, type SortState } from "../lib/sort";
 import { computeVirtualRange } from "../lib/virtual-rows";
 import type { RcItem } from "../lib/rc/browse";
+import { createFolder } from "../lib/rc/browse";
 import { deleteItem } from "../lib/tauri/commands";
 import type { Account, DownloadItem } from "../lib/tauri/commands";
 import { FOLDER_KEY } from "../lib/ingest";
@@ -287,6 +288,22 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   // Right-click context menu (cursor-anchored, one item at a time).
   const [menu, setMenu] = useState<{ x: number; y: number; item: RcItem } | null>(null);
   const [share, setShare] = useState<RcItem | null>(null);
+  const [newFolder, setNewFolder] = useState<string | null>(null);
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const submitNewFolder = async () => {
+    const name = (newFolder ?? "").trim();
+    if (!name || creatingFolder) return;
+    setCreatingFolder(true);
+    try {
+      await createFolder(account, path, name);
+      setNewFolder(null);
+      await useBrowse.getState().ensure(account, path); // refresh so the new folder appears
+    } catch (e) {
+      useToasts.getState().push(`Couldn't create folder: ${e instanceof Error ? e.message : String(e)}`, "error");
+    } finally {
+      setCreatingFolder(false);
+    }
+  };
   const [deleting, setDeleting] = useState(false);
   async function confirmDelete() {
     const list = pendingDelete;
@@ -766,6 +783,9 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           <button className={`px-2 py-1.5 ${grid ? "bg-[var(--hover)] text-[var(--text)]" : "text-[var(--text-3)]"}`} onClick={() => setGrid(true)} aria-label="Grid view"><LayoutGrid size={15} /></button>
         </div>
         <button className="rounded-[8px] border border-[var(--border)] p-1.5 text-[var(--text-3)] hover:text-[var(--text)] disabled:opacity-50" onClick={() => useIndex.getState().recrawl(account)} disabled={showCrawl} aria-label="Re-index" title="Re-index (full refresh, picks up new/changed files)"><RefreshCw size={15} className={showCrawl ? "animate-spin" : ""} /></button>
+        {folderView && (
+          <button className="rounded-[8px] border border-[var(--border)] p-1.5 text-[var(--text-3)] transition-colors hover:text-[var(--text)]" onClick={() => setNewFolder("")} aria-label="New folder" title="Create a new folder here"><FolderPlus size={15} /></button>
+        )}
       </div>
 
       {/* Section pills — All Files / Recent / Starred / Shared (moved here from the
@@ -797,6 +817,31 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           <div className="mb-3 flex items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--error)]">
             <AlertCircle size={16} /> {entry?.error}
             <button className="ml-2 underline" onClick={() => useIndex.getState().recrawl(account)}>retry</button>
+          </div>
+        )}
+
+        {newFolder !== null && (
+          <div className="mb-3 flex animate-rise items-center gap-2 rounded-[8px] border border-[var(--accent)] bg-[var(--card)] px-3 py-2">
+            <FolderPlus size={15} className="shrink-0 text-[var(--accent)]" />
+            <input
+              autoFocus
+              value={newFolder}
+              placeholder="New folder name…"
+              onChange={(e) => setNewFolder(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submitNewFolder();
+                else if (e.key === "Escape") setNewFolder(null);
+              }}
+              className="min-w-0 flex-1 bg-transparent text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-3)]"
+            />
+            <button
+              className="rounded-[7px] bg-[var(--accent)] px-2.5 py-1 text-[12px] font-semibold text-[var(--accent-ink)] transition active:translate-y-px disabled:opacity-50"
+              disabled={!newFolder.trim() || creatingFolder}
+              onClick={() => void submitNewFolder()}
+            >
+              {creatingFolder ? "Creating…" : "Create"}
+            </button>
+            <button className="shrink-0 text-[var(--text-3)] hover:text-[var(--text)]" onClick={() => setNewFolder(null)} aria-label="Cancel"><X size={15} /></button>
           </div>
         )}
 

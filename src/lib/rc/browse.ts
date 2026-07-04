@@ -56,3 +56,9 @@ export async function listFolder(account: Account, path: string): Promise<RcItem
     return a.Name.toLowerCase().localeCompare(b.Name.toLowerCase());
   });
 }
+
+/** Create a new folder named `name` inside `parentPath` ("" = account root). */
+export async function createFolder(account: Account, parentPath: string, name: string): Promise<void> {
+  const remote = parentPath ? `${parentPath}/${name}` : name;
+  await new RcClient().call("operations/mkdir", { fs: buildFs(account), remote });
+}

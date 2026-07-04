@@ -292,6 +292,7 @@ const AccountTile = memo(function AccountTile({
     <div
       className={`group cursor-pointer rounded-[11px] px-[11px] py-2 transition-colors ${isActive ? "bg-[var(--soft)]" : "hover:bg-[var(--soft)]"}`}
       onClick={() => onSelect(a.id)}
+      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenuPos({ x: e.clientX, y: e.clientY }); }}
     >
       <div className="flex items-center gap-2.5">
         <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] border border-[var(--line)] bg-[var(--soft)]">

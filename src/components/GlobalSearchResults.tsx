@@ -60,7 +60,7 @@ function HitRow({
   const openName = () => onOpenLocation(hit);
 
   return (
-    <div className="group flex items-center gap-3 rounded-[9px] px-3 py-2 hover:bg-[var(--hover)]">
+    <div className="group flex animate-item items-center gap-3 rounded-[9px] px-3 py-2 transition-colors hover:bg-[var(--hover)]">
       <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={openName}>
         {tile}
         <span className="min-w-0 flex-1">
