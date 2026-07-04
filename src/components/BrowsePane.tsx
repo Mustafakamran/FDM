@@ -794,7 +794,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3 py-2">
             {items.map((item) => (
               <FileGridItem
-                key={item.Path}
+                key={item.ID ?? item.Path}
                 item={item}
                 isSelected={selected.has(item.Path)}
                 blink={item.Path === blinkPath}
@@ -828,7 +828,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
               )}
               {visibleItems.map((item) => (
                 <FileRow
-                  key={item.Path}
+                  key={item.ID ?? item.Path}
                   item={item}
                   isSelected={selected.has(item.Path)}
                   blink={item.Path === blinkPath}

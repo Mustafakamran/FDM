@@ -12,7 +12,7 @@ use crate::download::account_fs;
 use crate::rclone::supervisor::{rc_post, RcConnection, RcloneState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -279,11 +279,28 @@ fn save_to_disk(app: &AppHandle, account_id: &str, entries: &[Entry]) {
 /// NOT overwrite the existing index with the partial result.
 struct Cancelled;
 
+/// From a batch of just-discovered subfolders, keep only those not seen before —
+/// deduping by Drive **ID** so a folder reachable via multiple shortcuts (or the
+/// `shared_with_me` graph) is crawled ONCE, not once per path. Without this, the
+/// same shared subtree is re-listed and its bytes re-counted per shortcut, which
+/// inflates the reported account size (e.g. a few TB shown as tens of TB). Entries
+/// with no ID (providers that don't expose one, e.g. Dropbox) are always kept —
+/// their paths are already unique, so there's nothing to dedupe. Records new IDs.
+fn retain_unseen(subdirs: Vec<Entry>, seen: &mut HashSet<String>) -> Vec<Entry> {
+    subdirs
+        .into_iter()
+        .filter(|d| d.id.is_empty() || seen.insert(d.id.clone()))
+        .collect()
+}
+
 /// Shared coordination for one BFS crawl.
 struct Crawl {
     queue: Mutex<VecDeque<Entry>>,
     out: Mutex<Vec<Entry>>,
     stats: Mutex<CrawlStats>,
+    /// Folder IDs already enqueued, so the shortcut/shared_with_me graph is
+    /// crawled as a set (each folder once), not a tree that re-counts subtrees.
+    seen: Mutex<HashSet<String>>,
     done: AtomicUsize,  // folders processed
     total: AtomicUsize, // folders discovered so far
     last_emit: Mutex<Instant>,
@@ -311,10 +328,12 @@ fn bfs_crawl(
         return Ok(Vec::new());
     }
 
+    let seen_ids: HashSet<String> = seeds.iter().filter(|e| !e.id.is_empty()).map(|e| e.id.clone()).collect();
     let crawl = Arc::new(Crawl {
         queue: Mutex::new(seeds.into_iter().collect::<VecDeque<Entry>>()),
         out: Mutex::new(Vec::new()),
         stats: Mutex::new(base_stats),
+        seen: Mutex::new(seen_ids),
         done: AtomicUsize::new(0),
         total: AtomicUsize::new(total),
         last_emit: Mutex::new(Instant::now()),
@@ -369,10 +388,19 @@ fn bfs_crawl(
                     acc.push(it);
                 }
             }
-            // Enqueue discovered subfolders and grow the discovered-total.
+            // Enqueue discovered subfolders, skipping any folder id already seen
+            // (reached via another shortcut / shared_with_me path) so its subtree
+            // isn't re-crawled and re-counted. Grow the discovered-total by the
+            // deduped count so progress stays honest.
             if !subdirs.is_empty() {
-                crawl.total.fetch_add(subdirs.len(), Ordering::SeqCst);
-                lock(&crawl.queue).extend(subdirs);
+                let fresh = {
+                    let mut seen = lock(&crawl.seen);
+                    retain_unseen(subdirs, &mut seen)
+                };
+                if !fresh.is_empty() {
+                    crawl.total.fetch_add(fresh.len(), Ordering::SeqCst);
+                    lock(&crawl.queue).extend(fresh);
+                }
             }
             lock(&crawl.stats).merge(&local);
 
@@ -695,6 +723,23 @@ mod tests {
             mime_type: String::new(),
             id: String::new(),
         }
+    }
+    fn d_id(path: &str, id: &str) -> Entry {
+        Entry { id: id.into(), ..d(path) }
+    }
+
+    #[test]
+    fn retain_unseen_dedupes_by_id_and_keeps_idless() {
+        let mut seen = HashSet::new();
+        // First sight of two distinct folders → both kept and recorded.
+        let keep = retain_unseen(vec![d_id("A", "id1"), d_id("B", "id2")], &mut seen);
+        assert_eq!(keep.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["A", "B"]);
+        // The same ids reached again via other shortcut paths → dropped; a new id survives.
+        let keep = retain_unseen(vec![d_id("A-shortcut", "id1"), d_id("C", "id3")], &mut seen);
+        assert_eq!(keep.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["C"]);
+        // ID-less entries (providers without IDs, e.g. Dropbox) are always kept.
+        let keep = retain_unseen(vec![d_id("D", ""), d_id("D", "")], &mut seen);
+        assert_eq!(keep.len(), 2);
     }
 
     #[test]

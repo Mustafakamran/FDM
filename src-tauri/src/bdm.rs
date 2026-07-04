@@ -362,6 +362,32 @@ fn locate_project(
 
 // ─── poll loop ──────────────────────────────────────────────────────────────
 
+/// What the agent does with a BDM command. Anything it doesn't explicitly handle
+/// is ACKed with no side effect, so a command it wasn't built for can never fall
+/// through to "download".
+#[derive(PartialEq, Debug)]
+enum CmdAction {
+    Locate,
+    Download,
+    Ack,
+}
+
+/// Classify a BDM command. FDM downloads on `start_download` (BDM always emits it
+/// for a project) while `add_to_cloud` is a benign ack — so a project is fetched
+/// exactly ONCE, not once per command. `download` is accepted too for a future
+/// single-command BDM path. Everything else (copy_to_drive, cancel_download,
+/// delete_data, unknown, missing) is ACKed until its own handler ships — this is
+/// the fix for the old `unwrap_or("download")` default, which made BDM's
+/// add_to_cloud+start_download pair download twice and turned a cancel_download
+/// into a fresh download.
+fn classify_command(command: &str) -> CmdAction {
+    match command {
+        "locate" => CmdAction::Locate,
+        "start_download" | "download" => CmdAction::Download,
+        _ => CmdAction::Ack,
+    }
+}
+
 fn poll_once(app: &AppHandle, c: &reqwest::blocking::Client) {
     let cfg = load_config(app);
     if !cfg.enabled || cfg.portal_url.is_empty() || cfg.machine.is_empty() {
@@ -412,20 +438,31 @@ fn poll_once(app: &AppHandle, c: &reqwest::blocking::Client) {
         if id.is_empty() {
             continue;
         }
-        // `download` (default) runs the engine; `locate` is a read-only name search.
-        let command = cmd.get("command").and_then(|v| v.as_str()).unwrap_or("download").to_string();
+        // Dispatch on the command TYPE (see classify_command): only
+        // start_download/download run the engine, only locate searches; every
+        // other command is acked with no side effect.
+        let command = cmd.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let action = classify_command(&command);
         // Mark processing.
         let _ = send_json(c, reqwest::Method::PATCH, &cfg.portal_url, "/api/download-commands", &key, &json!({ "id": id, "status": "processing" }));
-        if project_id.is_empty() {
+        // Not-handled commands (and any command with no project) leave the queue
+        // acked without doing anything — never a rogue download.
+        if action == CmdAction::Ack || project_id.is_empty() {
             let _ = send_json(c, reqwest::Method::PATCH, &cfg.portal_url, "/api/download-commands", &key, &json!({ "id": id, "status": "completed" }));
+            let label = if command.is_empty() { "command".to_string() } else { command.clone() };
+            set_status(app, format!("acked {label} (not handled)"));
             continue;
         }
-        let result = if command == "locate" {
-            set_status(app, format!("locating project {project_id}"));
-            locate_project(app, &conn, &cfg, &key, c, &cmd, &project_id)
-        } else {
-            set_status(app, format!("downloading project {project_id}"));
-            download_project(app, &conn, &cfg, &key, c, &project_id)
+        let result = match action {
+            CmdAction::Locate => {
+                set_status(app, format!("locating project {project_id}"));
+                locate_project(app, &conn, &cfg, &key, c, &cmd, &project_id)
+            }
+            CmdAction::Download => {
+                set_status(app, format!("downloading project {project_id}"));
+                download_project(app, &conn, &cfg, &key, c, &project_id)
+            }
+            CmdAction::Ack => continue, // handled above; here only to satisfy the match
         };
         match result {
             Ok(()) => {
@@ -434,7 +471,7 @@ fn poll_once(app: &AppHandle, c: &reqwest::blocking::Client) {
             Err(e) => {
                 let _ = send_json(c, reqwest::Method::PATCH, &cfg.portal_url, "/api/download-commands", &key, &json!({ "id": id, "status": "failed", "error_message": e }));
                 // Only a download failure mirrors to download-progress; locate isn't a download.
-                if command != "locate" {
+                if action == CmdAction::Download {
                     let _ = send_json(c, reqwest::Method::POST, &cfg.portal_url, "/api/download-progress", &key, &json!({ "project_id": project_id, "status": "failed", "error_message": e }));
                 }
                 set_status(app, format!("job failed: {e}"));
@@ -530,5 +567,17 @@ mod tests {
     fn slug_sanitizes() {
         assert_eq!(slug("Tom & Jerry / 2026"), "Tom___Jerry___2026");
         assert_eq!(slug(""), "bdm");
+    }
+
+    #[test]
+    fn classifies_bdm_commands() {
+        assert_eq!(classify_command("start_download"), CmdAction::Download);
+        assert_eq!(classify_command("download"), CmdAction::Download);
+        assert_eq!(classify_command("locate"), CmdAction::Locate);
+        // The pipeline/ambiguous commands FDM must NOT treat as a download — these
+        // are exactly the ones the old default mis-ran (2x download, cancel→download).
+        for c in ["add_to_cloud", "copy_to_drive", "cancel_download", "delete_data", "check_cloud_status", "", "whatever"] {
+            assert_eq!(classify_command(c), CmdAction::Ack, "{c:?} must be acked, not run");
+        }
     }
 }
