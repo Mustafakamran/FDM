@@ -948,6 +948,13 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
             // Per-request (one 8 MiB block) deadline so a stalled socket errors and
             // retries instead of hanging the whole download forever.
             .timeout(BLOCK_REQUEST_TIMEOUT)
+            // Prefer HTTP/2 with a BDP-adaptive flow-control window. On a high-RTT
+            // link (e.g. ~150 ms), a fixed HTTP/1.1/HTTP2 window caps a connection
+            // to window/RTT — far below the real link speed — which is why big
+            // downloads crawled while the speed test (one long stream) didn't. The
+            // adaptive window grows to the bandwidth-delay product so a connection
+            // can saturate the link; the block workers multiplex over it.
+            .http2_adaptive_window(true)
             .build()
             .map_err(|e| e.to_string())?;
         let dest_root = Path::new(&dest);

@@ -1,6 +1,6 @@
 [package]
 name = "google-drive-downloader"
-version = "2.5.2"
+version = "2.5.3"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -30,7 +30,7 @@ tauri-plugin-single-instance = "2"
 rand = "0.10.1"
 # rustls-tls is required for the external HTTPS calls (Google/Dropbox token +
 # API endpoints); loopback rc calls are plain HTTP but need a TLS backend present.
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "default-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "default-tls", "http2"] }
 tokio = { version = "1", features = ["time"] }
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-notification = "2.3.3"

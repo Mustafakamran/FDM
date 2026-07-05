@@ -34,8 +34,8 @@ import type { RcItem } from "../lib/rc/browse";
 import { createFolder } from "../lib/rc/browse";
 import { deleteItem } from "../lib/tauri/commands";
 import type { Account, DownloadItem } from "../lib/tauri/commands";
-import { FOLDER_KEY } from "../lib/ingest";
-import { loadJson, loadRaw, saveJson } from "../lib/persisted";
+import { pickDownloadDest } from "../lib/ingest";
+import { loadJson, saveJson } from "../lib/persisted";
 
 const SORT_KEY = "browse_sort";
 const EMPTY: RcItem[] = [];
@@ -494,15 +494,11 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     void useTransfers.getState().startUploads(account.id, paths, path);
   }
 
-  // Queue a set of items, prompting once for a destination folder if none is set.
+  // Queue a set of items, always prompting for a destination folder.
   async function enqueueItems(its: RcItem[]) {
     if (its.length === 0) return;
-    let dest = loadRaw(FOLDER_KEY, "");
-    if (!dest) {
-      const picked = await open({ directory: true, multiple: false });
-      if (typeof picked !== "string") return;
-      dest = picked;
-    }
+    const dest = await pickDownloadDest();
+    if (!dest) return;
     const chosen: DownloadItem[] = its.map((i) => ({ path: i.Path, name: i.Name, isDir: i.IsDir, size: sizeOf(i), id: i.ID ?? "" }));
     enqueue(account.id, chosen, dest);
     toast(`Queued ${chosen.length} download${chosen.length === 1 ? "" : "s"}`, "success");
@@ -513,12 +509,8 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   async function download() {
     const byAccount = useSelection.getState().byAccount;
     if (totalSelectedCount(byAccount) === 0) return;
-    let dest = loadRaw(FOLDER_KEY, "");
-    if (!dest) {
-      const picked = await open({ directory: true, multiple: false });
-      if (typeof picked !== "string") return;
-      dest = picked;
-    }
+    const dest = await pickDownloadDest();
+    if (!dest) return;
     let queued = 0;
     for (const [accId, map] of Object.entries(byAccount)) {
       const entries = Object.values(map);

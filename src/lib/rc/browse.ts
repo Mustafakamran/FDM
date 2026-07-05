@@ -1,5 +1,8 @@
 import { RcClient } from "./client";
-import type { Account } from "../tauri/commands";
+import { resolveShortcut, type Account } from "../tauri/commands";
+
+/** Google Drive shortcut mime type — rclone surfaces these unresolved. */
+const SHORTCUT_MIME = "application/vnd.google-apps.shortcut";
 
 export interface RcItem {
   Name: string;
@@ -50,7 +53,32 @@ export async function listFolder(account: Account, path: string): Promise<RcItem
     fs: buildFs(account),
     remote: path,
   });
-  const list = res?.list ?? [];
+  let list = res?.list ?? [];
+
+  // Google Drive shortcuts arrive unresolved over shared_with_me (mimeType
+  // `…shortcut`, IsDir=false) → un-openable "files". Resolve each to its target
+  // via the Drive API and rewrite the row so a folder-shortcut opens its real
+  // folder and a file-shortcut downloads its real file (both by target id/path).
+  if (account.provider === "drive") {
+    const shortcuts = list.filter((i) => i.MimeType === SHORTCUT_MIME && i.ID);
+    if (shortcuts.length > 0) {
+      const resolved = new Map<string, RcItem>();
+      await Promise.all(
+        shortcuts.map(async (item) => {
+          try {
+            const t = await resolveShortcut(account.id, item.ID!);
+            resolved.set(item.ID!, t.isDir
+              ? { ...item, IsDir: true, ID: t.targetId, Path: t.targetPath || item.Path, MimeType: t.targetMime }
+              : { ...item, ID: t.targetId, MimeType: t.targetMime });
+          } catch {
+            /* leave the shortcut as-is if resolution fails */
+          }
+        }),
+      );
+      list = list.map((i) => (i.ID && resolved.has(i.ID) ? resolved.get(i.ID)! : i));
+    }
+  }
+
   return [...list].sort((a, b) => {
     if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1;
     return a.Name.toLowerCase().localeCompare(b.Name.toLowerCase());

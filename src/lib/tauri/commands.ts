@@ -136,6 +136,17 @@ export function driveFolderPath(accountId: string, fileId: string): Promise<stri
   return invoke<string>("drive_folder_path", { accountId, fileId });
 }
 
+export interface ShortcutTarget {
+  targetId: string;
+  targetMime: string;
+  isDir: boolean;
+  targetPath: string;
+}
+/** Resolve a Google Drive shortcut to its target (id/type/folder-path). */
+export function resolveShortcut(accountId: string, shortcutId: string): Promise<ShortcutTarget> {
+  return invoke<ShortcutTarget>("drive_resolve_shortcut", { accountId, shortcutId });
+}
+
 /** Create/fetch an "anyone with the link" Google Drive share URL for a folder/file id. */
 export function driveShareLink(accountId: string, fileId: string): Promise<string> {
   return invoke<string>("drive_share_link", { accountId, fileId });

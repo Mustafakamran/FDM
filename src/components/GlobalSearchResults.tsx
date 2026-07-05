@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { Download, Eye, Play, Loader2, AlertCircle, FileSearch, Folder, FolderOpen, FolderSearch, HardDrive, Globe } from "lucide-react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { useApp } from "../store/app";
 import { useSearch, type SearchScope } from "../store/search";
 import { type GlobalHit } from "../store/global-search";
@@ -15,8 +14,7 @@ import { EmptyState, Skeleton } from "./ui";
 import { fileType } from "../lib/file-types";
 import { isPreviewable, isVideo, extOf } from "../lib/review";
 import { formatBytes } from "../lib/format";
-import { FOLDER_KEY } from "../lib/ingest";
-import { loadRaw } from "../lib/persisted";
+import { pickDownloadDest } from "../lib/ingest";
 import { useScopedSearch } from "../lib/use-scoped-search";
 import { useCommands, filterCommands } from "../lib/use-commands";
 import { driveFolderPath, type Account, type DownloadItem, type Provider } from "../lib/tauri/commands";
@@ -223,12 +221,8 @@ export function GlobalSearchResults({ onClose }: { onClose: () => void }) {
       toast(`Couldn’t locate “${h.Name}” on the drive`, "error");
       return;
     }
-    let dest = loadRaw(FOLDER_KEY, "");
-    if (!dest) {
-      const picked = await open({ directory: true, multiple: false });
-      if (typeof picked !== "string") return;
-      dest = picked;
-    }
+    const dest = await pickDownloadDest();
+    if (!dest) return;
     const item: DownloadItem = { path, name: h.Name, isDir: h.IsDir, size: h.Size > 0 ? h.Size : 0, id: h.ID ?? "" };
     enqueue(h.AccountId, [item], dest);
     toast(`Queued ${h.Name}`, "success");

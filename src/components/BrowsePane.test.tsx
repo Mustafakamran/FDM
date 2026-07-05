@@ -73,8 +73,10 @@ describe("BrowsePane", () => {
     });
   });
 
-  it("downloads selected files to the default folder", async () => {
-    localStorage.setItem("default_download_folder", "/Volumes/EXT");
+  it("prompts for a destination then downloads the selected files there", async () => {
+    // Download now ALWAYS prompts for a folder (the dialog returns it here).
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    (open as unknown as ReturnType<typeof vi.fn>).mockResolvedValue("/Volumes/EXT");
     render(<BrowsePane account={account} section="all" path="" />);
     await screen.findByTestId("file-list");
     fireEvent.click(screen.getByLabelText("Select a.mxf"));

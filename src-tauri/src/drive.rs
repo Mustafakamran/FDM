@@ -117,38 +117,85 @@ pub async fn drive_folder_path(
     tauri::async_runtime::spawn_blocking(move || {
         let access = drive_access_token(&conn, &account_id)?;
         let client = reqwest::blocking::Client::new();
-        // Walk first-parent chain, newest (deepest) first; bounded so a pathological
-        // parent cycle can't loop forever.
-        let mut names: Vec<String> = Vec::new();
-        let mut cur = file_id;
-        for _ in 0..64 {
-            let url = format!(
-                "https://www.googleapis.com/drive/v3/files/{cur}?fields=name,parents&supportsAllDrives=true"
-            );
-            let resp = client.get(&url).bearer_auth(&access).send().map_err(|e| e.to_string())?;
-            // A non-success (typically 404/403 on an owner's ancestor above a
-            // shared root) is the natural stop signal — we've walked as high as
-            // this account can see, which is where rclone roots the path.
-            if !resp.status().is_success() {
-                break;
-            }
-            let v: Value = resp.json().map_err(|e| e.to_string())?;
-            let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let parents = v.get("parents").and_then(|p| p.as_array());
-            match parents.and_then(|a| a.first()).and_then(|x| x.as_str()) {
-                // Has a parent → this node is a real path segment; record it and climb.
-                Some(parent) => {
-                    if !name.is_empty() {
-                        names.push(name);
-                    }
-                    cur = parent.to_string();
-                }
-                // No parents → `cur` is My Drive's root; don't add "My Drive".
-                None => break,
-            }
+        Ok(folder_path_walk(&client, &access, &file_id))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Walk the first-parent chain of a Drive id up to the account-visible root and
+/// return the account-root-relative path rclone would list it at (no leading
+/// slash). Bounded so a pathological parent cycle can't loop forever; a
+/// non-success (403/404 above a shared root) is the natural stop signal.
+fn folder_path_walk(client: &reqwest::blocking::Client, access: &str, file_id: &str) -> String {
+    let mut names: Vec<String> = Vec::new();
+    let mut cur = file_id.to_string();
+    for _ in 0..64 {
+        let url = format!("https://www.googleapis.com/drive/v3/files/{cur}?fields=name,parents&supportsAllDrives=true");
+        let Ok(resp) = client.get(&url).bearer_auth(access).send() else { break };
+        if !resp.status().is_success() {
+            break;
         }
-        names.reverse();
-        Ok(names.join("/"))
+        let Ok(v) = resp.json::<Value>() else { break };
+        let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        match v.get("parents").and_then(|p| p.as_array()).and_then(|a| a.first()).and_then(|x| x.as_str()) {
+            Some(parent) => {
+                if !name.is_empty() {
+                    names.push(name);
+                }
+                cur = parent.to_string();
+            }
+            None => break,
+        }
+    }
+    names.reverse();
+    names.join("/")
+}
+
+/// A resolved Google Drive shortcut's target.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutTarget {
+    pub target_id: String,
+    pub target_mime: String,
+    pub is_dir: bool,
+    /// For a folder target, the account-root-relative path (so browse/download
+    /// navigate to the real folder, not the shortcut). Empty for a file target.
+    pub target_path: String,
+}
+
+/// Resolve a Drive shortcut to its target (id + type + folder path). rclone does
+/// not reliably dereference shortcuts over `shared_with_me`, so folder-shortcuts
+/// arrive as un-openable "files"; the browser resolves them through this.
+#[tauri::command]
+pub async fn drive_resolve_shortcut(
+    rclone: tauri::State<'_, RcloneState>,
+    account_id: String,
+    shortcut_id: String,
+) -> Result<ShortcutTarget, String> {
+    let conn: RcConnection = rclone
+        .connection
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or_else(|| "rclone not started".to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let access = drive_access_token(&conn, &account_id)?;
+        let client = reqwest::blocking::Client::new();
+        let url = format!(
+            "https://www.googleapis.com/drive/v3/files/{shortcut_id}?fields=mimeType,shortcutDetails&supportsAllDrives=true"
+        );
+        let resp = client.get(&url).bearer_auth(&access).send().map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!("resolve shortcut {}: {}", resp.status(), resp.text().unwrap_or_default().chars().take(160).collect::<String>()));
+        }
+        let v: Value = resp.json().map_err(|e| e.to_string())?;
+        let details = v.get("shortcutDetails").ok_or("not a shortcut (no shortcutDetails)")?;
+        let target_id = details.get("targetId").and_then(|x| x.as_str()).ok_or("shortcut has no target")?.to_string();
+        let target_mime = details.get("targetMimeType").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let is_dir = target_mime == "application/vnd.google-apps.folder";
+        let target_path = if is_dir { folder_path_walk(&client, &access, &target_id) } else { String::new() };
+        Ok(ShortcutTarget { target_id, target_mime, is_dir, target_path })
     })
     .await
     .map_err(|e| e.to_string())?

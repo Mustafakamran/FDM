@@ -4,8 +4,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useTransfers } from "../store/transfers";
 import { useToasts } from "../store/toast";
 import { Button } from "./ui";
-import { FOLDER_KEY } from "../lib/ingest";
-import { loadRaw, saveRaw } from "../lib/persisted";
+import { FOLDER_KEY, pickDownloadDest } from "../lib/ingest";
+import { saveRaw } from "../lib/persisted";
 
 /**
  * "Add web download" — a compact button that opens a dropdown with the URL input,
@@ -33,21 +33,10 @@ export function UrlDownload() {
     return () => document.removeEventListener("keydown", onKey);
   }, [open_]);
 
-  /** The saved download folder, or a freshly-picked one; null if cancelled. */
-  async function resolveDest(): Promise<string | null> {
-    let dest = loadRaw(FOLDER_KEY, "");
-    if (!dest) {
-      const picked = await open({ directory: true, multiple: false });
-      if (typeof picked !== "string") return null;
-      dest = picked;
-    }
-    return dest;
-  }
-
   async function submit() {
     const trimmed = url.trim();
     if (!trimmed) return;
-    const dest = await resolveDest();
+    const dest = await pickDownloadDest();
     if (!dest) return;
     enqueueUrl(trimmed, dest);
     toast(trimmed.toLowerCase().startsWith("magnet:") ? "Queued torrent" : "Queued download from URL", "success");
@@ -58,7 +47,7 @@ export function UrlDownload() {
   async function addTorrentFile() {
     const picked = await open({ multiple: false, filters: [{ name: "Torrent", extensions: ["torrent"] }] });
     if (typeof picked !== "string") return;
-    const dest = await resolveDest();
+    const dest = await pickDownloadDest();
     if (!dest) return;
     enqueueTorrentFile(picked, dest);
     toast("Queued torrent", "success");

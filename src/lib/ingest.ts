@@ -1,10 +1,10 @@
 import { downloadDir } from "@tauri-apps/api/path";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save, open } from "@tauri-apps/plugin-dialog";
 import { useTransfers, filenameFromUrl, HTTP_ACCOUNT_ID } from "../store/transfers";
 import { useToasts } from "../store/toast";
 import { getAskWhereToSave } from "./ask-where";
-import { loadRaw } from "./persisted";
+import { loadRaw, saveRaw } from "./persisted";
 import type { DownloadItem } from "./tauri/commands";
 
 /**
@@ -16,6 +16,20 @@ export const YTDLP_ACCOUNT_ID = "ytdlp";
 
 /** localStorage key for the user's chosen default download folder. */
 export const FOLDER_KEY = "default_download_folder";
+
+/**
+ * Always prompt for a download destination, seeded with the last-used folder,
+ * and remember the pick as the next default. Returns the chosen path, or null if
+ * the user cancelled. Used by every "Download" entry point so the destination is
+ * always confirmed.
+ */
+export async function pickDownloadDest(): Promise<string | null> {
+  const prev = loadRaw(FOLDER_KEY, "");
+  const picked = await open({ directory: true, multiple: false, defaultPath: prev || undefined });
+  if (typeof picked !== "string") return null;
+  saveRaw(FOLDER_KEY, picked);
+  return picked;
+}
 
 /** The kind of capture the browser extension forwards. */
 export type IngestKind = "file" | "media";
