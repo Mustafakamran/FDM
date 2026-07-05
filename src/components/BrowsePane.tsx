@@ -870,7 +870,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                 folderCount={fileCountOf(item)}
                 visited={item.IsDir && visitedSet.has(item.Path)}
                 hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
-                status={folderStatusMap?.[item.Path]}
+                status={folderStatusMap?.[item.Path] ?? (item.IsDir && folderHasDownloads(item.Path) ? ("downloaded" as const) : undefined)}
                 actions={rowActions}
               />
             ))}
@@ -909,7 +909,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                   folderIndexedFlag={folderIndexed(item.Path)}
                   visited={item.IsDir && visitedSet.has(item.Path)}
                   hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
-                  status={folderStatusMap?.[item.Path]}
+                  status={folderStatusMap?.[item.Path] ?? (item.IsDir && folderHasDownloads(item.Path) ? ("downloaded" as const) : undefined)}
                   actions={rowActions}
                 />
               ))}
