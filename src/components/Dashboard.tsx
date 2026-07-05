@@ -63,7 +63,7 @@ export function Dashboard() {
         <Stat icon={<Database size={18} />} label="Storage used" value={formatBytes(totalUsed)} sub={totalCap > 0 ? `of ${formatBytes(totalCap)}` : "—"} />
         <Stat
           icon={<FolderPlus size={18} />}
-          label="New folders"
+          label="Recent Folders"
           value={newFolderCount > 0 ? <CountUp value={newFolderCount} /> : "—"}
           sub={newFolderCount > 0 ? `${formatBytes(newFolderSize)}${allSized ? "" : "+"} to download` : "nothing new"}
           accent={newFolderCount > 0}

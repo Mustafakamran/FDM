@@ -23,6 +23,9 @@ pub enum Kind {
     /// Filemail share link — the whole transfer is fetched by `filemail.rs`;
     /// synthetic account, URL in the item's `id`.
     Filemail,
+    /// BitTorrent magnet / .torrent, downloaded by the bundled rqbit engine
+    /// (`torrent.rs`); synthetic account, the magnet or file path in `id`.
+    Torrent,
 }
 
 /// Which provider/transport an account id uses.
@@ -38,6 +41,8 @@ pub fn kind_of(account_id: &str) -> Kind {
         Kind::Wetransfer
     } else if account_id.starts_with("filemail") {
         Kind::Filemail
+    } else if account_id.starts_with("torrent") {
+        Kind::Torrent
     } else if account_id.starts_with("dropboxlink_") {
         Kind::DropboxLink
     } else if account_id.starts_with("dropbox_") {
@@ -57,6 +62,7 @@ pub fn token_account(app: &AppHandle, account_id: &str) -> (String, String) {
         || account_id.starts_with("ytdlp")
         || account_id.starts_with("wetransfer")
         || account_id.starts_with("filemail")
+        || account_id.starts_with("torrent")
     {
         return (account_id.to_string(), String::new());
     }
@@ -71,8 +77,8 @@ pub fn token_account(app: &AppHandle, account_id: &str) -> (String, String) {
 /// Fetch a fresh access token for the given kind + token-owning account.
 pub fn fetch_token(conn: &RcConnection, kind: Kind, token_acct: &str) -> Result<String, String> {
     match kind {
-        // Http / ytdlp / transfer shares need no auth — never touch rclone.
-        Kind::Http | Kind::Ytdlp | Kind::Wetransfer | Kind::Filemail => Ok(String::new()),
+        // Http / ytdlp / transfer shares / torrents need no auth — never rclone.
+        Kind::Http | Kind::Ytdlp | Kind::Wetransfer | Kind::Filemail | Kind::Torrent => Ok(String::new()),
         Kind::Drive => crate::drive::drive_access_token(conn, token_acct),
         _ => crate::drive::dropbox_access_token(conn, token_acct),
     }
@@ -129,7 +135,7 @@ pub fn send_range(
         // Ytdlp and the transfer-share kinds run their own downloaders (never
         // byte-range fetch here); they only reach this arm as a defensive plain
         // GET so the match stays exhaustive.
-        Kind::Http | Kind::Ytdlp | Kind::Wetransfer | Kind::Filemail => {
+        Kind::Http | Kind::Ytdlp | Kind::Wetransfer | Kind::Filemail | Kind::Torrent => {
             client.get(fid).header("Range", range).send()
         }
     }
@@ -149,5 +155,6 @@ mod tests {
         assert_eq!(kind_of("ytdlp"), Kind::Ytdlp);
         assert_eq!(kind_of("wetransfer"), Kind::Wetransfer);
         assert_eq!(kind_of("filemail"), Kind::Filemail);
+        assert_eq!(kind_of("torrent"), Kind::Torrent);
     }
 }

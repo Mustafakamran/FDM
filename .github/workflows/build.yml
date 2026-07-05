@@ -51,7 +51,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src-tauri/binaries
-          key: sidecars-${{ runner.os }}-${{ hashFiles('scripts/fetch-rclone.mjs', 'scripts/fetch-ffmpeg.mjs', 'scripts/fetch-ytdlp.mjs') }}
+          key: sidecars-${{ runner.os }}-${{ hashFiles('scripts/fetch-rclone.mjs', 'scripts/fetch-ffmpeg.mjs', 'scripts/fetch-ytdlp.mjs', 'scripts/fetch-rqbit.mjs') }}
 
       - name: Fetch the rclone sidecar for this OS
         run: npm run fetch:rclone
@@ -61,6 +61,9 @@ jobs:
 
       - name: Fetch the yt-dlp sidecar for this OS
         run: npm run fetch:ytdlp
+
+      - name: Fetch the rqbit (BitTorrent) sidecar for this OS
+        run: npm run fetch:rqbit
 
       - name: Build the app (and publish on tag)
         uses: tauri-apps/tauri-action@v0

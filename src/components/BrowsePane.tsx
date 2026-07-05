@@ -21,6 +21,8 @@ import { Button, Skeleton, EmptyState } from "./ui";
 import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
 import { useFolderStatus, FOLDER_STATUS_META, FOLDER_STATUS_ORDER, type FolderStatus } from "../store/folder-status";
 import { StatusBadge } from "./ui/StatusBadge";
+import { DownloadBadge } from "./ui/DownloadBadge";
+import { useDownloadStatusMap, type DlStatus } from "../lib/download-status";
 import { SharePopover } from "./SharePopover";
 import { fileType } from "../lib/file-types";
 import { itemAt } from "../lib/account-index";
@@ -144,6 +146,9 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const toggleStar = useStarred((s) => s.toggle);
   const folderStatusMap = useFolderStatus((s) => s.byAccount[account.id]);
   const setFolderStatus = useFolderStatus((s) => s.set);
+  // Live transfer status per source path (Downloading %/Downloaded/Failed/…),
+  // so a file/folder shows its download state right here in the browser.
+  const dlStatusMap = useDownloadStatusMap(account.id);
 
   // Folder badges: "visited" (opened at least once) persists across restarts;
   // "has downloads" is derived from history rather than stored separately, so
@@ -871,6 +876,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                 visited={item.IsDir && visitedSet.has(item.Path)}
                 hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
                 status={folderStatusMap?.[item.Path] ?? (item.IsDir && folderHasDownloads(item.Path) ? ("downloaded" as const) : undefined)}
+                dl={dlStatusMap.get(item.Path)}
                 actions={rowActions}
               />
             ))}
@@ -910,6 +916,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                   visited={item.IsDir && visitedSet.has(item.Path)}
                   hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
                   status={folderStatusMap?.[item.Path] ?? (item.IsDir && folderHasDownloads(item.Path) ? ("downloaded" as const) : undefined)}
+                  dl={dlStatusMap.get(item.Path)}
                   actions={rowActions}
                 />
               ))}
@@ -1080,6 +1087,7 @@ const FileRow = memo(function FileRow({
   visited,
   hasDownloads,
   status,
+  dl,
   actions,
 }: {
   item: RcItem;
@@ -1094,6 +1102,7 @@ const FileRow = memo(function FileRow({
   visited: boolean;
   hasDownloads: boolean;
   status: FolderStatus | undefined;
+  dl: DlStatus | undefined;
   actions: RowActions;
 }) {
   const ft = fileType(item.Name, item.IsDir);
@@ -1122,7 +1131,7 @@ const FileRow = memo(function FileRow({
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[13.5px] font-medium text-[var(--ink)]">{item.Name}</span>
-          {status && <StatusBadge status={status} />}
+          {dl ? <DownloadBadge status={dl} /> : status ? <StatusBadge status={status} /> : null}
           {isStarred && <Star size={11} fill="currentColor" className="shrink-0 text-[var(--warn)]" />}
           {video && <Play size={11} className="shrink-0 text-[var(--faint)] opacity-0 group-hover:opacity-100" />}
         </span>
@@ -1212,6 +1221,8 @@ const FileRow = memo(function FileRow({
   prev.visited === next.visited &&
   prev.hasDownloads === next.hasDownloads &&
   prev.status === next.status &&
+  prev.dl?.state === next.dl?.state &&
+  prev.dl?.pct === next.dl?.pct &&
   folderSizeEqual(prev.folderSize, next.folderSize));
 
 /** One grid-view card — same memoization rationale as FileRow. */
@@ -1224,6 +1235,7 @@ const FileGridItem = memo(function FileGridItem({
   visited,
   hasDownloads,
   status,
+  dl,
   gridIndex,
   actions,
 }: {
@@ -1235,6 +1247,7 @@ const FileGridItem = memo(function FileGridItem({
   visited: boolean;
   hasDownloads: boolean;
   status: FolderStatus | undefined;
+  dl: DlStatus | undefined;
   gridIndex: number;
   actions: RowActions;
 }) {
@@ -1262,7 +1275,7 @@ const FileGridItem = memo(function FileGridItem({
           {item.IsDir && <FolderBadge hasDownloads={hasDownloads} visited={visited} />}
         </span>
         <span className="line-clamp-2 text-sm text-[var(--text)]">{item.Name}</span>
-        {status && <StatusBadge status={status} />}
+        {dl ? <DownloadBadge status={dl} /> : status ? <StatusBadge status={status} /> : null}
       </button>
       <span className="tnum text-xs text-[var(--text-3)]">
         <SizeCell item={item} folderSize={folderSize} onCalcSize={actions.calcSize} />
@@ -1281,6 +1294,8 @@ const FileGridItem = memo(function FileGridItem({
   prev.visited === next.visited &&
   prev.hasDownloads === next.hasDownloads &&
   prev.status === next.status &&
+  prev.dl?.state === next.dl?.state &&
+  prev.dl?.pct === next.dl?.pct &&
   prev.gridIndex === next.gridIndex &&
   folderSizeEqual(prev.folderSize, next.folderSize));
 

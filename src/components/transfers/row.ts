@@ -5,6 +5,7 @@
 import type { JobStatus, DownloadItem } from "../../lib/tauri/commands";
 import type { QueueItem } from "../../store/transfers";
 import type { HistoryEntry } from "../../store/history";
+import { laneOf } from "../../lib/lane";
 
 export type TransferState =
   | "downloading"
@@ -32,13 +33,18 @@ export interface TransferRow {
   state: TransferState;
   accountId: string;
   dest: string;
-  /** Human label (account name / "Web"), resolved by the caller. */
+  /** Source column: the actual path within the account for Drive/Dropbox; the
+   *  account label for web/torrent/uploads. */
   source: string;
+  /** Account display label (shown in the info panel alongside the source path). */
+  account: string;
   error?: string;
   /** Finished-at timestamp (history rows). */
   at?: number;
   /** Present on failed rows so the panel/actions can re-enqueue. */
   item?: DownloadItem;
+  /** True for upload transfers — routes dismiss to the uploads store. */
+  upload?: boolean;
 }
 
 export type LabelOf = (accountId: string) => string;
@@ -46,8 +52,19 @@ export type LabelOf = (accountId: string) => string;
 const jobPct = (bytes: number, total: number) =>
   total > 0 ? Math.min(100, Math.round((bytes / total) * 100)) : 0;
 
-/** A live download/upload job. */
-export function jobRow(j: JobStatus, labelOf: LabelOf): TransferRow {
+/**
+ * The Source cell: for Drive/Dropbox (primary lane) show the actual path of the
+ * file/folder within the account; for web/torrent/uploads the account label is
+ * enough (there's no cloud path).
+ */
+function sourceLabel(accountId: string, item: DownloadItem | undefined, labelOf: LabelOf): string {
+  if (item && item.path && laneOf(accountId) === "primary") return item.path;
+  return labelOf(accountId);
+}
+
+/** A live download/upload job. `item` (the inflight source item) supplies the
+ *  cloud path for the Source cell when known. */
+export function jobRow(j: JobStatus, labelOf: LabelOf, item?: DownloadItem): TransferRow {
   return {
     id: `j${j.jobId}`,
     jobId: j.jobId,
@@ -60,7 +77,9 @@ export function jobRow(j: JobStatus, labelOf: LabelOf): TransferRow {
     state: j.kind === "upload" ? "uploading" : "downloading",
     accountId: j.accountId,
     dest: j.dest,
-    source: labelOf(j.accountId),
+    source: sourceLabel(j.accountId, item, labelOf),
+    account: labelOf(j.accountId),
+    upload: j.kind === "upload",
   };
 }
 
@@ -79,8 +98,8 @@ export function queueRow(q: QueueItem, position: number, labelOf: LabelOf): Tran
     state: gated ? "gated" : q.paused ? "paused" : "queued",
     accountId: q.accountId,
     dest: q.dest,
-    // Position hint next to the account so the queue order is visible.
-    source: `${labelOf(q.accountId)} · #${position}`,
+    source: sourceLabel(q.accountId, q.item, labelOf),
+    account: `${labelOf(q.accountId)} · #${position}`,
     item: q.item,
   };
 }
@@ -101,7 +120,8 @@ export function historyRow(h: HistoryEntry, labelOf: LabelOf): TransferRow {
     state,
     accountId: h.accountId,
     dest: h.dest,
-    source: labelOf(h.accountId),
+    source: sourceLabel(h.accountId, h.item, labelOf),
+    account: labelOf(h.accountId),
     error: h.error,
     at: h.at,
     item: h.item,
@@ -124,6 +144,8 @@ export function uploadHistoryRow(u: JobStatus, labelOf: LabelOf): TransferRow {
     accountId: u.accountId,
     dest: u.dest,
     source: labelOf(u.accountId),
+    account: labelOf(u.accountId),
     error: u.error,
+    upload: true,
   };
 }

@@ -1,7 +1,7 @@
 {
   "name": "google-drive-downloader",
   "private": true,
-  "version": "2.4.4",
+  "version": "2.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "fetch:rclone": "node scripts/fetch-rclone.mjs",
     "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs",
-    "fetch:ytdlp": "node scripts/fetch-ytdlp.mjs"
+    "fetch:ytdlp": "node scripts/fetch-ytdlp.mjs",
+    "fetch:rqbit": "node scripts/fetch-rqbit.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

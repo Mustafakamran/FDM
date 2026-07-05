@@ -15,6 +15,7 @@ import { loadRaw, saveRaw } from "../lib/persisted";
  */
 export function UrlDownload() {
   const enqueueUrl = useTransfers((s) => s.enqueueUrl);
+  const enqueueTorrentFile = useTransfers((s) => s.enqueueTorrentFile);
   const toast = useToasts((s) => s.push);
   const [url, setUrl] = useState("");
   const [open_, setOpen] = useState(false);
@@ -32,18 +33,35 @@ export function UrlDownload() {
     return () => document.removeEventListener("keydown", onKey);
   }, [open_]);
 
-  async function submit() {
-    const trimmed = url.trim();
-    if (!trimmed) return;
+  /** The saved download folder, or a freshly-picked one; null if cancelled. */
+  async function resolveDest(): Promise<string | null> {
     let dest = loadRaw(FOLDER_KEY, "");
     if (!dest) {
       const picked = await open({ directory: true, multiple: false });
-      if (typeof picked !== "string") return;
+      if (typeof picked !== "string") return null;
       dest = picked;
     }
+    return dest;
+  }
+
+  async function submit() {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    const dest = await resolveDest();
+    if (!dest) return;
     enqueueUrl(trimmed, dest);
-    toast("Queued download from URL", "success");
+    toast(trimmed.toLowerCase().startsWith("magnet:") ? "Queued torrent" : "Queued download from URL", "success");
     setUrl("");
+    setOpen(false);
+  }
+
+  async function addTorrentFile() {
+    const picked = await open({ multiple: false, filters: [{ name: "Torrent", extensions: ["torrent"] }] });
+    if (typeof picked !== "string") return;
+    const dest = await resolveDest();
+    if (!dest) return;
+    enqueueTorrentFile(picked, dest);
+    toast("Queued torrent", "success");
     setOpen(false);
   }
 
@@ -72,7 +90,7 @@ export function UrlDownload() {
                 <X size={15} />
               </button>
             </div>
-            <p className="mb-3 text-xs text-[var(--faint)]">Paste a direct file URL, or a <span className="text-[var(--ink)]">WeTransfer</span> / <span className="text-[var(--ink)]">Filemail</span> share link — it downloads alongside your Drive/Dropbox transfers.</p>
+            <p className="mb-3 text-xs text-[var(--faint)]">Paste a direct file URL, a <span className="text-[var(--ink)]">WeTransfer</span> / <span className="text-[var(--ink)]">Filemail</span> link, or a <span className="text-[var(--ink)]">magnet</span> link — it downloads alongside your Drive/Dropbox transfers.</p>
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <Globe size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--faint)]" />
@@ -81,7 +99,7 @@ export function UrlDownload() {
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && void submit()}
-                  placeholder="Paste a URL, WeTransfer or Filemail link…"
+                  placeholder="Paste a URL, magnet, or WeTransfer/Filemail link…"
                   aria-label="URL to download"
                   className="focus-accent w-full rounded-[8px] border border-[var(--line)] bg-[var(--soft)] py-2 pl-9 pr-3 text-sm text-[var(--ink)] placeholder:text-[var(--faint)]"
                 />
@@ -95,7 +113,10 @@ export function UrlDownload() {
                 <Folder size={15} />
               </button>
             </div>
-            <div className="mt-3 flex justify-end">
+            <div className="mt-3 flex items-center justify-between">
+              <button onClick={() => void addTorrentFile()} className="text-[12px] font-medium text-[var(--faint)] hover:text-[var(--ink)]" data-tip="Load a .torrent file from disk">
+                Add .torrent file…
+              </button>
               <Button variant="download" onClick={() => void submit()} disabled={!url.trim()}>
                 <Plus size={15} /> Download
               </Button>

@@ -8,9 +8,9 @@ const variants: Record<Variant, string> = {
   ghost:
     "bg-transparent text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)] active:translate-y-px",
   danger: "bg-transparent text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--error)]",
-  // Green is reserved for downloads (the design's signature semantic).
+  // Download actions use the accent (via --dl, which now follows --acc).
   download:
-    "bg-[var(--dl)] font-semibold text-white shadow-[0_4px_14px_var(--dl-glow)] hover:brightness-110 active:translate-y-px",
+    "bg-[var(--dl)] font-semibold text-[var(--onacc)] shadow-[0_4px_14px_var(--dl-glow)] hover:brightness-110 active:translate-y-px",
 };
 
 export function Button({

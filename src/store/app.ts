@@ -24,6 +24,11 @@ export type View =
   | { kind: "downloads"; filter: DownloadFilter; web?: boolean; detail?: string; category?: WebCategoryFilter }
   // The Uploads area — a mirror of Downloads for local → cloud transfers.
   | { kind: "uploads"; filter: DownloadFilter }
+  // Unified Transfers screen: every download (Drive/Dropbox/web/torrent) AND
+  // uploads in one torrent-style table, filtered by direction/state. This is the
+  // single destination the sidebar navigates to; the older `downloads`/`uploads`
+  // kinds above are retained only for type-compat and are no longer routed.
+  | { kind: "transfers"; filter: TransferFilter }
   // "New folders" — root folders recently added to any drive (see NewFoldersView).
   | { kind: "new-folders" }
   | { kind: "review"; accountId: string; target: ReviewTarget }
@@ -32,6 +37,9 @@ export type View =
   | { kind: "accounts" };
 
 export type DownloadFilter = "all" | "active" | "completed" | "failed";
+
+/** Filter for the unified Transfers screen (by direction/state). */
+export type TransferFilter = "all" | "downloading" | "uploading" | "completed" | "failed";
 
 /**
  * Whether a view can still render given the currently-connected account ids.
@@ -86,6 +94,8 @@ interface AppState {
   showDownloads: (filter: DownloadFilter) => void;
   /** Open the Uploads view (local → cloud transfers). */
   showUploads: (filter: DownloadFilter) => void;
+  /** Open the unified Transfers screen (optionally pre-filtered). */
+  showTransfers: (filter?: TransferFilter) => void;
   showNewFolders: () => void;
   /** Open the GENERAL / WEB DOWNLOADS view (secondary-lane http/ytdlp jobs). */
   showWebDownloads: () => void;
@@ -145,13 +155,18 @@ export const useApp = create<AppState>((set, get) => {
 
   openReview: (accountId, target) => set((s) => navTo(s, { kind: "review", accountId, target })),
 
-  showDownloads: (filter) => set((s) => navTo(s, { kind: "downloads", filter })),
+  showTransfers: (filter = "all") => set((s) => navTo(s, { kind: "transfers", filter })),
 
-  showUploads: (filter) => set((s) => navTo(s, { kind: "uploads", filter })),
+  // The old download/upload/web entry points now all land on the unified
+  // Transfers screen, pre-filtered by direction/state.
+  showDownloads: (filter) =>
+    set((s) => navTo(s, { kind: "transfers", filter: filter === "active" ? "downloading" : filter })),
+
+  showUploads: () => set((s) => navTo(s, { kind: "transfers", filter: "uploading" })),
 
   showNewFolders: () => set((s) => navTo(s, { kind: "new-folders" })),
 
-  showWebDownloads: () => set((s) => navTo(s, { kind: "downloads", filter: "all", web: true, category: "All" })),
+  showWebDownloads: () => set((s) => navTo(s, { kind: "transfers", filter: "all" })),
 
   // Sub-view state (detail panel / category filter) — not recorded in history,
   // so Back doesn't get cluttered with panel toggles.

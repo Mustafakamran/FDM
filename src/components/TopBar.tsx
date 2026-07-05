@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Search, Settings as SettingsIcon, Bell, Minus, Square, X } from "lucide-react";
+import { Search, Settings as SettingsIcon, Bell, Sun, Moon, Minus, Square, X } from "lucide-react";
 import { useApp } from "../store/app";
 import { useSearch } from "../store/search";
 import { useNotifications, unreadCount } from "../store/notifications";
 import { useUI } from "../store/ui";
+import { useTheme } from "../store/theme";
 import { Logo } from "./ui/Logo";
+import { GlobalSearchResults } from "./GlobalSearchResults";
 
 const appWindow = getCurrentWindow();
 const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform || navigator.userAgent);
@@ -13,6 +15,8 @@ const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform
 export function TopBar() {
   const showHome = useApp((s) => s.showHome);
   const openSettings = useUI((s) => s.openSettings);
+  const theme = useTheme((s) => s.theme);
+  const setTheme = useTheme((s) => s.setTheme);
   const q = useSearch((s) => s.q);
   const setQ = useSearch((s) => s.set);
   const notifications = useNotifications((s) => s.items);
@@ -21,7 +25,10 @@ export function TopBar() {
   const focusSeq = useSearch((s) => s.focusSeq);
   const requestFocus = useSearch((s) => s.focus);
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
   const [maximized, setMaximized] = useState(false);
+  // The unified search dropdown (files + commands) opens on focus, Slack-style.
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     appWindow.isMaximized().then(setMaximized).catch(() => {});
@@ -49,7 +56,18 @@ export function TopBar() {
     if (focusSeq === 0) return;
     inputRef.current?.focus();
     inputRef.current?.select();
+    setOpen(true);
   }, [focusSeq]);
+
+  // Close the dropdown on an outside click.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
 
   return (
     <header data-tauri-drag-region className="flex h-14 shrink-0 select-none items-center gap-3 bg-transparent pl-4 pr-2">
@@ -58,29 +76,38 @@ export function TopBar() {
         <Logo size={30} wordSize={15} />
       </button>
 
-      {/* Search */}
-      <div className="mx-auto flex w-full max-w-xl items-center gap-2 rounded-[11px] border border-[var(--line)] bg-[var(--card)] px-3.5 py-2 text-sm focus-within:border-[var(--acc)]">
-        <Search size={15} className="text-[var(--faint)]" />
-        <input
-          ref={inputRef}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search files, folders, or jump to anything…"
-          className="w-full bg-transparent text-[var(--ink)] placeholder:text-[var(--faint)] focus:outline-none"
-        />
-        {q ? (
-          <button onClick={() => setQ("")} aria-label="Clear search" className="text-[var(--faint)] hover:text-[var(--ink)]">
-            <X size={14} />
-          </button>
-        ) : (
-          <button
-            onClick={() => requestFocus()}
-            aria-label="Focus search"
-            data-tip="Search & jump to anything"
-            className="shrink-0 rounded-[5px] border border-[var(--line)] bg-[var(--soft)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--faint)] hover:text-[var(--mut)]"
-          >
-            {isMac ? "⌘K" : "Ctrl K"}
-          </button>
+      {/* Search + unified command/search dropdown */}
+      <div ref={searchRef} className="relative mx-auto w-full max-w-xl">
+        <div className="flex items-center gap-2 rounded-[11px] border border-[var(--line)] bg-[var(--card)] px-3.5 py-2 text-sm focus-within:border-[var(--acc)]">
+          <Search size={15} className="text-[var(--faint)]" />
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onFocus={() => setOpen(true)}
+            onKeyDown={(e) => { if (e.key === "Escape") { setOpen(false); setQ(""); inputRef.current?.blur(); } }}
+            placeholder="Search files, folders, or jump to anything…"
+            className="w-full bg-transparent text-[var(--ink)] placeholder:text-[var(--faint)] focus:outline-none"
+          />
+          {q ? (
+            <button onClick={() => setQ("")} aria-label="Clear search" className="text-[var(--faint)] hover:text-[var(--ink)]">
+              <X size={14} />
+            </button>
+          ) : (
+            <button
+              onClick={() => requestFocus()}
+              aria-label="Focus search"
+              data-tip="Search & jump to anything"
+              className="shrink-0 rounded-[5px] border border-[var(--line)] bg-[var(--soft)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--faint)] hover:text-[var(--mut)]"
+            >
+              {isMac ? "⌘K" : "Ctrl K"}
+            </button>
+          )}
+        </div>
+        {open && (
+          <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-50">
+            <GlobalSearchResults onClose={() => setOpen(false)} />
+          </div>
         )}
       </div>
 
@@ -98,6 +125,14 @@ export function TopBar() {
               {unread > 9 ? "9+" : unread}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          data-tip={theme === "dark" ? "Light theme" : "Dark theme"}
+          className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]"
+        >
+          {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
         </button>
         <button
           onClick={openSettings}

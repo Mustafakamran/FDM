@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { useTransfers, jobsEqual, inflightEqual, needsPolling, classifyTransferUrl, WETRANSFER_ACCOUNT_ID, FILEMAIL_ACCOUNT_ID, HTTP_ACCOUNT_ID, type QueueItem } from "./transfers";
+import { useTransfers, jobsEqual, inflightEqual, needsPolling, classifyTransferUrl, WETRANSFER_ACCOUNT_ID, FILEMAIL_ACCOUNT_ID, HTTP_ACCOUNT_ID, TORRENT_ACCOUNT_ID, type QueueItem } from "./transfers";
 import { laneOf } from "../lib/lane";
 import type { JobStatus, DownloadItem } from "../lib/tauri/commands";
 
@@ -48,6 +48,13 @@ describe("classifyTransferUrl", () => {
   it("routes Filemail links to the native downloader", () => {
     expect(classifyTransferUrl("https://www.filemail.com/t/Trp4EdH3").accountId).toBe(FILEMAIL_ACCOUNT_ID);
     expect(classifyTransferUrl("https://filemail.com/t/abc").accountId).toBe(FILEMAIL_ACCOUNT_ID);
+  });
+  it("routes magnet links to the torrent engine, naming from dn", () => {
+    const r = classifyTransferUrl("magnet:?xt=urn:btih:abc123&dn=Big+Buck+Bunny&tr=udp://x");
+    expect(r.accountId).toBe(TORRENT_ACCOUNT_ID);
+    expect(r.name).toBe("Big Buck Bunny");
+    expect(classifyTransferUrl("magnet:?xt=urn:btih:abc123").name).toBe("Torrent");
+    expect(classifyTransferUrl("MAGNET:?xt=urn:btih:abc").accountId).toBe(TORRENT_ACCOUNT_ID);
   });
   it("leaves a generic direct URL on the plain HTTP lane and keeps its filename", () => {
     const r = classifyTransferUrl("https://cdn.example.com/path/clip.mp4?token=1");

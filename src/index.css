@@ -60,9 +60,11 @@
   --ok: #22c55e;
   --success: #22c55e;
   --okw: rgba(34, 197, 94, 0.15);
-  --dl: #22c55e;
-  --dlw: rgba(34, 197, 94, 0.15);
-  --dl-glow: rgba(34, 197, 94, 0.28);
+  /* Download UI (speed, progress, badges, Add-download button) follows the
+     selected accent — no fixed green. */
+  --dl: var(--acc);
+  --dlw: var(--accw);
+  --dl-glow: var(--accent-glow);
   --warn: #e0a13a;
   --warning: #e0a13a;
   --err: #f0616a;
@@ -127,9 +129,9 @@ html.light {
   --ok: #16a34a;
   --success: #16a34a;
   --okw: rgba(22, 163, 74, 0.12);
-  --dl: #16a34a;
-  --dlw: rgba(22, 163, 74, 0.12);
-  --dl-glow: rgba(22, 163, 74, 0.22);
+  --dl: var(--acc);
+  --dlw: var(--accw);
+  --dl-glow: var(--accent-glow);
   --warn: #d9881f;
   --warning: #d9881f;
   --err: #e5484d;

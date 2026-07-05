@@ -39,7 +39,7 @@ export function useCommands(): Command[] {
       { id: "home", label: "Go to Home", icon: <Home size={16} />, run: showHome },
       { id: "downloads", label: "Go to Downloads", icon: <Download size={16} />, keywords: "transfers", run: () => showDownloads("active") },
       { id: "uploads", label: "Go to Uploads", icon: <Upload size={16} />, keywords: "send transfers", run: () => showUploads("active") },
-      { id: "new-folders", label: "Go to New folders", icon: <FolderPlus size={16} />, keywords: "recent added", run: showNewFolders },
+      { id: "new-folders", label: "Go to Recent Folders", icon: <FolderPlus size={16} />, keywords: "recent added new", run: showNewFolders },
       { id: "web-downloads", label: "Go to Web Downloads", icon: <Globe size={16} />, keywords: "url http", run: showWebDownloads },
       { id: "settings", label: "Open Settings", icon: <SettingsIcon size={16} />, keywords: "preferences config", run: openSettings },
       {

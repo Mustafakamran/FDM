@@ -14,6 +14,7 @@ pub mod search;
 pub mod secrets;
 pub mod speedtest;
 pub mod stream;
+pub mod torrent;
 pub mod transfer;
 pub mod wetransfer;
 
@@ -57,6 +58,7 @@ struct Revealed(AtomicBool);
 /// from the quit path AND from the window `Destroyed` handler.
 fn shutdown_cleanup(app: &tauri::AppHandle) {
     stop_rclone(&app.state::<RcloneState>());
+    app.state::<torrent::TorrentState>().stop();
     hls::cleanup(app);
 }
 
@@ -128,6 +130,49 @@ fn write_binary_file(path: String, base64: String) -> Result<(), String> {
     std::fs::write(&path, bytes).map_err(|e| format!("write {path}: {e}"))
 }
 
+/// Reveal a local path in the OS file manager (Finder / Explorer / xdg). Used by
+/// the Transfers "Open destination" action. Spawns detached so a slow/failing
+/// launcher (e.g. Explorer's non-zero exit) never blocks or errors the caller.
+#[tauri::command]
+fn open_in_file_manager(path: String) -> Result<(), String> {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(&path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("open {path}: {e}"))
+}
+
+/// Delete a download's files from disk: the output at `dest/name` (file OR
+/// folder) plus any leftover `.fdmpart`. `name` must be a single path segment —
+/// an empty, traversing, or separator-bearing name is refused so this can never
+/// delete the destination root or escape it. A missing target is a no-op (e.g. a
+/// never-started queue item), so "delete files" is always safe to offer.
+#[tauri::command]
+fn delete_download_files(dest: String, name: String) -> Result<(), String> {
+    let leaf = name.trim();
+    if leaf.is_empty() || leaf.contains("..") || leaf.contains('/') || leaf.contains('\\') {
+        return Err("refusing to delete: unsafe name".into());
+    }
+    let base = std::path::Path::new(&dest).join(leaf);
+    let mut part = base.as_os_str().to_owned();
+    part.push(".fdmpart");
+    for p in [base, std::path::PathBuf::from(part)] {
+        if p.is_dir() {
+            std::fs::remove_dir_all(&p).map_err(|e| format!("delete {}: {e}", p.display()))?;
+        } else if p.exists() {
+            std::fs::remove_file(&p).map_err(|e| format!("delete {}: {e}", p.display()))?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -152,6 +197,7 @@ pub fn run() {
         .manage(StartHidden::default())
         .manage(Revealed::default())
         .manage(RcloneState::default())
+        .manage(torrent::TorrentState::default())
         .manage(JobsState::default())
         .manage(NativeJobsState::default())
         .manage(accounts::OAuthState::default())
@@ -166,6 +212,8 @@ pub fn run() {
             start_hidden,
             mark_revealed,
             write_binary_file,
+            open_in_file_manager,
+            delete_download_files,
             stream::stream_base,
             hls::stream_mode,
             ingest::ingest_token,

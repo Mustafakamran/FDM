@@ -48,8 +48,7 @@ export function NewFoldersView() {
   return (
     <div className="h-full overflow-auto px-8 py-7">
       <div className="mb-7">
-        <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--faint)]">New folders</div>
-        <h1 className="mt-1 flex items-center gap-2 text-[26px] font-bold tracking-[-0.025em] text-[var(--ink)]">
+        <h1 className="flex items-center gap-2 text-[26px] font-bold tracking-[-0.025em] text-[var(--ink)]">
           <FolderPlus size={22} className="text-[var(--acc)]" /> Recently added
         </h1>
         <p className="mt-1 text-[13.5px] text-[var(--mut)]">

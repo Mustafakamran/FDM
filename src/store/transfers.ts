@@ -27,6 +27,8 @@ export const HTTP_ACCOUNT_ID = "http";
 export const WETRANSFER_ACCOUNT_ID = "wetransfer";
 /** Synthetic account for Filemail share links (fetched natively, secondary lane). */
 export const FILEMAIL_ACCOUNT_ID = "filemail";
+/** Synthetic account for BitTorrent (magnet / .torrent) via the rqbit engine. */
+export const TORRENT_ACCOUNT_ID = "torrent";
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let pumping = false;
@@ -46,6 +48,9 @@ const nextId = () => `q${Date.now()}_${++seq}`;
 // doesn't log them to history as "cancelled" (their partial file is kept and
 // they resume from it).
 const pausedJobIds = new Set<number>();
+// Job ids the user deleted — hidden from the list and never recorded to history,
+// even while the backend keeps returning them until it drops them.
+const deletedJobIds = new Set<number>();
 // Job ids we've already surfaced a failure toast for (avoid repeats while polling).
 const failedToasted = new Set<number>();
 // Upload job ids already toasted on finish, and ones dismissed from the strip
@@ -93,6 +98,18 @@ export function filenameFromUrl(url: string): string {
  * transfer. Anything else is a generic direct-file HTTP download.
  */
 export function classifyTransferUrl(url: string): { accountId: string; name: string } {
+  // Magnet links have no host — route them to the torrent engine, naming the
+  // job from the &dn= display-name when present.
+  if (url.toLowerCase().startsWith("magnet:")) {
+    let name = "Torrent";
+    try {
+      const q = url.indexOf("?");
+      if (q >= 0) name = new URLSearchParams(url.slice(q + 1)).get("dn") || name;
+    } catch {
+      /* keep default */
+    }
+    return { accountId: TORRENT_ACCOUNT_ID, name };
+  }
   let host = "";
   try {
     host = new URL(url).hostname.toLowerCase();
@@ -360,6 +377,8 @@ interface TransfersState {
   enqueue: (accountId: string, items: DownloadItem[], dest: string) => void;
   /** Enqueue a generic HTTP(S) URL download (secondary lane). */
   enqueueUrl: (url: string, dest: string) => void;
+  /** Queue a BitTorrent download from a local `.torrent` file path. */
+  enqueueTorrentFile: (path: string, dest: string) => void;
   /** Upload local files/folders (absolute paths) into a remote folder. */
   startUploads: (accountId: string, paths: string[], destPath: string) => Promise<void>;
   /** Drop one upload from the strip (failed/cancelled entries linger until dismissed). */
@@ -371,6 +390,11 @@ interface TransfersState {
   pause: (jobId: number) => Promise<void>;
   /** Resume a paused queue item (it continues from its partial file). */
   resumePaused: (id: string) => void;
+  /** Start a queued item immediately, in parallel — bypasses the concurrency gate. */
+  forceStart: (id: string) => Promise<void>;
+  /** Fully remove a job (active or finished): stop it and drop it from the list
+   *  and history entirely (unlike cancel, which keeps a cancelled record). */
+  deleteJob: (jobId: number) => Promise<void>;
   clearFinished: () => Promise<void>;
   pump: () => Promise<void>;
   /** Restart polling + resume persisted work (call once on app launch). */
@@ -426,6 +450,12 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     get().enqueue(accountId, [item], dest);
   },
 
+  enqueueTorrentFile: (path, dest) => {
+    const name = path.split(/[\\/]/).pop() || "torrent";
+    const item: DownloadItem = { path: "", name, isDir: false, size: 0, id: path };
+    get().enqueue(TORRENT_ACCOUNT_ID, [item], dest);
+  },
+
   startUploads: async (accountId, paths, destPath) => {
     try {
       const created = await startUpload(accountId, paths, destPath);
@@ -449,6 +479,49 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     const queue = get().queue.filter((q) => q.id !== id);
     writeJson(QUEUE_KEY, queue);
     set({ queue });
+  },
+
+  forceStart: async (id) => {
+    const q = get().queue.find((x) => x.id === id);
+    if (!q) return;
+    // Pull it out of the queue and launch it now, regardless of the lane's
+    // concurrency limit (so it runs alongside whatever is already active).
+    const remaining = get().queue.filter((x) => x.id !== id);
+    writeJson(QUEUE_KEY, remaining);
+    set({ queue: remaining });
+    try {
+      const created = await startDownload(q.accountId, [q.item], q.dest, toDownloadConfig(loadDlSettings()));
+      const job = created[0];
+      if (job) {
+        const inf: InflightItem = { ...q, autoPaused: false, jobId: job.jobId, bytes: 0 };
+        const nextInflight = [...get().inflight, inf];
+        writeJson(INFLIGHT_KEY, nextInflight);
+        inflightPersistTick = 0;
+        set((s) => ({ inflight: nextInflight, jobs: [...s.jobs, job] }));
+        get().ensurePolling();
+      }
+    } catch {
+      // Launch failed — put it back at the front of the queue.
+      set((s) => ({ queue: [q, ...s.queue] }));
+    }
+  },
+
+  deleteJob: async (jobId) => {
+    deletedJobIds.add(jobId);
+    pausedJobIds.delete(jobId);
+    try {
+      await cancelJob(jobId);
+    } catch {
+      /* already finished/gone — nothing to stop */
+    }
+    const inflight = get().inflight.filter((i) => i.jobId !== jobId);
+    writeJson(INFLIGHT_KEY, inflight);
+    set((s) => ({
+      jobs: s.jobs.filter((j) => j.jobId !== jobId),
+      uploads: s.uploads.filter((u) => u.jobId !== jobId),
+      inflight,
+    }));
+    useHistory.getState().removeEntry(jobId);
   },
 
   pump: async () => {
@@ -536,7 +609,9 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     }
     if (!jobsEqual(uploads, get().uploads)) set({ uploads });
 
-    const jobs = polled.filter((j) => j.kind !== "upload");
+    // Jobs the user deleted are hidden and never recorded to history, even while
+    // the backend still returns them (until it stops tracking them).
+    const jobs = polled.filter((j) => j.kind !== "upload" && !deletedJobIds.has(j.jobId));
     // Record finished/cancelled jobs to history — except ones the user paused
     // OR we auto-paused (those are kept for resume, not logged as cancelled).
     // Surface real failure reasons as a toast so downloads never fail silently.

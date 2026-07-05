@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Plus, Home, FolderOpen, Download, Upload, AlertCircle, Globe, Trash2, Loader2, Link as LinkIcon, Sun, Moon, FolderPlus, MoreHorizontal, Pencil, FolderSearch, ArrowUp, ArrowDown } from "lucide-react";
+import { Plus, Home, FolderOpen, ArrowDownUp, AlertCircle, Trash2, Loader2, Link as LinkIcon, FolderPlus, MoreHorizontal, Pencil, FolderSearch, ArrowUp, ArrowDown } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useApp } from "../store/app";
 import { useTransfers } from "../store/transfers";
@@ -8,7 +8,6 @@ import { useAccountMeta, accountLabel, type Meta } from "../store/account-meta";
 import { useIndex, type IndexEntry } from "../store/index-store";
 import { useAccountOrder, orderAccounts } from "../store/account-order";
 import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
-import { useTheme } from "../store/theme";
 import { ProviderIcon, providerName } from "./icons";
 import { Skeleton } from "./ui";
 import { AddAccountDialog } from "./AddAccountDialog";
@@ -19,23 +18,19 @@ import { laneOf } from "../lib/lane";
 import type { Account, Provider } from "../lib/tauri/commands";
 
 export function Sidebar() {
-  const { view, accounts, accountsLoaded, selectAccount, removeAccount, showDownloads, showUploads, showWebDownloads, showNewFolders, setView } = useApp(
+  const { view, accounts, accountsLoaded, selectAccount, removeAccount, showTransfers, showNewFolders, setView } = useApp(
     useShallow((s) => ({
       view: s.view,
       accounts: s.accounts,
       accountsLoaded: s.accountsLoaded,
       selectAccount: s.selectAccount,
       removeAccount: s.removeAccount,
-      showDownloads: s.showDownloads,
-      showUploads: s.showUploads,
-      showWebDownloads: s.showWebDownloads,
+      showTransfers: s.showTransfers,
       showNewFolders: s.showNewFolders,
       setView: s.setView,
     })),
   );
-  const onWeb = view.kind === "downloads" && !!view.web;
-  const onDownloads = view.kind === "downloads" && !view.web;
-  const onUploads = view.kind === "uploads";
+  const onTransfers = view.kind === "transfers";
   const onFiles = view.kind === "browse";
   const onHome = view.kind === "home";
   const onNewFolders = view.kind === "new-folders";
@@ -50,8 +45,6 @@ export function Sidebar() {
   const indexEntries = useIndex((s) => s.byAccount);
   const emailErrors = useAccountMeta((s) => s.errors);
   const fetchEmail = useAccountMeta((s) => s.fetchEmail);
-  const theme = useTheme((s) => s.theme);
-  const setTheme = useTheme((s) => s.setTheme);
   const [addProvider, setAddProvider] = useState<Provider | null>(null);
   const [addLink, setAddLink] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -113,10 +106,8 @@ export function Sidebar() {
       <div className="flex flex-col gap-0.5 px-3 pt-4">
         <NavItem icon={<Home size={16} />} label="Home" active={onHome} onClick={() => setView({ kind: "home" })} />
         <NavItem icon={<FolderOpen size={16} />} label="Files" active={onFiles} onClick={goFiles} />
-        <NavItem icon={<FolderPlus size={16} />} label="New folders" active={onNewFolders} onClick={showNewFolders} badge={newFolderCount || undefined} />
-        <NavItem icon={<Download size={16} />} label="Downloads" active={onDownloads} onClick={() => showDownloads("active")} badge={counts.downloading || undefined} />
-        <NavItem icon={<Upload size={16} />} label="Uploads" active={onUploads} onClick={() => showUploads("active")} badge={activeUploads || undefined} />
-        <NavItem icon={<Globe size={16} />} label="Web Downloads" active={onWeb} onClick={() => showWebDownloads()} badge={counts.web || undefined} />
+        <NavItem icon={<FolderPlus size={16} />} label="Recent Folders" active={onNewFolders} onClick={showNewFolders} badge={newFolderCount || undefined} />
+        <NavItem icon={<ArrowDownUp size={16} />} label="Transfers" active={onTransfers} onClick={() => showTransfers()} badge={(counts.downloading + activeUploads) || undefined} />
       </div>
 
       {/* Accounts */}
@@ -206,20 +197,6 @@ export function Sidebar() {
             <div className="tnum text-[12.5px] text-[var(--ink)]">{totalSpeed > 0 ? <span className="text-[var(--dl)]">{formatSpeed(totalSpeed)}</span> : "Idle"}</div>
           </div>
           <span className="font-mono text-[10px] text-[var(--faint)]">UNLIMITED</span>
-        </div>
-        <div className="flex items-center gap-1 rounded-[11px] bg-[var(--soft)] p-1">
-          <button
-            onClick={() => setTheme("light")}
-            className={`flex h-[30px] flex-1 items-center justify-center gap-1.5 rounded-[8px] text-[12px] font-semibold ${theme === "light" ? "bg-[var(--card)] text-[var(--ink)] shadow-[var(--shadow-sm)]" : "text-[var(--faint)] hover:text-[var(--mut)]"}`}
-          >
-            <Sun size={13} /> Light
-          </button>
-          <button
-            onClick={() => setTheme("dark")}
-            className={`flex h-[30px] flex-1 items-center justify-center gap-1.5 rounded-[8px] text-[12px] font-semibold ${theme === "dark" ? "bg-[var(--card)] text-[var(--ink)] shadow-[var(--shadow-sm)]" : "text-[var(--faint)] hover:text-[var(--mut)]"}`}
-          >
-            <Moon size={13} /> Dark
-          </button>
         </div>
       </div>
 

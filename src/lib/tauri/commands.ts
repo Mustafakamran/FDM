@@ -221,6 +221,16 @@ export function writeBinaryFile(path: string, base64: string): Promise<void> {
   return invoke("write_binary_file", { path, base64 });
 }
 
+/** Reveal a local folder/file in Finder / Explorer / the OS file manager. */
+export function openInFileManager(path: string): Promise<void> {
+  return invoke("open_in_file_manager", { path });
+}
+
+/** Delete a download's files on disk (`dest/name` + any `.fdmpart`). Guarded. */
+export function deleteDownloadFiles(dest: string, name: string): Promise<void> {
+  return invoke("delete_download_files", { dest, name });
+}
+
 /** Bilal-Drive-Man sync-agent config. */
 export interface BdmConfig {
   enabled: boolean;

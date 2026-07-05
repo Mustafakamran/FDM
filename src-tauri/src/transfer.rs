@@ -23,7 +23,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// One block per range request / per resume unit.
 const BLOCK: u64 = 8 * 1024 * 1024;
@@ -871,6 +871,39 @@ fn download_via_rclone(conn: &RcConnection, account_id: &str, item: &DownloadIte
     }
 }
 
+/// Drive a BitTorrent download through the bundled rqbit engine. The magnet or
+/// local `.torrent` path rides in `item.id`; rqbit downloads into `dest` and we
+/// poll its progress into `h` (so it shows in the table + the speedometer reads
+/// live speed from the deltas). Cancellation forgets the torrent but keeps the
+/// partial files so a re-add resumes.
+fn download_torrent(app: &AppHandle, item: &DownloadItem, dest: &str, h: &NativeHandles) -> Result<(), String> {
+    let state = app.state::<crate::torrent::TorrentState>();
+    let base = state.ensure(app)?;
+    let id = crate::torrent::add(&base, &item.id, dest)?;
+    loop {
+        if h.cancelled.load(Ordering::SeqCst) {
+            crate::torrent::forget(&base, id);
+            return Err("paused".into());
+        }
+        let s = crate::torrent::stats(&base, id)?;
+        if s.total > 0 {
+            h.total.store(s.total, Ordering::SeqCst);
+        }
+        h.transferred.store(s.progress.max(0), Ordering::SeqCst);
+        if let Some(err) = s.error {
+            crate::torrent::forget(&base, id);
+            return Err(err);
+        }
+        if s.finished {
+            // FDM is a downloader, not a seeder — stop uploading once complete
+            // (forget keeps the downloaded files on disk).
+            crate::torrent::forget(&base, id);
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
 /// Worker body for one queued item (a file or a whole folder).
 pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, item: DownloadItem, dest: String, connections: usize, h: NativeHandles) {
     let connections = if connections == 0 { DEFAULT_CONNECTIONS } else { connections };
@@ -893,6 +926,9 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
         match provider::kind_of(&account_id) {
             Kind::Wetransfer => return crate::wetransfer::download_share(&item.id, Path::new(&dest), &h),
             Kind::Filemail => return crate::filemail::download_share(&item.id, Path::new(&dest), &h),
+            // BitTorrent (magnet / .torrent): bridge the bundled rqbit engine into
+            // this native job by polling its progress into `h`.
+            Kind::Torrent => return download_torrent(&app, &item, &dest, &h),
             _ => {}
         }
 
