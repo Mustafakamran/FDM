@@ -73,6 +73,58 @@ pub struct NativeHandles {
     pub error: Arc<Mutex<String>>,
 }
 
+/// Minimum gap between speed samples; below this we reuse the last reading so a
+/// double-poll can't divide a tiny byte delta by a near-zero interval.
+const MIN_SAMPLE_SECS: f64 = 0.25;
+/// EMA weight kept on the previous reading (the rest goes to the new sample).
+/// Light smoothing so the number is steady without lagging real changes.
+const SPEED_EMA_KEEP: f64 = 0.6;
+/// A single-tick rate above this (5 GB/s) is never real network throughput for
+/// these users — it's a resumed job seeding `transferred` with bytes already on
+/// disk. Such a sample re-baselines the speedometer instead of spiking it.
+const MAX_PLAUSIBLE_BPS: f64 = 5_000_000_000.0;
+
+/// Rolling speedometer for a native job. Speed is the byte delta between polls
+/// over their time gap (instantaneous), not cumulative bytes / session time —
+/// the latter reported "download speed = disk read speed" right after a resume,
+/// because a resumed job seeds `transferred` with everything already on disk and
+/// dividing that by a few seconds of uptime is a huge, fake number. Here the
+/// first post-(re)start sample only primes the baseline, and any implausibly
+/// large delta re-baselines rather than spiking.
+#[derive(Debug)]
+struct Speedo {
+    last_t: Instant,
+    last_bytes: i64,
+    primed: bool,
+    ema: f64,
+}
+
+impl Speedo {
+    /// Feed the latest cumulative byte count; return instantaneous speed
+    /// (bytes/sec). The first call primes the baseline and returns 0, so a
+    /// resumed job's seeded bytes are never counted as throughput. A single
+    /// delta above `MAX_PLAUSIBLE_BPS` is a seed/disk artifact: the baseline
+    /// advances but the reading is left unchanged.
+    fn sample(&mut self, bytes: i64, now: Instant) -> f64 {
+        if !self.primed {
+            self.primed = true;
+            self.last_t = now;
+            self.last_bytes = bytes;
+            return 0.0;
+        }
+        let dt = now.duration_since(self.last_t).as_secs_f64();
+        if dt >= MIN_SAMPLE_SECS {
+            let inst = (bytes - self.last_bytes).max(0) as f64 / dt;
+            self.last_t = now;
+            self.last_bytes = bytes;
+            if inst <= MAX_PLAUSIBLE_BPS {
+                self.ema = if self.ema == 0.0 { inst } else { self.ema * SPEED_EMA_KEEP + inst * (1.0 - SPEED_EMA_KEEP) };
+            }
+        }
+        self.ema
+    }
+}
+
 /// A tracked native download job (Dropbox links stream over the native API
 /// rather than rclone, so they need their own progress accounting).
 pub struct NativeJob {
@@ -82,6 +134,8 @@ pub struct NativeJob {
     pub total_bytes: i64,
     pub started: Instant,
     pub handles: NativeHandles,
+    /// Instantaneous-speed tracker; see `Speedo`.
+    speedometer: Mutex<Speedo>,
 }
 
 /// Managed state for native jobs. `next_id` allocates NEGATIVE ids so they never
@@ -116,6 +170,12 @@ impl NativeJobsState {
                 total_bytes: total,
                 started: Instant::now(),
                 handles: handles.clone(),
+                speedometer: Mutex::new(Speedo {
+                    last_t: Instant::now(),
+                    last_bytes: 0,
+                    primed: false,
+                    ema: 0.0,
+                }),
             });
         handles
     }
@@ -371,8 +431,13 @@ fn native_status(job: &NativeJob) -> JobStatus {
     let total = h.total.load(Ordering::SeqCst).max(job.total_bytes);
     let finished = h.finished.load(Ordering::SeqCst);
     let cancelled = h.cancelled.load(Ordering::SeqCst);
-    let elapsed = job.started.elapsed().as_secs_f64().max(0.001);
-    let speed = if finished { 0.0 } else { bytes as f64 / elapsed };
+    // Instantaneous speed (byte delta / poll gap), with the resume seed baselined
+    // out — see `Speedo::sample`.
+    let speed = if finished {
+        0.0
+    } else {
+        job.speedometer.lock().unwrap_or_else(|e| e.into_inner()).sample(bytes, Instant::now())
+    };
     let eta = if speed > 0.0 && total > bytes {
         Some((total - bytes) as f64 / speed)
     } else {
@@ -555,6 +620,36 @@ fn humanize_write_err(e: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn speedometer_baselines_resume_seed_and_reports_instantaneous() {
+        let t0 = Instant::now();
+        let mut sp = Speedo { last_t: t0, last_bytes: 0, primed: false, ema: 0.0 };
+
+        // First poll after a resume: `transferred` jumps to 381 GB already on
+        // disk. This must PRIME the baseline (report 0), never a disk-speed spike.
+        let seeded = 381_000_000_000i64;
+        assert_eq!(sp.sample(seeded, t0), 0.0);
+
+        // 1 s later, 100 MB actually downloaded → ~100 MB/s (first real sample
+        // seeds the EMA, so it equals the instantaneous value).
+        let t1 = t0 + Duration::from_secs(1);
+        let s = sp.sample(seeded + 100_000_000, t1);
+        assert!((s - 100_000_000.0).abs() < 1.0, "expected ~100 MB/s, got {s}");
+
+        // A seed jump caught mid-fill (+50 GB in 1 s = 50 GB/s) is implausible as
+        // network throughput → rejected; the reading holds at the prior EMA.
+        let t2 = t1 + Duration::from_secs(1);
+        let s2 = sp.sample(seeded + 100_000_000 + 50_000_000_000, t2);
+        assert_eq!(s2, s, "implausible delta must not spike the speed");
+
+        // A finished job reports 0 (handled by the caller, but the EMA persists).
+        // A normal follow-up sample keeps producing a plausible number.
+        let t3 = t2 + Duration::from_secs(1);
+        let s3 = sp.sample(seeded + 100_000_000 + 50_000_000_000 + 80_000_000, t3);
+        assert!(s3 > 0.0 && s3 < MAX_PLAUSIBLE_BPS, "got {s3}");
+    }
 
     fn item(path: &str, name: &str, is_dir: bool, size: i64) -> DownloadItem {
         DownloadItem {
