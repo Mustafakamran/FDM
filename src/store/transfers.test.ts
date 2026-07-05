@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-import { useTransfers, jobsEqual, inflightEqual, needsPolling, type QueueItem } from "./transfers";
+import { useTransfers, jobsEqual, inflightEqual, needsPolling, classifyTransferUrl, WETRANSFER_ACCOUNT_ID, FILEMAIL_ACCOUNT_ID, HTTP_ACCOUNT_ID, type QueueItem } from "./transfers";
 import { laneOf } from "../lib/lane";
 import type { JobStatus, DownloadItem } from "../lib/tauri/commands";
 
@@ -34,6 +34,31 @@ beforeEach(() => {
 });
 
 afterEach(() => useTransfers.getState().stopPolling());
+
+describe("classifyTransferUrl", () => {
+  it("routes WeTransfer links (incl. we.tl and subdomains) to the native downloader", () => {
+    for (const u of [
+      "https://we.tl/t-abc123",
+      "https://wetransfer.com/downloads/deadbeef/0123",
+      "https://WeTransfer.com/downloads/x/y/z",
+    ]) {
+      expect(classifyTransferUrl(u).accountId).toBe(WETRANSFER_ACCOUNT_ID);
+    }
+  });
+  it("routes Filemail links to the native downloader", () => {
+    expect(classifyTransferUrl("https://www.filemail.com/t/Trp4EdH3").accountId).toBe(FILEMAIL_ACCOUNT_ID);
+    expect(classifyTransferUrl("https://filemail.com/t/abc").accountId).toBe(FILEMAIL_ACCOUNT_ID);
+  });
+  it("leaves a generic direct URL on the plain HTTP lane and keeps its filename", () => {
+    const r = classifyTransferUrl("https://cdn.example.com/path/clip.mp4?token=1");
+    expect(r.accountId).toBe(HTTP_ACCOUNT_ID);
+    expect(r.name).toBe("clip.mp4");
+  });
+  it("does not misfire on lookalike hosts", () => {
+    expect(classifyTransferUrl("https://notwetransfer.com.evil.test/x").accountId).toBe(HTTP_ACCOUNT_ID);
+    expect(classifyTransferUrl("https://filemail.com.evil.test/x").accountId).toBe(HTTP_ACCOUNT_ID);
+  });
+});
 
 describe("transfers queue", () => {
   it("starts one at a time at concurrency 1, leaving the rest queued", async () => {

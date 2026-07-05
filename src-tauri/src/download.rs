@@ -62,6 +62,11 @@ pub struct JobsState {
 pub struct NativeHandles {
     pub job_id: i64,
     pub transferred: Arc<AtomicI64>,
+    /// Total bytes for the whole job. Seeded at create; a worker that only learns
+    /// the real size after resolving a manifest (WeTransfer/Filemail share links,
+    /// whose size is 0 at enqueue) stores it here so the progress bar/ETA fill in
+    /// live. `list_jobs` reads this, not the fixed `NativeJob.total_bytes`.
+    pub total: Arc<AtomicI64>,
     pub finished: Arc<AtomicBool>,
     pub success: Arc<AtomicBool>,
     pub cancelled: Arc<AtomicBool>,
@@ -95,6 +100,7 @@ impl NativeJobsState {
         let handles = NativeHandles {
             job_id,
             transferred: Arc::new(AtomicI64::new(0)),
+            total: Arc::new(AtomicI64::new(total)),
             finished: Arc::new(AtomicBool::new(false)),
             success: Arc::new(AtomicBool::new(false)),
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -360,12 +366,15 @@ fn status_for(job_id: i64, account_id: &str, name: &str, dest: &str, total: i64,
 fn native_status(job: &NativeJob) -> JobStatus {
     let h = &job.handles;
     let bytes = h.transferred.load(Ordering::SeqCst);
+    // Live total (a share worker updates it once the manifest resolves); falls
+    // back to the create-time size for regular downloads that knew it up front.
+    let total = h.total.load(Ordering::SeqCst).max(job.total_bytes);
     let finished = h.finished.load(Ordering::SeqCst);
     let cancelled = h.cancelled.load(Ordering::SeqCst);
     let elapsed = job.started.elapsed().as_secs_f64().max(0.001);
     let speed = if finished { 0.0 } else { bytes as f64 / elapsed };
-    let eta = if speed > 0.0 && job.total_bytes > bytes {
-        Some((job.total_bytes - bytes) as f64 / speed)
+    let eta = if speed > 0.0 && total > bytes {
+        Some((total - bytes) as f64 / speed)
     } else {
         None
     };
@@ -374,7 +383,7 @@ fn native_status(job: &NativeJob) -> JobStatus {
         account_id: job.account_id.clone(),
         name: job.name.clone(),
         dest: job.dest.clone(),
-        total_bytes: job.total_bytes,
+        total_bytes: total,
         bytes,
         speed,
         eta,

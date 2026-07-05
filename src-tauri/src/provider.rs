@@ -17,6 +17,12 @@ pub enum Kind {
     Http,
     /// Social/video URL handled by the bundled yt-dlp sidecar; `fid` carries the URL.
     Ytdlp,
+    /// WeTransfer share link — the whole transfer is fetched by `wetransfer.rs`;
+    /// the account is synthetic and the URL rides in the item's `id`.
+    Wetransfer,
+    /// Filemail share link — the whole transfer is fetched by `filemail.rs`;
+    /// synthetic account, URL in the item's `id`.
+    Filemail,
 }
 
 /// Which provider/transport an account id uses.
@@ -28,6 +34,10 @@ pub fn kind_of(account_id: &str) -> Kind {
         Kind::Ytdlp
     } else if account_id.starts_with("http") {
         Kind::Http
+    } else if account_id.starts_with("wetransfer") {
+        Kind::Wetransfer
+    } else if account_id.starts_with("filemail") {
+        Kind::Filemail
     } else if account_id.starts_with("dropboxlink_") {
         Kind::DropboxLink
     } else if account_id.starts_with("dropbox_") {
@@ -41,8 +51,13 @@ pub fn kind_of(account_id: &str) -> Kind {
 /// The account whose OAuth token authorizes this account's fetches, plus the
 /// shared-link URL when relevant. Dropbox links borrow their base account's token.
 pub fn token_account(app: &AppHandle, account_id: &str) -> (String, String) {
-    // Http / ytdlp carry no token-owning account and no shared-link URL.
-    if account_id.starts_with("http") || account_id.starts_with("ytdlp") {
+    // Http / ytdlp / transfer shares carry no token-owning account and no
+    // shared-link URL.
+    if account_id.starts_with("http")
+        || account_id.starts_with("ytdlp")
+        || account_id.starts_with("wetransfer")
+        || account_id.starts_with("filemail")
+    {
         return (account_id.to_string(), String::new());
     }
     if account_id.starts_with("dropboxlink_") {
@@ -56,8 +71,8 @@ pub fn token_account(app: &AppHandle, account_id: &str) -> (String, String) {
 /// Fetch a fresh access token for the given kind + token-owning account.
 pub fn fetch_token(conn: &RcConnection, kind: Kind, token_acct: &str) -> Result<String, String> {
     match kind {
-        // Http / ytdlp need no auth — never touch rclone for a URL download.
-        Kind::Http | Kind::Ytdlp => Ok(String::new()),
+        // Http / ytdlp / transfer shares need no auth — never touch rclone.
+        Kind::Http | Kind::Ytdlp | Kind::Wetransfer | Kind::Filemail => Ok(String::new()),
         Kind::Drive => crate::drive::drive_access_token(conn, token_acct),
         _ => crate::drive::dropbox_access_token(conn, token_acct),
     }
@@ -111,9 +126,12 @@ pub fn send_range(
                 .send()
         }
         // Generic URL: `fid` is the URL. Plain ranged GET, no bearer, no params.
-        // Ytdlp runs the sidecar (never byte-range fetch); it only reaches here as
-        // a defensive plain GET so the match stays exhaustive.
-        Kind::Http | Kind::Ytdlp => client.get(fid).header("Range", range).send(),
+        // Ytdlp and the transfer-share kinds run their own downloaders (never
+        // byte-range fetch here); they only reach this arm as a defensive plain
+        // GET so the match stays exhaustive.
+        Kind::Http | Kind::Ytdlp | Kind::Wetransfer | Kind::Filemail => {
+            client.get(fid).header("Range", range).send()
+        }
     }
 }
 
@@ -129,5 +147,7 @@ mod tests {
         assert_eq!(kind_of("dropboxlink_b"), Kind::DropboxLink);
         assert_eq!(kind_of("http"), Kind::Http);
         assert_eq!(kind_of("ytdlp"), Kind::Ytdlp);
+        assert_eq!(kind_of("wetransfer"), Kind::Wetransfer);
+        assert_eq!(kind_of("filemail"), Kind::Filemail);
     }
 }

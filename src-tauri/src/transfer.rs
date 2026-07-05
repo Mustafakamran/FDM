@@ -886,6 +886,16 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
             return download_ytdlp(&app, &item.id, Path::new(&dest), referrer, &h);
         }
 
+        // Transfer-share links (WeTransfer / Filemail) fetch a whole multi-file
+        // transfer over their own reverse-engineered web APIs — no cloud auth,
+        // no rclone. The share URL rides in the item's `id`; each writes its
+        // files (folder structure preserved) into `dest`.
+        match provider::kind_of(&account_id) {
+            Kind::Wetransfer => return crate::wetransfer::download_share(&item.id, Path::new(&dest), &h),
+            Kind::Filemail => return crate::filemail::download_share(&item.id, Path::new(&dest), &h),
+            _ => {}
+        }
+
         let auth = match Auth::new(&app, conn.clone(), &account_id) {
             Ok(a) => Arc::new(a),
             // No native creds stored for this account (e.g. Drive connected with

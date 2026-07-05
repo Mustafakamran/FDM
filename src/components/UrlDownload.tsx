@@ -72,7 +72,7 @@ export function UrlDownload() {
                 <X size={15} />
               </button>
             </div>
-            <p className="mb-3 text-xs text-[var(--faint)]">Paste any direct file URL; it downloads alongside your Drive/Dropbox transfers.</p>
+            <p className="mb-3 text-xs text-[var(--faint)]">Paste a direct file URL, or a <span className="text-[var(--ink)]">WeTransfer</span> / <span className="text-[var(--ink)]">Filemail</span> share link — it downloads alongside your Drive/Dropbox transfers.</p>
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <Globe size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--faint)]" />
@@ -81,7 +81,7 @@ export function UrlDownload() {
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && void submit()}
-                  placeholder="Paste a URL to download…"
+                  placeholder="Paste a URL, WeTransfer or Filemail link…"
                   aria-label="URL to download"
                   className="focus-accent w-full rounded-[8px] border border-[var(--line)] bg-[var(--soft)] py-2 pl-9 pr-3 text-sm text-[var(--ink)] placeholder:text-[var(--faint)]"
                 />

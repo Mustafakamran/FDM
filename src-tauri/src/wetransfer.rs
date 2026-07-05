@@ -177,6 +177,12 @@ pub fn download_share(url: &str, dest_dir: &Path, h: &NativeHandles) -> Result<(
     let c = client();
     let (id, hash) = resolve(&c, url)?;
     let files = prepare(&c, &id, &hash)?;
+    // Publish the real total now that the manifest is known, so the UI shows
+    // true progress (the enqueued size was 0 for a pasted link).
+    let total: i64 = files.iter().map(|(_, _, size)| (*size).max(0)).sum();
+    if total > 0 {
+        h.total.store(total, Ordering::SeqCst);
+    }
     for (fid, name, size) in files {
         if h.cancelled.load(Ordering::SeqCst) {
             return Err("paused".into());

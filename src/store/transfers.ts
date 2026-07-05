@@ -23,6 +23,10 @@ const INFLIGHT_KEY = "download_inflight_v1";
 
 /** Account id for generic HTTP(S) URL downloads (the secondary lane). */
 export const HTTP_ACCOUNT_ID = "http";
+/** Synthetic account for WeTransfer share links (fetched natively, secondary lane). */
+export const WETRANSFER_ACCOUNT_ID = "wetransfer";
+/** Synthetic account for Filemail share links (fetched natively, secondary lane). */
+export const FILEMAIL_ACCOUNT_ID = "filemail";
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let pumping = false;
@@ -80,6 +84,28 @@ export function filenameFromUrl(url: string): string {
     }
   }
   return "download";
+}
+
+/**
+ * Route a pasted link to the right secondary-lane downloader. WeTransfer and
+ * Filemail share pages aren't direct file URLs — plain HTTP would just fetch the
+ * HTML — so they get a synthetic account whose Rust worker resolves the whole
+ * transfer. Anything else is a generic direct-file HTTP download.
+ */
+export function classifyTransferUrl(url: string): { accountId: string; name: string } {
+  let host = "";
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    host = url.toLowerCase();
+  }
+  if (host === "we.tl" || host === "wetransfer.com" || host.endsWith(".wetransfer.com")) {
+    return { accountId: WETRANSFER_ACCOUNT_ID, name: "WeTransfer transfer" };
+  }
+  if (host === "filemail.com" || host.endsWith(".filemail.com")) {
+    return { accountId: FILEMAIL_ACCOUNT_ID, name: "Filemail transfer" };
+  }
+  return { accountId: HTTP_ACCOUNT_ID, name: filenameFromUrl(url) };
 }
 
 /** A download waiting in the queue (no rclone job yet). */
@@ -389,14 +415,15 @@ export const useTransfers = create<TransfersState>((set, get) => ({
   },
 
   enqueueUrl: (url, dest) => {
+    const { accountId, name } = classifyTransferUrl(url);
     const item: DownloadItem = {
       path: "",
-      name: filenameFromUrl(url),
+      name,
       isDir: false,
       size: 0,
       id: url,
     };
-    get().enqueue(HTTP_ACCOUNT_ID, [item], dest);
+    get().enqueue(accountId, [item], dest);
   },
 
   startUploads: async (accountId, paths, destPath) => {
