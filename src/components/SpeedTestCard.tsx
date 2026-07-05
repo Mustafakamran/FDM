@@ -152,15 +152,22 @@ export function SpeedTestCard() {
 }
 
 function Metric({ icon, label, value, unit, active, digits = 1 }: { icon: React.ReactNode; label: string; value: number | null; unit: string; active?: boolean; digits?: number }) {
+  const has = value != null && value > 0;
+  // For a Mbps (megabit) reading also show MB/s (megabytes ÷ 8), which is what
+  // download sizes are measured in.
+  const mbytes = unit === "Mbps" && has ? value! / 8 : null;
   return (
     <div className={`rounded-[11px] border p-2.5 transition-colors ${active ? "border-[var(--acc)] bg-[var(--accw)]" : "border-[var(--line)]"}`}>
       <div className="flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-[0.04em] text-[var(--faint)]">
         {icon} {label}
       </div>
       <div className="tnum mt-1 text-[21px] font-bold leading-none tracking-[-0.02em] text-[var(--ink)]">
-        {value != null && value > 0 ? value.toFixed(digits) : "—"}
+        {has ? value!.toFixed(digits) : "—"}
         <span className="ml-1 text-[11px] font-medium text-[var(--faint)]">{unit}</span>
       </div>
+      {mbytes != null && (
+        <div className="tnum mt-1 text-[11px] text-[var(--faint)]">{mbytes.toFixed(mbytes < 10 ? 2 : 1)} MB/s</div>
+      )}
     </div>
   );
 }
