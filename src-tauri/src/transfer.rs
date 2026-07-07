@@ -233,7 +233,14 @@ fn backoff(attempt: u32, h: &NativeHandles) {
 fn fetch_block(auth: &Auth, client: &reqwest::blocking::Client, t: &FileTask, offset: u64, len: u64, h: &NativeHandles) -> Result<Vec<u8>, String> {
     let end = offset + len - 1;
     let mut ack = false;
+    // `attempt` only drives the backoff delay curve (capped at 30s). Transient
+    // failures — a dropped connection, an interrupted body, 429, or a 5xx — are
+    // retried INDEFINITELY (torrent-style): a network drop pauses the block and
+    // it resumes when connectivity returns, rather than failing the download.
+    // `auth_attempts` bounds token-refresh loops so a genuinely-bad auth still
+    // errors instead of spinning forever.
     let mut attempt: u32 = 0;
+    let mut auth_attempts: u32 = 0;
     loop {
         if h.cancelled.load(Ordering::SeqCst) {
             return Err("paused".into());
@@ -241,51 +248,44 @@ fn fetch_block(auth: &Auth, client: &reqwest::blocking::Client, t: &FileTask, of
         let token = auth.token()?;
         let resp = match provider::send_range(client, &token, auth.kind, &t.fid, &t.path, &auth.link_url, offset, end, ack) {
             Ok(r) => r,
-            // Transport error (connection reset/dropped/timeout) — retry with backoff.
-            Err(e) => {
-                attempt += 1;
-                if attempt >= MAX_BLOCK_ATTEMPTS {
-                    return Err(net_err("Download", e));
-                }
+            // Transport error (connection reset/dropped/timeout) — wait for the
+            // network and keep retrying; never fail the download on a drop.
+            Err(_) => {
+                attempt = attempt.saturating_add(1);
                 backoff(attempt, h);
                 continue;
             }
         };
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            // Token expired mid-download — refresh and retry.
+            // Token expired mid-download — refresh and retry (bounded).
             auth.refresh()?;
-            attempt += 1;
-            if attempt >= MAX_BLOCK_ATTEMPTS {
+            auth_attempts += 1;
+            if auth_attempts >= MAX_BLOCK_ATTEMPTS {
                 return Err("unauthorized after retries".into());
             }
             continue;
         }
         if auth.kind == Kind::Drive && status == reqwest::StatusCode::FORBIDDEN && !ack {
-            ack = true; // abuse-acknowledge retry (not counted against attempts)
+            ack = true; // abuse-acknowledge retry
             continue;
         }
-        // Throttling / transient server errors — back off and retry.
+        // Throttling / transient server errors — back off and keep retrying.
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
-            attempt += 1;
-            if attempt >= MAX_BLOCK_ATTEMPTS {
-                return Err(format!("download {status} after {attempt} attempts"));
-            }
+            attempt = attempt.saturating_add(1);
             backoff(attempt, h);
             continue;
         }
         if !status.is_success() {
+            // A permanent client error (404 gone, 400, …) — fail.
             let b = resp.text().unwrap_or_default();
             return Err(format!("download {status}: {}", b.chars().take(300).collect::<String>()));
         }
         match resp.bytes() {
             Ok(bytes) => return Ok(bytes.to_vec()),
             // Body read interrupted (socket dropped mid-block) — retry the block.
-            Err(e) => {
-                attempt += 1;
-                if attempt >= MAX_BLOCK_ATTEMPTS {
-                    return Err(net_err("Download", e));
-                }
+            Err(_) => {
+                attempt = attempt.saturating_add(1);
                 backoff(attempt, h);
                 continue;
             }
@@ -969,6 +969,14 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
         } else {
             vec![FileTask { fid: item.id.clone(), path: item.path.clone(), size: item.size, dest: safe_join(dest_root, &item.name) }]
         };
+
+        // Publish the real total (sum of ALL files) so a resumed folder shows its
+        // full size + true progress, not just the bytes already on disk (the job's
+        // create-time size is the browse folder-size, which is 0 when uncomputed).
+        let total_size: i64 = tasks.iter().map(|t| t.size.max(0)).sum();
+        if total_size > 0 {
+            h.total.store(total_size, Ordering::SeqCst);
+        }
 
         // Seed progress with whatever is already on disk (resume).
         let already: i64 = tasks.iter().map(done_bytes).sum();
