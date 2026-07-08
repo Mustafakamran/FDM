@@ -9,6 +9,7 @@ import { openInFileManager, deleteDownloadFiles } from "../lib/tauri/commands";
 import { EmptyState } from "./ui";
 import { UrlDownload } from "./UrlDownload";
 import { TransferTable } from "./transfers/TransferTable";
+import { providerName } from "./icons";
 import { jobRow, queueRow, historyRow, uploadHistoryRow, type TransferRow, type LabelOf } from "./transfers/row";
 
 const FILTERS: { key: TransferFilter; label: string }[] = [
@@ -54,6 +55,16 @@ export function TransfersView({ filter }: { filter: TransferFilter }) {
     return (id: string) => byId.get(id) ?? id;
   }, [accounts]);
 
+  // Account label with its provider, e.g. "Google Drive · filmsbyrafay", for
+  // the info panel's Account field.
+  const accountDisplay = useMemo(() => {
+    const byId = new Map(accounts.map((a) => [a.id, a]));
+    return (id: string) => {
+      const a = byId.get(id);
+      return a ? `${providerName(a.provider)} · ${a.label}` : labelOf(id);
+    };
+  }, [accounts, labelOf]);
+
   // Split the raw state into direction/state buckets.
   const dlActive = jobs.filter((j) => !j.finished && !j.cancelled);
   const upActive = uploads.filter((u) => !u.finished && !u.cancelled);
@@ -88,6 +99,10 @@ export function TransfersView({ filter }: { filter: TransferFilter }) {
       if ((u.success && showCompleted) || (!u.success && showFailed)) rows.push(uploadHistoryRow(u, labelOf));
     }
   }
+
+  // Show the provider alongside the account name in the info panel (queue rows
+  // keep their "· #position" label).
+  for (const r of rows) if (!r.queueId) r.account = accountDisplay(r.accountId);
 
   const statsFor = (jobId: number) => inflight.find((i) => i.jobId === jobId)?.stats;
 

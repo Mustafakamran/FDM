@@ -137,7 +137,6 @@ const Row = memo(function Row({
 }) {
   const ft = fileType(row.name, false);
   const active = row.state === "downloading" || row.state === "uploading";
-  const when = row.at ? new Date(row.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : row.source;
   return (
     <div
       role="row"
@@ -163,8 +162,8 @@ const Row = memo(function Row({
 
       <span className="tnum text-right text-[var(--faint)]">{active ? formatEta(row.eta) : "·"}</span>
 
-      <span className="truncate text-right text-[11px] text-[var(--faint)]" data-tip={row.error || row.dest || when}>
-        {row.state === "failed" && row.error ? <span className="text-[var(--err)]">{row.error}</span> : when}
+      <span className="truncate text-right text-[11px] text-[var(--faint)]" data-tip={row.error || row.source}>
+        {row.state === "failed" && row.error ? <span className="text-[var(--err)]">{row.error}</span> : row.source}
       </span>
 
       <span className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
@@ -209,14 +208,35 @@ function Stat({ label, value, color }: { label: string; value: React.ReactNode; 
   );
 }
 
+/** uTorrent-style "pieces" bar: segmented blocks filled to the collected pct. */
+function CollectedBar({ pct, color }: { pct: number; color: string }) {
+  const N = 64;
+  const filled = Math.round((pct / 100) * N);
+  return (
+    <div className="flex h-[11px] gap-px overflow-hidden rounded-[3px] bg-[var(--soft)]">
+      {Array.from({ length: N }, (_, i) => (
+        <div key={i} className="flex-1" style={{ background: i < filled ? color : "transparent", opacity: i < filled ? 0.9 : 1 }} />
+      ))}
+    </div>
+  );
+}
+
 /** Bottom "Info" panel for the selected transfer — the torrent-client detail. */
 function InfoPanel({ row, samples, stats }: { row: TransferRow; samples: number[]; stats?: RowStats }) {
   const ft = fileType(row.name, false);
   const color = STATE_COLOR[row.state];
   const active = row.state === "downloading" || row.state === "uploading";
-  const remaining = Math.max(0, row.size - row.bytes);
-  const elapsedMs = stats?.startedAt ? Date.now() - stats.startedAt : undefined;
-  const avg = elapsedMs && elapsedMs > 0 ? (row.bytes / (elapsedMs / 1000)) : undefined;
+  const done = row.state === "completed" || row.state === "failed" || row.state === "cancelled";
+  const completed = row.state === "completed";
+  const pct = completed ? 100 : row.pct;
+  const downloaded = completed ? row.size : row.bytes;
+  const remaining = Math.max(0, row.size - downloaded);
+  // Prefer the persisted finished stats (they outlive the in-flight job and its
+  // live stats); fall back to live in-flight stats while it's still running.
+  const liveElapsed = stats?.startedAt ? Date.now() - stats.startedAt : undefined;
+  const elapsedMs = done ? row.durationMs : liveElapsed;
+  const avg = done ? row.avgSpeed : liveElapsed && liveElapsed > 0 ? row.bytes / (liveElapsed / 1000) : undefined;
+  const peak = done ? row.peakSpeed : stats?.peakSpeed;
   return (
     <div className="flex min-h-0 flex-col border-t border-[var(--line)] bg-[var(--card)]">
       <div className="flex items-center gap-2 px-5 pt-3">
@@ -225,20 +245,28 @@ function InfoPanel({ row, samples, stats }: { row: TransferRow; samples: number[
         <span className="ml-1 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ color, background: "var(--soft)" }}>{stateLabel(row)}</span>
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-5 pb-4 pt-3">
+        {/* Progress + collected-data (pieces) bar */}
+        <div className="mb-3">
+          <div className="mb-1 flex items-center justify-between font-mono text-[10px]">
+            <span className="tnum text-[var(--mut)]">{formatBytes(downloaded)} <span className="text-[var(--faint)]">/ {formatBytes(row.size)}</span></span>
+            <span className="tnum font-semibold" style={{ color }}>{pct}%</span>
+          </div>
+          <CollectedBar pct={pct} color={color} />
+        </div>
         {active && samples.length > 1 && (
-          <div className="mb-3 h-12">
-            <SpeedGraph samples={samples} height={48} />
+          <div className="mb-3 h-14">
+            <SpeedGraph samples={samples} height={56} speed={row.speed} peak={peak} />
           </div>
         )}
         <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
-          <Stat label="Progress" value={`${row.state === "completed" ? 100 : row.pct}%`} color={color} />
+          <Stat label="Progress" value={`${pct}%`} color={color} />
           <Stat label="Size" value={formatBytes(row.size)} />
-          <Stat label="Downloaded" value={formatBytes(row.bytes)} />
-          <Stat label="Remaining" value={active ? formatBytes(remaining) : "·"} />
+          <Stat label="Downloaded" value={formatBytes(downloaded)} />
+          <Stat label="Remaining" value={completed ? "0 B" : formatBytes(remaining)} />
           <Stat label="Speed" value={active ? formatSpeed(row.speed) : "·"} color={active && row.speed > 0 ? "var(--dl)" : undefined} />
-          <Stat label="ETA" value={active ? formatEta(row.eta) : "·"} />
+          <Stat label="ETA" value={active ? formatEta(row.eta) : completed ? "Done" : "·"} />
           <Stat label="Avg speed" value={avg ? formatSpeed(avg) : "·"} />
-          <Stat label="Peak speed" value={stats?.peakSpeed ? formatSpeed(stats.peakSpeed) : "·"} />
+          <Stat label="Peak speed" value={peak ? formatSpeed(peak) : "·"} />
           <Stat label="Elapsed" value={elapsedMs != null ? fmtDur(elapsedMs) : "·"} />
           <Stat label="Account" value={row.account} />
           <Stat label="Source" value={row.source} />

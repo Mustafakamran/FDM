@@ -45,6 +45,17 @@ export interface TransferRow {
   item?: DownloadItem;
   /** True for upload transfers — routes dismiss to the uploads store. */
   upload?: boolean;
+  // --- Final stats, carried on finished (history) rows so the info panel keeps
+  //     showing avg/peak/elapsed after the live job (and its in-flight stats)
+  //     are gone. Absent on live/queued rows (which read live stats instead). ---
+  /** Average speed over the whole transfer (bytes/s). */
+  avgSpeed?: number;
+  /** Peak observed speed (bytes/s). */
+  peakSpeed?: number;
+  /** Lowest observed non-zero speed (bytes/s). */
+  minSpeed?: number;
+  /** Wall-clock duration in ms. */
+  durationMs?: number;
 }
 
 export type LabelOf = (accountId: string) => string;
@@ -108,15 +119,18 @@ export function queueRow(q: QueueItem, position: number, labelOf: LabelOf): Tran
 export function historyRow(h: HistoryEntry, labelOf: LabelOf): TransferRow {
   const state: TransferState =
     h.status === "success" ? "completed" : h.status === "cancelled" ? "cancelled" : "failed";
+  const done = h.status === "success";
   return {
-    id: `h${h.jobId}`,
+    id: h.id ? `h${h.id}` : `h${h.jobId}`,
     jobId: h.jobId,
     name: h.name,
     size: h.size,
+    // A successful transfer has all its bytes; a failed/cancelled one only got
+    // as far as its recorded size (which for those is the last-seen byte count).
     bytes: h.size,
     speed: 0,
     eta: null,
-    pct: 100,
+    pct: done ? 100 : 0,
     state,
     accountId: h.accountId,
     dest: h.dest,
@@ -125,6 +139,10 @@ export function historyRow(h: HistoryEntry, labelOf: LabelOf): TransferRow {
     error: h.error,
     at: h.at,
     item: h.item,
+    avgSpeed: h.avgSpeed,
+    peakSpeed: h.maxSpeed,
+    minSpeed: h.minSpeed,
+    durationMs: h.durationMs,
   };
 }
 

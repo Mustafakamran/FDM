@@ -24,6 +24,16 @@ export interface JobStats {
 }
 
 export interface HistoryEntry {
+  /**
+   * Stable, content-derived unique id (see {@link finishKey}). Used as the
+   * React key and the dedupe key. Job ids alone are NOT unique across app
+   * restarts — the native backend restarts its counter each launch and rclone
+   * ids reset with the daemon, so a fresh download can reuse an old id. Keying
+   * history by jobId then made `record()` skip the new finish as a "duplicate",
+   * so recently-completed downloads silently vanished from history. Absent on
+   * entries written before this field existed (a key is derived on load).
+   */
+  id?: string;
   jobId: number;
   name: string;
   accountId: string;
@@ -88,9 +98,19 @@ export function computeFinishStats(
 const load = () => loadJson<HistoryEntry[]>(KEY, []);
 const persist = (items: HistoryEntry[]) => saveJson(KEY, items.slice(0, CAP));
 
+/**
+ * Content-derived identity for a finished transfer. Distinguishes two different
+ * downloads that happen to share a (reused) job id, while still collapsing the
+ * repeated finish snapshots the 1 Hz poll produces for one job within a session.
+ */
+function finishKey(jobId: number, name: string, dest: string, size: number, status: string): string {
+  return `${jobId}|${name}|${dest}|${size}|${status}`;
+}
+const keyOf = (e: HistoryEntry) => e.id ?? finishKey(e.jobId, e.name, e.dest, e.size, e.status);
+
 interface HistoryState {
   items: HistoryEntry[];
-  recorded: Set<number>;
+  recorded: Set<string>;
   record: (job: JobStatus, item?: DownloadItem, stats?: JobStats) => void;
   /** Drop one entry (e.g. after the user resumes a failed download). */
   removeEntry: (jobId: number) => void;
@@ -101,17 +121,19 @@ export const useHistory = create<HistoryState>((set, get) => {
   const items = load();
   return {
     items,
-    recorded: new Set(items.map((i) => i.jobId)),
+    recorded: new Set(items.map(keyOf)),
 
     record: (job, item, stats) => {
       if (!job.finished && !job.cancelled) return;
-      if (get().recorded.has(job.jobId)) return;
       const status = job.cancelled ? "cancelled" : job.success ? "success" : "failed";
       const now = Date.now();
       const size = job.totalBytes || job.bytes;
+      const key = finishKey(job.jobId, job.name, job.dest, size, status);
+      if (get().recorded.has(key)) return;
       // http downloads carry the source URL as the item id.
       const sourceUrl = item?.id && /^https?:\/\//i.test(item.id) ? item.id : undefined;
       const entry: HistoryEntry = {
+        id: key,
         jobId: job.jobId,
         name: job.name,
         accountId: job.accountId,
@@ -131,7 +153,7 @@ export const useHistory = create<HistoryState>((set, get) => {
         ...computeFinishStats(size, stats, now),
       };
       const recorded = new Set(get().recorded);
-      recorded.add(job.jobId);
+      recorded.add(key);
       const next = [entry, ...get().items].slice(0, CAP);
       persist(next);
       set({ items: next, recorded });
@@ -139,8 +161,11 @@ export const useHistory = create<HistoryState>((set, get) => {
 
     removeEntry: (jobId) => {
       const recorded = new Set(get().recorded);
-      recorded.delete(jobId);
-      const next = get().items.filter((i) => i.jobId !== jobId);
+      const next = get().items.filter((i) => {
+        if (i.jobId !== jobId) return true;
+        recorded.delete(keyOf(i)); // free the key so this transfer can re-record
+        return false;
+      });
       persist(next);
       set({ items: next, recorded });
     },
