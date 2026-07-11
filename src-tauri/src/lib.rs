@@ -4,6 +4,7 @@ pub mod download;
 pub mod drive;
 pub mod dropbox;
 pub mod filemail;
+pub mod frameio;
 pub mod hls;
 pub mod index;
 pub mod ingest;

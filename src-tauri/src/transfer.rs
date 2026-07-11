@@ -926,6 +926,12 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
         match provider::kind_of(&account_id) {
             Kind::Wetransfer => return crate::wetransfer::download_share(&item.id, Path::new(&dest), &h),
             Kind::Filemail => return crate::filemail::download_share(&item.id, Path::new(&dest), &h),
+            // Frame.io: the quality choice (originals vs a proxy rendition) rides
+            // in the item's headers, set by the paste-a-link UI.
+            Kind::Frameio => {
+                let quality = header_lookup(&item.headers, "x-fdm-frameio-quality").unwrap_or("original");
+                return crate::frameio::download_share(&item.id, Path::new(&dest), quality, &h);
+            }
             // BitTorrent (magnet / .torrent): bridge the bundled rqbit engine into
             // this native job by polling its progress into `h`.
             Kind::Torrent => return download_torrent(&app, &item, &dest, &h),

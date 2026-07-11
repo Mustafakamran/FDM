@@ -27,6 +27,8 @@ export const HTTP_ACCOUNT_ID = "http";
 export const WETRANSFER_ACCOUNT_ID = "wetransfer";
 /** Synthetic account for Filemail share links (fetched natively, secondary lane). */
 export const FILEMAIL_ACCOUNT_ID = "filemail";
+/** Synthetic account for Frame.io public share links (fetched natively, secondary lane). */
+export const FRAMEIO_ACCOUNT_ID = "frameio";
 /** Synthetic account for BitTorrent (magnet / .torrent) via the rqbit engine. */
 export const TORRENT_ACCOUNT_ID = "torrent";
 
@@ -121,6 +123,9 @@ export function classifyTransferUrl(url: string): { accountId: string; name: str
   }
   if (host === "filemail.com" || host.endsWith(".filemail.com")) {
     return { accountId: FILEMAIL_ACCOUNT_ID, name: "Filemail transfer" };
+  }
+  if (host === "frame.io" || host.endsWith(".frame.io") || host === "f.io") {
+    return { accountId: FRAMEIO_ACCOUNT_ID, name: "Frame.io share" };
   }
   return { accountId: HTTP_ACCOUNT_ID, name: filenameFromUrl(url) };
 }
@@ -376,7 +381,7 @@ interface TransfersState {
   /** Add items to the back of the queue; they start as slots free up. */
   enqueue: (accountId: string, items: DownloadItem[], dest: string) => void;
   /** Enqueue a generic HTTP(S) URL download (secondary lane). */
-  enqueueUrl: (url: string, dest: string) => void;
+  enqueueUrl: (url: string, dest: string, quality?: string) => void;
   /** Queue a BitTorrent download from a local `.torrent` file path. */
   enqueueTorrentFile: (path: string, dest: string) => void;
   /** Upload local files/folders (absolute paths) into a remote folder. */
@@ -438,7 +443,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     void get().pump();
   },
 
-  enqueueUrl: (url, dest) => {
+  enqueueUrl: (url, dest, quality) => {
     const { accountId, name } = classifyTransferUrl(url);
     const item: DownloadItem = {
       path: "",
@@ -447,6 +452,11 @@ export const useTransfers = create<TransfersState>((set, get) => ({
       size: 0,
       id: url,
     };
+    // Frame.io downloads carry the originals-vs-proxy choice as a header the
+    // native resolver reads (see frameio.rs). Only meaningful for Frame.io.
+    if (quality && accountId === FRAMEIO_ACCOUNT_ID) {
+      item.headers = { "x-fdm-frameio-quality": quality };
+    }
     get().enqueue(accountId, [item], dest);
   },
 
