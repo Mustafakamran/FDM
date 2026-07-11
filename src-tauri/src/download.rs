@@ -47,6 +47,14 @@ pub struct Job {
     pub cancelled: bool,
     /// "download" or "upload" — the UI routes each kind to a different surface.
     pub kind: &'static str,
+    /// Last observed completion, remembered across polls. rclone reaps a finished
+    /// async job after ~60s (`--rc-job-expire-duration`), after which `job/status`
+    /// returns "job not found" while the job's stats group still reports 100%.
+    /// Without remembering it, a completed upload would snap back to
+    /// "Uploading 100%" forever once reaped. Sticky: set true, never cleared.
+    pub finished: bool,
+    pub success: bool,
+    pub error: String,
 }
 
 /// Managed state: all jobs launched this session.
@@ -346,6 +354,9 @@ pub fn upload_start(
             total_bytes: total,
             cancelled: false,
             kind: "upload",
+            finished: false,
+            success: false,
+            error: String::new(),
         });
         created.push(status_for(job_id, &account_id, &name, &dest_path, total, "upload"));
     }
@@ -472,16 +483,23 @@ pub fn list_jobs(
     let jobs = jobs_state.jobs.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
     let mut out = Vec::with_capacity(jobs.len());
+    // Sticky completion updates to write back after polling (kept out of the poll
+    // loop so the jobs lock isn't held across network calls).
+    let mut sticky: Vec<(i64, bool, bool, String)> = Vec::new();
     for job in &jobs {
         let mut s = status_for(job.job_id, &job.account_id, &job.name, &job.dest, job.total_bytes, job.kind);
         s.cancelled = job.cancelled;
 
-        // Live byte/speed/eta from the per-job stats group.
+        // Live byte/speed/eta from the per-job stats group. Note the stats group
+        // OUTLIVES the job itself: after rclone reaps a finished async job, this
+        // still returns the final bytes (100%) even though `job/status` 404s.
+        let mut stats_ok = false;
         if let Ok(stats) = rc_post(
             &conn,
             "core/stats",
             &json!({ "group": format!("job/{}", job.job_id) }),
         ) {
+            stats_ok = true;
             s.bytes = stats.get("bytes").and_then(|v| v.as_i64()).unwrap_or(0);
             s.speed = stats.get("speed").and_then(|v| v.as_f64()).unwrap_or(0.0);
             s.eta = stats.get("eta").and_then(|v| v.as_f64());
@@ -491,14 +509,54 @@ pub fn list_jobs(
         }
 
         // Completion + error from job status.
-        if let Ok(js) = rc_post(&conn, "job/status", &json!({ "jobid": job.job_id })) {
-            s.finished = js.get("finished").and_then(|v| v.as_bool()).unwrap_or(false);
-            s.success = js.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-            if let Some(err) = js.get("error").and_then(|v| v.as_str()) {
-                s.error = err.to_string();
+        match rc_post(&conn, "job/status", &json!({ "jobid": job.job_id })) {
+            Ok(js) => {
+                s.finished = js.get("finished").and_then(|v| v.as_bool()).unwrap_or(false);
+                s.success = js.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                if let Some(err) = js.get("error").and_then(|v| v.as_str()) {
+                    s.error = err.to_string();
+                }
+                if s.finished {
+                    sticky.push((job.job_id, true, s.success, s.error.clone()));
+                }
+            }
+            // job/status errored. If we already saw this job finish, keep that
+            // (sticky) — don't let a reaped job revert to "in progress". If we
+            // never saw it finish but the daemon is alive (stats_ok) and the job
+            // is now gone, it was reaped after completing, so treat it as done.
+            Err(_) => {
+                if job.finished {
+                    s.finished = true;
+                    s.success = job.success;
+                    if s.error.is_empty() {
+                        s.error = job.error.clone();
+                    }
+                } else if stats_ok {
+                    s.finished = true;
+                    s.success = !job.cancelled;
+                    sticky.push((job.job_id, true, s.success, String::new()));
+                }
+            }
+        }
+        // A finished job isn't moving and shows a full bar.
+        if s.finished {
+            s.speed = 0.0;
+            s.eta = None;
+            if s.total_bytes > 0 && s.bytes < s.total_bytes {
+                s.bytes = s.total_bytes;
             }
         }
         out.push(s);
+    }
+    if !sticky.is_empty() {
+        let mut jl = jobs_state.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        for (id, fin, suc, err) in sticky {
+            if let Some(j) = jl.iter_mut().find(|j| j.job_id == id) {
+                j.finished = fin;
+                j.success = suc;
+                j.error = err;
+            }
+        }
     }
 
     // Native (Dropbox-link) jobs.
