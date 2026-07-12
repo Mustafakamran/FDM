@@ -281,14 +281,47 @@ fn resolve_media(
 
     if quality.is_proxy() {
         if let Some(m) = pick_proxy(&media, quality) {
-            return Ok(Media { name, url: m.0, size: m.1 });
+            // A proxy's downloadUrl is a server-muxed MP4 whose real byte length
+            // differs from the reported transcode filesize. Probe the true length
+            // so resume/skip decisions (and the 416 stop) are byte-exact. Fall
+            // back to the reported size if the probe fails.
+            let size = probe_len(c, &m.0).unwrap_or(m.1);
+            return Ok(Media { name, url: m.0, size });
         }
         // No proxy for this asset type — fall back to the original master.
     }
     if original_url.is_empty() {
         return Err(format!("frame.io: no downloadable media for {name}"));
     }
+    // Originals are presigned S3 objects whose Content-Length equals the reported
+    // filesize exactly, so that size is authoritative — no probe needed.
     Ok(Media { name, url: original_url.to_string(), size: original_size })
+}
+
+/// The true byte length of a download URL, without fetching it: a 1-byte range
+/// request returns `Content-Range: bytes 0-0/<total>` (206), or a plain 200 with
+/// `Content-Length` when the server ignores Range. `None` if neither is present.
+fn probe_len(c: &reqwest::blocking::Client, url: &str) -> Option<i64> {
+    let resp = c
+        .get(url)
+        .header("User-Agent", UA)
+        .header("Range", "bytes=0-0")
+        .send()
+        .ok()?;
+    if let Some(cr) = resp.headers().get(reqwest::header::CONTENT_RANGE) {
+        if let Some(total) = cr.to_str().ok().and_then(|s| s.rsplit('/').next()).and_then(|t| t.trim().parse::<i64>().ok()) {
+            if total > 0 {
+                return Some(total);
+            }
+        }
+    }
+    // No Content-Range (server ignored Range → full 200). Content-Length is then
+    // the whole file, but only trust it when we actually got a 200, not a 206
+    // (a 206 with a 1-byte body has Content-Length 1).
+    if resp.status().as_u16() == 200 {
+        return resp.content_length().map(|v| v as i64).filter(|&v| v > 0);
+    }
+    None
 }
 
 /// Choose a proxy transcode `(url, size)` from `media.videoTranscodes` per the
@@ -405,6 +438,17 @@ fn stream_file(
             refreshed = true;
             continue;
         }
+        if code == 416 {
+            // Range start past end-of-file. A proxy's server-muxed MP4 can be
+            // smaller than the reported filesizeInBytes, so once we've pulled all
+            // the bytes the server has, the next resume request lands past EOF.
+            // If we already have data on disk, the file is complete — finish it
+            // rather than failing the whole share.
+            if offset > 0 {
+                break;
+            }
+            return Err("frame.io download 416 (empty range)".into());
+        }
         if !resp.status().is_success() {
             return Err(format!("frame.io download {}", resp.status()));
         }
@@ -495,13 +539,33 @@ pub fn download_share(url: &str, dest_dir: &Path, quality_hint: &str, h: &Native
         });
     }
 
+    // Download each file. A single file failing (a weird asset, a transient
+    // server error) must NOT abort the whole share — otherwise every folder after
+    // the bad one is silently skipped. Collect failures and continue; a user
+    // pause ("paused") still aborts immediately.
+    let mut failures: Vec<String> = Vec::new();
     for item in plan {
         if h.cancelled.load(Ordering::SeqCst) {
             return Err("paused".into());
         }
-        let media = resolve_media(&c, &share_id, &session, &item.asset_id, quality)?;
+        let media = match resolve_media(&c, &share_id, &session, &item.asset_id, quality) {
+            Ok(m) => m,
+            Err(e) => {
+                failures.push(format!("{}: {}", item.asset_id, e));
+                continue;
+            }
+        };
         let dir = dest_dir.join(&item.dir);
-        stream_file(&c, &share_id, &session, &item.asset_id, quality, &media, &dir, h)?;
+        match stream_file(&c, &share_id, &session, &item.asset_id, quality, &media, &dir, h) {
+            Ok(()) => {}
+            Err(e) if e == "paused" => return Err(e),
+            Err(e) => failures.push(format!("{}: {}", media.name, e)),
+        }
+    }
+    if !failures.is_empty() {
+        let shown: String = failures.iter().take(5).cloned().collect::<Vec<_>>().join("; ");
+        let more = if failures.len() > 5 { format!(" (+{} more)", failures.len() - 5) } else { String::new() };
+        return Err(format!("{} file(s) failed: {shown}{more}", failures.len()));
     }
     Ok(())
 }

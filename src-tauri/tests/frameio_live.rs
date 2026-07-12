@@ -14,6 +14,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const SHARE: &str = "https://next.frame.io/share/06c38ba7-a5ae-4629-bc4c-d337d8d1315a/";
+/// The folder share (link 1): 4 folders incl. "CARD 3", which a mid-share 416
+/// error used to abort before reaching.
+const FOLDER_SHARE: &str = "https://next.frame.io/share/ff7cb5d4-0d65-4bff-ba92-ec22466c7ec3/";
 
 fn handles() -> NativeHandles {
     NativeHandles {
@@ -41,6 +44,24 @@ fn finished_file(dir: &PathBuf) -> Option<(PathBuf, u64)> {
         }
     }
     None
+}
+
+/// Recursively count completed (non-.fdmpart) files under `dir`.
+fn count_finished(dir: &PathBuf) -> usize {
+    let mut n = 0;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                n += count_finished(&p);
+            } else if !p.extension().map(|x| x == "fdmpart").unwrap_or(false)
+                && std::fs::metadata(&p).map(|m| m.len() > 0).unwrap_or(false)
+            {
+                n += 1;
+            }
+        }
+    }
+    n
 }
 
 #[test]
@@ -120,4 +141,85 @@ fn streams_original_partial() {
     // must have streamed from the presigned S3 URL.
     assert!(total > 1_000_000_000, "expected the originals aggregate total to be published, got {total}");
     assert!(moved > 2_000_000, "expected the original to start streaming, only got {moved} bytes");
+}
+
+#[test]
+#[ignore = "hits the live Frame.io API + downloads real bytes"]
+fn folder_share_proxies_survive_416() {
+    // The folder share pulls many proxy files whose server-muxed size differs
+    // from the reported filesize, which used to 416 and abort the WHOLE share
+    // (dropping later folders like CARD 3). Download several files across folders
+    // and assert it never fails with a 416 — only a clean cancel ("paused").
+    let dir = std::env::temp_dir().join("fdm_frameio_live_folder");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let h = handles();
+    let h_watch = h.clone();
+    let dir_watch = dir.clone();
+    let watch = std::thread::spawn(move || {
+        let start = Instant::now();
+        loop {
+            if count_finished(&dir_watch) >= 8 || start.elapsed() > Duration::from_secs(180) {
+                h_watch.cancelled.store(true, Ordering::SeqCst);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(300));
+        }
+    });
+
+    let res = frameio::download_share(FOLDER_SHARE, &dir, "proxy-smallest", &h);
+    let _ = watch.join();
+
+    let done = count_finished(&dir);
+    println!("result={res:?} finished_files={done}");
+    // A 416 (or any single file failing) must never abort the run — the only
+    // acceptable early exit is the pause we triggered.
+    if let Err(e) = &res {
+        assert_eq!(e, "paused", "download aborted with a non-pause error: {e}");
+    }
+    assert!(done >= 8, "expected ≥8 files downloaded across folders, got {done}");
+}
+
+#[test]
+#[ignore = "hits the live Frame.io API + downloads real bytes"]
+fn resume_skips_already_complete_files() {
+    // Round 1: pull a few proxy files, then cancel. Round 2: re-run into the SAME
+    // folder — the completed files must be recognised (byte-length exact) and
+    // skipped instantly, not re-downloaded, while new files are fetched.
+    let dir = std::env::temp_dir().join("fdm_frameio_live_resume");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let run_until = |target: usize, secs: u64| -> (i64, Result<(), String>) {
+        let h = handles();
+        let hw = h.clone();
+        let dw = dir.clone();
+        let w = std::thread::spawn(move || {
+            let start = Instant::now();
+            loop {
+                if count_finished(&dw) >= target || start.elapsed() > Duration::from_secs(secs) {
+                    hw.cancelled.store(true, Ordering::SeqCst);
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        });
+        let res = frameio::download_share(SHARE, &dir, "proxy-smallest", &h);
+        let _ = w.join();
+        (h.transferred.load(Ordering::SeqCst), res)
+    };
+
+    // Round 1: get at least 5 files on disk.
+    let _ = run_until(5, 120);
+    let after1 = count_finished(&dir);
+    assert!(after1 >= 5, "round 1 should download ≥5 files, got {after1}");
+
+    // Round 2: re-run; watch how fast `transferred` climbs. Because the first
+    // `after1` files are already complete, the resolver should skip them and
+    // credit their bytes near-instantly (no re-download), then fetch new ones.
+    let (moved2, _res2) = run_until(after1 + 3, 120);
+    let after2 = count_finished(&dir);
+    println!("after1={after1} after2={after2} transferred_round2={moved2}");
+    assert!(after2 > after1, "round 2 should add new files, {after1} → {after2}");
 }
