@@ -167,6 +167,13 @@ export function addDriveLink(baseAccountId: string, label: string, folderId: str
   return invoke<Account>("add_drive_link", { baseAccountId, label, folderId });
 }
 
+/** Open a Drive folder (by id) as an id-rooted linked-folder account, reusing an
+ *  existing link to the same folder. Used to open/download a Drive folder-shortcut
+ *  whose target can't be reached by name-path. */
+export function getOrCreateDriveLink(baseAccountId: string, label: string, folderId: string): Promise<Account> {
+  return invoke<Account>("get_or_create_drive_link", { baseAccountId, label, folderId });
+}
+
 /**
  * Add a Dropbox shared-folder link as a browseable account. No rclone remote —
  * it lists/downloads via the native Dropbox API, borrowing a connected Dropbox

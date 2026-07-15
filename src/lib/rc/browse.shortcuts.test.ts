@@ -23,10 +23,12 @@ describe("resolveDriveShortcuts", () => {
     mocked.mockResolvedValue(target({ isDir: true, targetId: "folder99", targetPath: "Clients/Kolo" }));
     const [out] = await resolveDriveShortcuts([item({ Name: "Kolo", Path: "Kolo" })], () => "drive_1");
     expect(mocked).toHaveBeenCalledWith("drive_1", "sc1");
-    expect(out.IsDir).toBe(true);
-    expect(out.ID).toBe("folder99");
-    expect(out.Path).toBe("Clients/Kolo");
+    expect(out.IsDir).toBe(true); // renders as an openable folder
     expect(out.MimeType).toBe("application/vnd.google-apps.folder");
+    // Reached by id (id-rooted linked folder), NOT a name-path that wouldn't
+    // resolve over shared_with_me — so the target id is tagged, name/path kept.
+    expect(out.LinkFolderId).toBe("folder99");
+    expect(out.Name).toBe("Kolo");
   });
 
   it("rewrites a file-shortcut to its target file, keeping IsDir false", async () => {
@@ -38,12 +40,12 @@ describe("resolveDriveShortcuts", () => {
   });
 
   it("preserves extra fields (e.g. AccountId on a global search hit)", async () => {
-    mocked.mockResolvedValue(target({ targetId: "f1" }));
+    mocked.mockResolvedValue(target({ isDir: true, targetId: "f1" }));
     type Hit = RcItem & { AccountId?: string };
     const hit: Hit = { ...item(), AccountId: "drive_1" };
     const [out] = await resolveDriveShortcuts<Hit>([hit], (h) => h.AccountId);
-    expect(out.AccountId).toBe("drive_1");
-    expect(out.ID).toBe("f1");
+    expect(out.AccountId).toBe("drive_1"); // resolve keyed off the hit's own drive
+    expect(out.LinkFolderId).toBe("f1");
   });
 
   it("leaves non-shortcut rows untouched and never resolves them", async () => {
@@ -67,6 +69,6 @@ describe("resolveDriveShortcuts", () => {
     expect(mocked).toHaveBeenCalledTimes(1); // only the shortcut
     expect(mocked).toHaveBeenCalledWith("drive_1", "sc");
     expect(out[0]).toEqual(realFolder); // untouched
-    expect(out[1].ID).toBe("ok1"); // resolved
+    expect(out[1].LinkFolderId).toBe("ok1"); // resolved folder-shortcut
   });
 });

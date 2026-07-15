@@ -230,6 +230,7 @@ pub fn run() {
             accounts::delete_secret,
             accounts::account_email,
             accounts::add_drive_link,
+            accounts::get_or_create_drive_link,
             dropbox::add_dropbox_link,
             download::start_download,
             download::upload_start,

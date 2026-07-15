@@ -35,6 +35,7 @@ import { createFolder } from "../lib/rc/browse";
 import { deleteItem } from "../lib/tauri/commands";
 import type { Account, DownloadItem } from "../lib/tauri/commands";
 import { pickDownloadDest } from "../lib/ingest";
+import { openShortcutFolder, downloadShortcutFolder } from "../lib/drive-link";
 import { loadJson, saveJson } from "../lib/persisted";
 
 const SORT_KEY = "browse_sort";
@@ -113,6 +114,10 @@ function FolderBadge({ hasDownloads, visited }: { hasDownloads: boolean; visited
 interface RowActions {
   toggle: (p: string, shiftKey?: boolean) => void;
   openFolder: (p: string) => void;
+  /** Open a folder ROW: routes a Drive folder-shortcut to its id-rooted linked
+   *  folder, else navigates by path. Use for folder clicks (openFolder is still
+   *  used for path-only nav like breadcrumbs). */
+  openDir: (item: RcItem) => void;
   /** Single-click: lightweight preview overlay. */
   openPreview: (item: RcItem) => void;
   /** Right-click → Review: the full reviewer screen. */
@@ -499,7 +504,14 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     if (its.length === 0) return;
     const dest = await pickDownloadDest();
     if (!dest) return;
-    const chosen: DownloadItem[] = its.map((i) => ({ path: i.Path, name: i.Name, isDir: i.IsDir, size: sizeOf(i), id: i.ID ?? "" }));
+    // Drive folder-shortcuts download via their id-rooted linked folder (their
+    // Path can't be reached over shared_with_me); everything else queues directly.
+    for (const l of its.filter((i) => i.LinkFolderId)) {
+      await downloadShortcutFolder(account.id, l.Name, l.LinkFolderId!, dest);
+    }
+    const normal = its.filter((i) => !i.LinkFolderId);
+    if (normal.length === 0) return;
+    const chosen: DownloadItem[] = normal.map((i) => ({ path: i.Path, name: i.Name, isDir: i.IsDir, size: sizeOf(i), id: i.ID ?? "" }));
     enqueue(account.id, chosen, dest);
     toast(`Queued ${chosen.length} download${chosen.length === 1 ? "" : "s"}`, "success");
   }
@@ -515,7 +527,14 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     for (const [accId, map] of Object.entries(byAccount)) {
       const entries = Object.values(map);
       if (entries.length === 0) continue;
-      const chosen: DownloadItem[] = entries.map((e) => ({ path: e.item.Path, name: e.item.Name, isDir: e.item.IsDir, size: e.size, id: e.item.ID ?? "" }));
+      // Drive folder-shortcuts route through their id-rooted linked folder.
+      for (const e of entries.filter((e) => e.item.LinkFolderId)) {
+        await downloadShortcutFolder(accId, e.item.Name, e.item.LinkFolderId!, dest);
+        queued += 1;
+      }
+      const normal = entries.filter((e) => !e.item.LinkFolderId);
+      if (normal.length === 0) continue;
+      const chosen: DownloadItem[] = normal.map((e) => ({ path: e.item.Path, name: e.item.Name, isDir: e.item.IsDir, size: e.size, id: e.item.ID ?? "" }));
       enqueue(accId, chosen, dest);
       queued += chosen.length;
     }
@@ -532,6 +551,10 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   actionsRef.current = {
     toggle,
     openFolder: (p) => setView({ kind: "browse", accountId: account.id, section: "all", path: p }),
+    openDir: (item) =>
+      item.LinkFolderId
+        ? void openShortcutFolder(account.id, item.Name, item.LinkFolderId)
+        : setView({ kind: "browse", accountId: account.id, section: "all", path: item.Path }),
     openPreview: (item) => usePreview.getState().open(account.id, reviewTarget(item)),
     openReview: (item) => openReview(account.id, reviewTarget(item)),
     download: (item) => void enqueueItems([item]),
@@ -544,6 +567,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const rowActions = useRef<RowActions>({
     toggle: (p, shiftKey) => actionsRef.current.toggle(p, shiftKey),
     openFolder: (p) => actionsRef.current.openFolder(p),
+    openDir: (item) => actionsRef.current.openDir(item),
     openPreview: (item) => actionsRef.current.openPreview(item),
     openReview: (item) => actionsRef.current.openReview(item),
     download: (item) => actionsRef.current.download(item),
@@ -559,7 +583,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     const isStar = starred.includes(item.Path);
     const out: MenuItem[] = [];
     if (item.IsDir) {
-      out.push({ label: "Open", icon: FolderOpen, onClick: () => setView({ kind: "browse", accountId: account.id, section: "all", path: item.Path }) });
+      out.push({ label: "Open", icon: FolderOpen, onClick: () => actionsRef.current.openDir(item) });
       out.push({ label: "Calculate size", icon: Calculator, onClick: () => calcSize(item.Path) });
       out.push({ label: folderIndexed(item.Path) ? "Re-index folder" : "Index folder", icon: FolderSearch, disabled: showCrawl, onClick: () => indexFolder(item.Path) });
       // Manual workflow status — mark (or, by clicking the active one, clear).
@@ -1132,7 +1156,7 @@ const FileRow = memo(function FileRow({
     </>
   );
   const nameCell = item.IsDir ? (
-    <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => actions.openFolder(item.Path)}>{body}</button>
+    <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => actions.openDir(item)}>{body}</button>
   ) : previewableFlag ? (
     <button className="flex min-w-0 flex-1 items-center gap-3 text-left" data-tip="Preview (right-click → Review)" onClick={() => actions.openPreview(item)}>{body}</button>
   ) : (
@@ -1260,7 +1284,7 @@ const FileGridItem = memo(function FileGridItem({
       />
       <button
         className="flex flex-col items-center gap-2 text-center"
-        onClick={() => (item.IsDir ? actions.openFolder(item.Path) : isPreviewable(item.Name) && actions.openPreview(item))}
+        onClick={() => (item.IsDir ? actions.openDir(item) : isPreviewable(item.Name) && actions.openPreview(item))}
       >
         <span className="relative flex items-center justify-center">
           <ft.Icon size={30} style={{ color: ft.color }} />

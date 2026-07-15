@@ -13,6 +13,14 @@ export interface RcItem {
   MimeType: string;
   /** Backend file id (Drive populates this); used for uploader lookup. */
   ID?: string;
+  /**
+   * Target folder id for a Google Drive folder-SHORTCUT. Set by
+   * resolveDriveShortcuts. Such a folder can't be reached by name-path (its
+   * target lives outside the shared_with_me namespace and folder names may
+   * contain `/`), so open/download route through an id-rooted linked folder
+   * (get_or_create_drive_link) instead of navigating by Path.
+   */
+  LinkFolderId?: string;
 }
 
 /**
@@ -67,7 +75,11 @@ export async function resolveDriveShortcuts<T extends RcItem>(
       try {
         const t = await resolveShortcut(accountIdOf(item)!, item.ID!);
         resolved.set(item.ID!, t.isDir
-          ? { ...item, IsDir: true, ID: t.targetId, Path: t.targetPath || item.Path, MimeType: t.targetMime }
+          // Folder target: render as an openable folder but keep the shortcut's
+          // own Name/Path — the real target is reached by id (LinkFolderId), not
+          // by a name-path that wouldn't resolve over shared_with_me.
+          ? { ...item, IsDir: true, MimeType: t.targetMime, LinkFolderId: t.targetId }
+          // File target: id-addressed, so pointing at the target id is enough.
           : { ...item, ID: t.targetId, MimeType: t.targetMime });
       } catch {
         /* leave the shortcut as-is if resolution fails */

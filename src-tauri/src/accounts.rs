@@ -471,6 +471,68 @@ pub fn add_drive_link(
     create_drive_link(&conn, &base_account_id, &label, &folder_id)
 }
 
+/// An existing `drivelink_*` account already rooted at `folder_id`, if any, so
+/// opening the same Drive shortcut twice reuses one linked folder instead of
+/// piling up duplicates. Matches on the remote's `root_folder_id`.
+fn find_drive_link_by_root(conn: &RcConnection, folder_id: &str) -> Option<Account> {
+    let dump = rc_post(conn, "config/dump", &serde_json::json!({})).ok()?;
+    let obj = dump.as_object()?;
+    for (name, cfg) in obj {
+        if name.starts_with("drivelink_")
+            && cfg.get("root_folder_id").and_then(|v| v.as_str()) == Some(folder_id.trim())
+        {
+            if let Some(a) = parse_remote(name) {
+                return Some(a);
+            }
+        }
+    }
+    None
+}
+
+/// Open a Google Drive folder (by id) as a browseable/downloadable linked-folder
+/// account, REUSING an existing link to the same folder if one exists. This is
+/// how a Drive folder-SHORTCUT is opened: shortcuts can't be reached by name-path
+/// (the target lives outside the `shared_with_me` namespace, and folder names may
+/// contain `/`), so we root a `drivelink_*` remote at the target folder id — the
+/// same proven engine as "Add Drive link".
+#[tauri::command]
+pub fn get_or_create_drive_link(
+    rclone: tauri::State<RcloneState>,
+    base_account_id: String,
+    label: String,
+    folder_id: String,
+) -> Result<Account, String> {
+    let conn = rclone
+        .connection
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or_else(|| "rclone not started".to_string())?;
+    if folder_id.trim().is_empty() {
+        return Err("missing folder id".into());
+    }
+    if let Some(existing) = find_drive_link_by_root(&conn, &folder_id) {
+        return Ok(existing);
+    }
+    // A drivelink borrows a real Drive account's token; if the base is itself a
+    // drivelink (e.g. opening a shortcut found inside a linked folder), fall back
+    // to any connected `drive_*` account so create_drive_link's provider check passes.
+    let base = if base_account_id.starts_with("drivelink_") {
+        rc_post(&conn, "config/dump", &serde_json::json!({}))
+            .ok()
+            .and_then(|d| {
+                d.as_object()?
+                    .keys()
+                    .find(|k| k.starts_with("drive_"))
+                    .cloned()
+            })
+            .unwrap_or(base_account_id)
+    } else {
+        base_account_id
+    };
+    create_drive_link(&conn, &base, &label, &folder_id)
+}
+
 /// Delete a remote by name (used to clean up a transient `drivelink_*` after a
 /// BDM download completes).
 pub fn delete_remote(conn: &RcConnection, name: &str) {

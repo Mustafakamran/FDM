@@ -15,6 +15,7 @@ import { fileType } from "../lib/file-types";
 import { isPreviewable, isVideo, extOf } from "../lib/review";
 import { formatBytes } from "../lib/format";
 import { pickDownloadDest } from "../lib/ingest";
+import { openShortcutFolder, downloadShortcutFolder } from "../lib/drive-link";
 import { useScopedSearch } from "../lib/use-scoped-search";
 import { useCommands, filterCommands } from "../lib/use-commands";
 import { driveFolderPath, type Account, type DownloadItem, type Provider } from "../lib/tauri/commands";
@@ -175,6 +176,13 @@ export function GlobalSearchResults({ onClose }: { onClose: () => void }) {
   // returns only the bare name).
   const openLocation = async (h: GlobalHit) => {
     if (!h.AccountId) return;
+    // A Drive folder-shortcut opens its target as an id-rooted linked folder.
+    if (h.LinkFolderId) {
+      await openShortcutFolder(h.AccountId, h.Name, h.LinkFolderId);
+      useSearch.getState().set("");
+      onClose();
+      return;
+    }
     let full = h.Path;
     try {
       const provider = acctById.get(h.AccountId)?.provider ?? h.Provider;
@@ -214,6 +222,14 @@ export function GlobalSearchResults({ onClose }: { onClose: () => void }) {
   };
   const download = async (h: GlobalHit) => {
     if (!h.AccountId) return;
+    // Drive folder-shortcut → download its target via an id-rooted linked folder.
+    if (h.LinkFolderId) {
+      const dest = await pickDownloadDest();
+      if (!dest) return;
+      await downloadShortcutFolder(h.AccountId, h.Name, h.LinkFolderId, dest);
+      onClose();
+      return;
+    }
     let path = h.Path;
     try {
       path = await resolvePath(h);
