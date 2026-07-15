@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { listFolder, folderSize, type RcItem } from "../lib/rc/browse";
+import { listFolder, folderSize, resolveDriveShortcuts, type RcItem } from "../lib/rc/browse";
 import type { Account } from "../lib/tauri/commands";
 import { loadJson, saveJson } from "../lib/persisted";
 
@@ -181,6 +181,9 @@ export const useBrowse = create<BrowseState>((set, get) => ({
     searchTokens.set(account.id, myToken);
     const timer = setTimeout(() => {
       void invoke<RcItem[]>("account_search", { accountId: account.id, query: q })
+        // Resolve Drive shortcut hits to their targets so folder-shortcuts open
+        // instead of showing as un-openable "FILE" (mirrors listFolder + all-drives).
+        .then((items) => (account.provider === "drive" ? resolveDriveShortcuts(items, () => account.id) : items))
         .then((items) => {
           if (searchTokens.get(account.id) !== myToken) return; // superseded by a newer query
           set((s) => ({

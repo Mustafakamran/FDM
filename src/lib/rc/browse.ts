@@ -47,6 +47,36 @@ export async function folderSize(account: Account, path: string): Promise<SizeRe
   return { bytes: res?.bytes ?? 0, count: res?.count ?? 0 };
 }
 
+/**
+ * Rewrite Google Drive shortcut rows to their targets. Shortcuts arrive
+ * unresolved (mimeType `…shortcut`, IsDir=false) → un-openable "FILE" rows; a
+ * folder-shortcut becomes its real folder (opens/recurses/downloads by target
+ * id+path) and a file-shortcut its real file. `accountIdOf` returns the Drive
+ * account id to resolve against for each item, or undefined to skip it (non-Drive
+ * items, or hits with no known account). Items that fail to resolve are left as-is.
+ */
+export async function resolveDriveShortcuts<T extends RcItem>(
+  items: T[],
+  accountIdOf: (item: T) => string | undefined,
+): Promise<T[]> {
+  const shortcuts = items.filter((i) => i.MimeType === SHORTCUT_MIME && i.ID && accountIdOf(i));
+  if (shortcuts.length === 0) return items;
+  const resolved = new Map<string, T>();
+  await Promise.all(
+    shortcuts.map(async (item) => {
+      try {
+        const t = await resolveShortcut(accountIdOf(item)!, item.ID!);
+        resolved.set(item.ID!, t.isDir
+          ? { ...item, IsDir: true, ID: t.targetId, Path: t.targetPath || item.Path, MimeType: t.targetMime }
+          : { ...item, ID: t.targetId, MimeType: t.targetMime });
+      } catch {
+        /* leave the shortcut as-is if resolution fails */
+      }
+    }),
+  );
+  return items.map((i) => (i.ID && resolved.has(i.ID) ? resolved.get(i.ID)! : i));
+}
+
 /** List a folder (path "" = root), sorted dirs-first then alphabetical. */
 export async function listFolder(account: Account, path: string): Promise<RcItem[]> {
   const res = await new RcClient().call<{ list?: RcItem[] }>("operations/list", {
@@ -55,28 +85,10 @@ export async function listFolder(account: Account, path: string): Promise<RcItem
   });
   let list = res?.list ?? [];
 
-  // Google Drive shortcuts arrive unresolved over shared_with_me (mimeType
-  // `…shortcut`, IsDir=false) → un-openable "files". Resolve each to its target
-  // via the Drive API and rewrite the row so a folder-shortcut opens its real
-  // folder and a file-shortcut downloads its real file (both by target id/path).
+  // Resolve Drive shortcuts so a folder-shortcut opens its real folder instead of
+  // showing an un-openable "FILE" (see resolveDriveShortcuts).
   if (account.provider === "drive") {
-    const shortcuts = list.filter((i) => i.MimeType === SHORTCUT_MIME && i.ID);
-    if (shortcuts.length > 0) {
-      const resolved = new Map<string, RcItem>();
-      await Promise.all(
-        shortcuts.map(async (item) => {
-          try {
-            const t = await resolveShortcut(account.id, item.ID!);
-            resolved.set(item.ID!, t.isDir
-              ? { ...item, IsDir: true, ID: t.targetId, Path: t.targetPath || item.Path, MimeType: t.targetMime }
-              : { ...item, ID: t.targetId, MimeType: t.targetMime });
-          } catch {
-            /* leave the shortcut as-is if resolution fails */
-          }
-        }),
-      );
-      list = list.map((i) => (i.ID && resolved.has(i.ID) ? resolved.get(i.ID)! : i));
-    }
+    list = await resolveDriveShortcuts(list, () => account.id);
   }
 
   return [...list].sort((a, b) => {

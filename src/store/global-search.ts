@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { RcItem } from "../lib/rc/browse";
+import { resolveDriveShortcuts, type RcItem } from "../lib/rc/browse";
 
 /** A search hit tagged with the drive it came from (added by the Rust
  *  `search_all_accounts` command). */
@@ -58,6 +58,10 @@ export const useGlobalSearch = create<GlobalSearchState>((set) => ({
     const myToken = ++token;
     timer = setTimeout(() => {
       void invoke<GlobalHit[]>("search_all_accounts", { query: q })
+        // Drive shortcuts come back as un-openable "FILE" hits — resolve each
+        // (against the drive it came from) to its target folder/file so it opens
+        // and downloads correctly, exactly like the browse view does.
+        .then((items) => resolveDriveShortcuts(items, (h) => h.AccountId))
         .then((items) => {
           if (myToken !== token) return; // superseded by a newer query
           cachePut(q.toLowerCase(), items);
