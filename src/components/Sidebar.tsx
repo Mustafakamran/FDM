@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Plus, Home, FolderOpen, ArrowDownUp, AlertCircle, Trash2, Loader2, Link as LinkIcon, FolderPlus, MoreHorizontal, Pencil, FolderSearch, ArrowUp, ArrowDown } from "lucide-react";
+import { Plus, Home, FolderOpen, ArrowDownUp, AlertCircle, Trash2, Loader2, Link as LinkIcon, FolderPlus, FolderTree, MoreHorizontal, Pencil, FolderSearch, ArrowUp, ArrowDown } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useApp } from "../store/app";
 import { useTransfers } from "../store/transfers";
@@ -18,7 +18,7 @@ import { laneOf } from "../lib/lane";
 import type { Account, Provider } from "../lib/tauri/commands";
 
 export function Sidebar() {
-  const { view, accounts, accountsLoaded, selectAccount, removeAccount, showTransfers, showNewFolders, setView } = useApp(
+  const { view, accounts, accountsLoaded, selectAccount, removeAccount, showTransfers, showNewFolders, showShared, setView } = useApp(
     useShallow((s) => ({
       view: s.view,
       accounts: s.accounts,
@@ -27,6 +27,7 @@ export function Sidebar() {
       removeAccount: s.removeAccount,
       showTransfers: s.showTransfers,
       showNewFolders: s.showNewFolders,
+      showShared: s.showShared,
       setView: s.setView,
     })),
   );
@@ -34,6 +35,7 @@ export function Sidebar() {
   const onFiles = view.kind === "browse";
   const onHome = view.kind === "home";
   const onNewFolders = view.kind === "new-folders";
+  const onShared = view.kind === "shared";
   const newFolderCount = useNewFolders().count;
   const jobs = useTransfers((s) => s.jobs);
   const queue = useTransfers((s) => s.queue);
@@ -107,6 +109,7 @@ export function Sidebar() {
         <NavItem icon={<Home size={16} />} label="Home" active={onHome} onClick={() => setView({ kind: "home" })} />
         <NavItem icon={<FolderOpen size={16} />} label="Files" active={onFiles} onClick={goFiles} />
         <NavItem icon={<FolderPlus size={16} />} label="Recent Folders" active={onNewFolders} onClick={showNewFolders} badge={newFolderCount || undefined} />
+        <NavItem icon={<FolderTree size={16} />} label="Shared Folders" active={onShared} onClick={showShared} />
         <NavItem icon={<ArrowDownUp size={16} />} label="Transfers" active={onTransfers} onClick={() => showTransfers()} badge={(counts.downloading + activeUploads) || undefined} />
       </div>
 

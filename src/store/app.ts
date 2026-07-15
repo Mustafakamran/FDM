@@ -31,6 +31,9 @@ export type View =
   | { kind: "transfers"; filter: TransferFilter }
   // "New folders" — root folders recently added to any drive (see NewFoldersView).
   | { kind: "new-folders" }
+  // "Shared Folders" — a folder tree of every shared-with-me folder, grouped per
+  // drive (see SharedFoldersView).
+  | { kind: "shared" }
   | { kind: "review"; accountId: string; target: ReviewTarget }
   // Dashboard / landing: at-a-glance stats (accounts, storage, downloads, files).
   | { kind: "home" }
@@ -97,6 +100,7 @@ interface AppState {
   /** Open the unified Transfers screen (optionally pre-filtered). */
   showTransfers: (filter?: TransferFilter) => void;
   showNewFolders: () => void;
+  showShared: () => void;
   /** Open the GENERAL / WEB DOWNLOADS view (secondary-lane http/ytdlp jobs). */
   showWebDownloads: () => void;
   /** Pin (or, with undefined, clear) one web download in the detail panel. */
@@ -165,6 +169,7 @@ export const useApp = create<AppState>((set, get) => {
   showUploads: () => set((s) => navTo(s, { kind: "transfers", filter: "uploading" })),
 
   showNewFolders: () => set((s) => navTo(s, { kind: "new-folders" })),
+  showShared: () => set((s) => navTo(s, { kind: "shared" })),
 
   showWebDownloads: () => set((s) => navTo(s, { kind: "transfers", filter: "all" })),
 

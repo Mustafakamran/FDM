@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { Home, Download, Upload, Globe, FolderPlus, Settings as SettingsIcon, Sun, Moon, Zap } from "lucide-react";
+import { Home, Download, Upload, Globe, FolderPlus, FolderTree, Settings as SettingsIcon, Sun, Moon, Zap } from "lucide-react";
 import { useApp } from "../store/app";
 import { useUI } from "../store/ui";
 import { useTheme } from "../store/theme";
@@ -29,6 +29,7 @@ export function useCommands(): Command[] {
   const showUploads = useApp((s) => s.showUploads);
   const showWebDownloads = useApp((s) => s.showWebDownloads);
   const showNewFolders = useApp((s) => s.showNewFolders);
+  const showShared = useApp((s) => s.showShared);
   const openSettings = useUI((s) => s.openSettings);
   const theme = useTheme((s) => s.theme);
   const setTheme = useTheme((s) => s.setTheme);
@@ -40,6 +41,7 @@ export function useCommands(): Command[] {
       { id: "downloads", label: "Go to Downloads", icon: <Download size={16} />, keywords: "transfers", run: () => showDownloads("active") },
       { id: "uploads", label: "Go to Uploads", icon: <Upload size={16} />, keywords: "send transfers", run: () => showUploads("active") },
       { id: "new-folders", label: "Go to Recent Folders", icon: <FolderPlus size={16} />, keywords: "recent added new", run: showNewFolders },
+      { id: "shared", label: "Go to Shared Folders", icon: <FolderTree size={16} />, keywords: "shared with me clients drive tree", run: showShared },
       { id: "web-downloads", label: "Go to Web Downloads", icon: <Globe size={16} />, keywords: "url http", run: showWebDownloads },
       { id: "settings", label: "Open Settings", icon: <SettingsIcon size={16} />, keywords: "preferences config", run: openSettings },
       {
@@ -62,7 +64,7 @@ export function useCommands(): Command[] {
       });
     }
     return list;
-  }, [accounts, meta, theme, showHome, showDownloads, showUploads, showWebDownloads, showNewFolders, openSettings, setTheme, selectAccount]);
+  }, [accounts, meta, theme, showHome, showDownloads, showUploads, showWebDownloads, showNewFolders, showShared, openSettings, setTheme, selectAccount]);
 }
 
 /** Filter commands by a query (matches label + keywords + hint). */

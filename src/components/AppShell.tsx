@@ -15,6 +15,7 @@ import { NotificationsPanel } from "./NotificationsPanel";
 import { SettingsDialog } from "./SettingsDialog";
 import { PreviewOverlay } from "./PreviewOverlay";
 import { NewFoldersView } from "./NewFoldersView";
+import { SharedFoldersView } from "./SharedFoldersView";
 import { UpdateBanner } from "./UpdateBanner";
 import { TooltipLayer } from "./ui/Tooltip";
 
@@ -99,6 +100,7 @@ export function AppShell() {
                 takeover), so the normal view always renders underneath it. */}
             {view.kind === "home" && <Dashboard />}
             {view.kind === "new-folders" && <NewFoldersView />}
+            {view.kind === "shared" && <SharedFoldersView />}
             {view.kind === "accounts" && <ConnectView />}
             {view.kind === "transfers" && <TransfersView filter={view.filter} />}
             {view.kind === "review" && <ReviewView accountId={view.accountId} target={view.target} />}
