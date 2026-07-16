@@ -31,8 +31,8 @@ export type View =
   | { kind: "transfers"; filter: TransferFilter }
   // "New folders" — root folders recently added to any drive (see NewFoldersView).
   | { kind: "new-folders" }
-  // "Shared Folders" — a folder tree of every shared-with-me folder, grouped per
-  // drive (see SharedFoldersView).
+  // "Shared Drives" — the client Shared Drives (Team Drives) each connected Google
+  // Drive can access, grouped per drive (see SharedDrivesView).
   | { kind: "shared" }
   | { kind: "review"; accountId: string; target: ReviewTarget }
   // Dashboard / landing: at-a-glance stats (accounts, storage, downloads, files).

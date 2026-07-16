@@ -5,6 +5,7 @@ describe("laneOf", () => {
   it("classifies each primary prefix as primary", () => {
     expect(laneOf("drive_x")).toBe("primary");
     expect(laneOf("drivelink_abc")).toBe("primary");
+    expect(laneOf("teamdrive_aloha")).toBe("primary");
     expect(laneOf("dropbox_y")).toBe("primary");
     expect(laneOf("dropboxlink_z")).toBe("primary");
   });

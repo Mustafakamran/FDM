@@ -79,7 +79,9 @@ pub fn parse_remote(remote: &str) -> Option<Account> {
     // Both present as their provider but use a different fs/download path.
     let provider = match prefix {
         "drive" | "dropbox" => prefix,
-        "drivelink" => "drive",
+        // `drivelink_*` (folder id) and `teamdrive_*` (Shared Drive) are both Drive
+        // remotes rooted by their config; they list plainly, not via shared_with_me.
+        "drivelink" | "teamdrive" => "drive",
         "dropboxlink" => "dropbox",
         _ => return None,
     };
@@ -424,6 +426,7 @@ fn create_drivelink(
     conn: &RcConnection,
     base_account_id: &str,
     label: &str,
+    prefix: &str,
     extra: serde_json::Value,
 ) -> Result<Account, String> {
     if parse_remote(base_account_id).map(|a| a.provider) != Some("drive".to_string()) {
@@ -433,7 +436,7 @@ fn create_drivelink(
     let (token, client_id, client_secret) =
         crate::drive::remote_creds(&dump, base_account_id).ok_or_else(|| "no Drive credentials".to_string())?;
 
-    let remote = remote_name("drivelink", label);
+    let remote = remote_name(prefix, label);
     let mut params = serde_json::Map::new();
     params.insert("token".into(), serde_json::json!(token));
     params.insert("client_id".into(), serde_json::json!(client_id));
@@ -468,7 +471,7 @@ pub fn create_drive_link(
     if folder_id.trim().is_empty() {
         return Err("missing folder id".into());
     }
-    create_drivelink(conn, base_account_id, label, serde_json::json!({ "root_folder_id": folder_id.trim() }))
+    create_drivelink(conn, base_account_id, label, "drivelink", serde_json::json!({ "root_folder_id": folder_id.trim() }))
 }
 
 /// One Google Shared Drive (Team Drive) available to an account.
@@ -535,10 +538,10 @@ pub fn add_drive_link(
 /// An existing `drivelink_*` account already scoped to a matching Drive param
 /// (`root_folder_id` or `team_drive`), if any, so opening the same folder/Shared
 /// Drive twice reuses one link instead of piling up duplicates.
-fn find_drivelink_by_param(conn: &RcConnection, param: &str, value: &str) -> Option<Account> {
+fn find_drivelink_by_param(conn: &RcConnection, prefix: &str, param: &str, value: &str) -> Option<Account> {
     let dump = rc_post(conn, "config/dump", &serde_json::json!({})).ok()?;
     for (name, cfg) in dump.as_object()? {
-        if name.starts_with("drivelink_") && cfg.get(param).and_then(|v| v.as_str()) == Some(value.trim()) {
+        if name.starts_with(prefix) && cfg.get(param).and_then(|v| v.as_str()) == Some(value.trim()) {
             if let Some(a) = parse_remote(name) {
                 return Some(a);
             }
@@ -567,12 +570,14 @@ pub fn get_or_create_team_drive_link(
     if team_drive_id.trim().is_empty() {
         return Err("missing Shared Drive id".into());
     }
-    if let Some(existing) = find_drivelink_by_param(&conn, "team_drive", &team_drive_id) {
+    if let Some(existing) = find_drivelink_by_param(&conn, "teamdrive_", "team_drive", &team_drive_id) {
         return Ok(existing);
     }
-    // Borrow a real drive_* account's token (a drivelink can't grant creds).
+    // Borrow a real drive_* account's token (a link can't grant creds).
     let base = pick_drive_base(&conn, base_account_id);
-    create_drivelink(&conn, &base, &label, serde_json::json!({ "team_drive": team_drive_id.trim() }))
+    // `teamdrive_*` (distinct from `drivelink_*`) so the UI can keep Shared Drives
+    // out of the sidebar account list.
+    create_drivelink(&conn, &base, &label, "teamdrive", serde_json::json!({ "team_drive": team_drive_id.trim() }))
 }
 
 /// The base drive_* account whose token a link borrows: the given account if it's
@@ -610,7 +615,7 @@ pub fn get_or_create_drive_link(
     if folder_id.trim().is_empty() {
         return Err("missing folder id".into());
     }
-    if let Some(existing) = find_drivelink_by_param(&conn, "root_folder_id", &folder_id) {
+    if let Some(existing) = find_drivelink_by_param(&conn, "drivelink_", "root_folder_id", &folder_id) {
         return Ok(existing);
     }
     // A drivelink borrows a real Drive account's token; if the base is itself a
@@ -667,6 +672,11 @@ mod tests {
         let acct = parse_remote("dropbox_my_work").expect("should parse");
         assert_eq!(acct.provider, "dropbox");
         assert_eq!(acct.label, "my_work");
+
+        // A Shared-Drive link presents as a Drive account.
+        let acct = parse_remote("teamdrive_aloha").expect("should parse");
+        assert_eq!(acct.provider, "drive");
+        assert_eq!(acct.label, "aloha");
     }
 
     #[test]

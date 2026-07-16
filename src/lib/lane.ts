@@ -15,7 +15,7 @@
  */
 export type Lane = "primary" | "secondary";
 
-const PRIMARY_PREFIXES = ["drivelink", "drive", "dropboxlink", "dropbox"] as const;
+const PRIMARY_PREFIXES = ["drivelink", "teamdrive", "drive", "dropboxlink", "dropbox"] as const;
 
 /** Classify a download by its account id. Pure; no dependencies. */
 export function laneOf(accountId: string): Lane {

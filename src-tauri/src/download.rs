@@ -213,9 +213,9 @@ pub struct JobStatus {
 /// Drive surfaces "Shared with me"; Dropbox is plain.
 pub fn account_fs(account_id: &str) -> Result<String, String> {
     let acct = parse_remote(account_id).ok_or_else(|| format!("bad account id: {account_id}"))?;
-    // Drive *links* are rooted at a folder id in their config — list them plainly,
-    // not via "Shared with me".
-    if account_id.starts_with("drivelink_") {
+    // Drive *links* (folder id) and Shared-Drive links (team_drive) are rooted by
+    // their config — list them plainly, not via "Shared with me".
+    if account_id.starts_with("drivelink_") || account_id.starts_with("teamdrive_") {
         return Ok(format!("{account_id}:"));
     }
     Ok(match acct.provider.as_str() {
@@ -234,7 +234,7 @@ pub fn account_fs(account_id: &str) -> Result<String, String> {
 /// account actually stores.
 pub fn index_fs(account_id: &str) -> Result<String, String> {
     let acct = parse_remote(account_id).ok_or_else(|| format!("bad account id: {account_id}"))?;
-    if account_id.starts_with("drivelink_") {
+    if account_id.starts_with("drivelink_") || account_id.starts_with("teamdrive_") {
         return Ok(format!("{account_id}:"));
     }
     Ok(match acct.provider.as_str() {
@@ -725,6 +725,7 @@ mod tests {
         assert_eq!(account_fs("drive_x").unwrap(), "drive_x,shared_with_me=true:");
         assert_eq!(account_fs("dropbox_y").unwrap(), "dropbox_y:");
         assert_eq!(account_fs("drivelink_client_a").unwrap(), "drivelink_client_a:");
+        assert_eq!(account_fs("teamdrive_aloha").unwrap(), "teamdrive_aloha:");
         assert!(account_fs("bogus").is_err());
     }
 
@@ -735,6 +736,7 @@ mod tests {
         assert_eq!(index_fs("drive_x").unwrap(), "drive_x,skip_shortcuts=true:");
         assert_eq!(index_fs("dropbox_y").unwrap(), "dropbox_y:");
         assert_eq!(index_fs("drivelink_client_a").unwrap(), "drivelink_client_a:");
+        assert_eq!(index_fs("teamdrive_aloha").unwrap(), "teamdrive_aloha:");
         assert!(index_fs("bogus").is_err());
     }
 

@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { Home, Download, Upload, Globe, FolderPlus, FolderTree, Settings as SettingsIcon, Sun, Moon, Zap } from "lucide-react";
+import { Home, Download, Upload, Globe, FolderPlus, HardDrive, Settings as SettingsIcon, Sun, Moon, Zap } from "lucide-react";
 import { useApp } from "../store/app";
 import { useUI } from "../store/ui";
 import { useTheme } from "../store/theme";
@@ -41,7 +41,7 @@ export function useCommands(): Command[] {
       { id: "downloads", label: "Go to Downloads", icon: <Download size={16} />, keywords: "transfers", run: () => showDownloads("active") },
       { id: "uploads", label: "Go to Uploads", icon: <Upload size={16} />, keywords: "send transfers", run: () => showUploads("active") },
       { id: "new-folders", label: "Go to Recent Folders", icon: <FolderPlus size={16} />, keywords: "recent added new", run: showNewFolders },
-      { id: "shared", label: "Go to Shared Folders", icon: <FolderTree size={16} />, keywords: "shared with me clients drive tree", run: showShared },
+      { id: "shared", label: "Go to Shared Drives", icon: <HardDrive size={16} />, keywords: "shared team drive clients", run: showShared },
       { id: "web-downloads", label: "Go to Web Downloads", icon: <Globe size={16} />, keywords: "url http", run: showWebDownloads },
       { id: "settings", label: "Open Settings", icon: <SettingsIcon size={16} />, keywords: "preferences config", run: openSettings },
       {

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Plus, Home, FolderOpen, ArrowDownUp, AlertCircle, Trash2, Loader2, Link as LinkIcon, FolderPlus, FolderTree, MoreHorizontal, Pencil, FolderSearch, ArrowUp, ArrowDown } from "lucide-react";
+import { Plus, Home, FolderOpen, ArrowDownUp, AlertCircle, Trash2, Loader2, Link as LinkIcon, FolderPlus, HardDrive, MoreHorizontal, Pencil, FolderSearch, ArrowUp, ArrowDown } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useApp } from "../store/app";
 import { useTransfers } from "../store/transfers";
@@ -54,6 +54,7 @@ export function Sidebar() {
 
   useEffect(() => {
     for (const a of accounts) {
+      if (a.id.startsWith("teamdrive_")) continue; // hidden Shared-Drive links
       void fetchStorage(a);
       void fetchEmail(a.id);
     }
@@ -95,8 +96,14 @@ export function Sidebar() {
   );
 
   // User-arranged account order (drag-free: move up/down from the tile menu).
+  // Shared-Drive links (teamdrive_*) are opened from the Shared Drives screen and
+  // must NOT clutter the account list — hide them here (they stay in `accounts`
+  // so their browse view still resolves).
   const accountOrder = useAccountOrder((s) => s.order);
-  const orderedAccounts = useMemo(() => orderAccounts(accounts, accountOrder), [accounts, accountOrder]);
+  const orderedAccounts = useMemo(
+    () => orderAccounts(accounts, accountOrder).filter((a) => !a.id.startsWith("teamdrive_")),
+    [accounts, accountOrder],
+  );
   const onMoveAccount = useCallback(
     (id: string, dir: -1 | 1) => useAccountOrder.getState().move(id, dir, orderedAccounts.map((a) => a.id)),
     [orderedAccounts],
@@ -109,14 +116,14 @@ export function Sidebar() {
         <NavItem icon={<Home size={16} />} label="Home" active={onHome} onClick={() => setView({ kind: "home" })} />
         <NavItem icon={<FolderOpen size={16} />} label="Files" active={onFiles} onClick={goFiles} />
         <NavItem icon={<FolderPlus size={16} />} label="Recent Folders" active={onNewFolders} onClick={showNewFolders} badge={newFolderCount || undefined} />
-        <NavItem icon={<FolderTree size={16} />} label="Shared Folders" active={onShared} onClick={showShared} />
+        <NavItem icon={<HardDrive size={16} />} label="Shared Drives" active={onShared} onClick={showShared} />
         <NavItem icon={<ArrowDownUp size={16} />} label="Transfers" active={onTransfers} onClick={() => showTransfers()} badge={(counts.downloading + activeUploads) || undefined} />
       </div>
 
       {/* Accounts */}
       <div className="mb-2 mt-3.5 flex items-center justify-between px-[18px]">
         <span className="font-mono text-[10.5px] font-semibold tracking-[0.08em] text-[var(--faint)]">ACCOUNTS</span>
-        <span className="font-mono text-[10.5px] font-semibold text-[var(--faint)]">{accounts.length}</span>
+        <span className="font-mono text-[10.5px] font-semibold text-[var(--faint)]">{orderedAccounts.length}</span>
       </div>
 
       <div className="sidebar-scroll min-h-0 flex-1 overflow-y-auto px-3">
