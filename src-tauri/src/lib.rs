@@ -231,6 +231,8 @@ pub fn run() {
             accounts::account_email,
             accounts::add_drive_link,
             accounts::get_or_create_drive_link,
+            accounts::get_or_create_team_drive_link,
+            accounts::list_shared_drives,
             dropbox::add_dropbox_link,
             download::start_download,
             download::upload_start,

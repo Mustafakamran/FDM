@@ -1,17 +1,17 @@
 import { useEffect, useState } from "react";
-import { FolderTree, Folder, FolderSymlink, ChevronRight, Download, Loader2, ExternalLink } from "lucide-react";
+import { FolderTree, Folder, FolderSymlink, ChevronRight, Download, Loader2, ExternalLink, HardDrive } from "lucide-react";
 import { useApp } from "../store/app";
 import { useAccountMeta, accountLabel } from "../store/account-meta";
 import { useBrowse, browseKey } from "../store/browse";
 import { useTransfers } from "../store/transfers";
 import { useToasts } from "../store/toast";
 import { pickDownloadDest } from "../lib/ingest";
-import { openShortcutFolder, downloadShortcutFolder } from "../lib/drive-link";
+import { openShortcutFolder, downloadShortcutFolder, openTeamDrive, downloadTeamDrive } from "../lib/drive-link";
 import { formatBytes } from "../lib/format";
 import { fileType } from "../lib/file-types";
 import { ProviderIcon } from "./icons";
 import { EmptyState } from "./ui";
-import type { Account } from "../lib/tauri/commands";
+import { listSharedDrives, type Account, type SharedDrive } from "../lib/tauri/commands";
 import type { RcItem } from "../lib/rc/browse";
 
 /**
@@ -35,7 +35,7 @@ export function SharedFoldersView() {
           <FolderTree size={22} className="text-[var(--acc)]" /> Shared Folders
         </h1>
         <p className="mt-1 text-[13.5px] text-[var(--mut)]">
-          Every folder shared with you, grouped by drive. Expand to browse; download any folder or file straight from here.
+          Client <span className="text-[var(--ink)]">Shared Drives</span> and everything shared with you, grouped by drive. Open to browse; download any drive, folder, or file straight from here.
         </p>
       </div>
 
@@ -56,36 +56,84 @@ export function SharedFoldersView() {
   );
 }
 
-/** One drive's shared-with-me root, as an expandable tree. */
+/** One drive's Shared Drives (Team Drives) + its "Shared with me" folder tree. */
 function DriveGroup({ account, label }: { account: Account; label: string }) {
   const k = browseKey(account.id, "");
   const children = useBrowse((s) => s.listings[k]);
   const loading = useBrowse((s) => s.loading[k]);
+  const [teamDrives, setTeamDrives] = useState<SharedDrive[] | undefined>(undefined);
 
   useEffect(() => {
     void useBrowse.getState().ensure(account, "");
+    // Shared Drives (Team Drives) live outside "Shared with me" — fetch separately.
+    listSharedDrives(account.id).then(setTeamDrives).catch(() => setTeamDrives([]));
   }, [account]);
 
   const folders = (children ?? []).filter((c) => c.IsDir);
+  const count = (teamDrives?.length ?? 0) + folders.length;
 
   return (
     <div>
       <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-[var(--mut)]">
         <ProviderIcon provider={account.provider} size={13} />
         <span className="truncate">{label}</span>
-        {children && <span className="tnum text-[var(--faint)]">· {folders.length}</span>}
+        {children && teamDrives !== undefined && <span className="tnum text-[var(--faint)]">· {count}</span>}
       </div>
       <div className="overflow-hidden rounded-[13px] border border-[var(--line)] bg-[var(--card)]">
+        {/* Shared Drives (Team Drives) — open by team_drive id. */}
+        {(teamDrives?.length ?? 0) > 0 && (
+          <>
+            <SectionLabel>Shared Drives</SectionLabel>
+            {teamDrives!.map((td) => (
+              <TeamDriveRow key={td.id} account={account} drive={td} />
+            ))}
+          </>
+        )}
+
+        {/* Shared with me. */}
+        {(teamDrives?.length ?? 0) > 0 && <SectionLabel top>Shared with me</SectionLabel>}
         {children === undefined || loading ? (
           <div className="flex items-center gap-2 px-4 py-3 text-[12.5px] text-[var(--faint)]">
             <Loader2 size={14} className="animate-spin" /> Loading shared folders…
           </div>
         ) : folders.length === 0 ? (
-          <div className="px-4 py-3 text-[12.5px] text-[var(--faint)]">No folders shared with this drive.</div>
+          <div className="px-4 py-3 text-[12.5px] text-[var(--faint)]">Nothing shared directly with this drive.</div>
         ) : (
           folders.map((f, i) => <TreeNode key={f.LinkFolderId ?? f.Path} account={account} item={f} depth={0} first={i === 0} />)
         )}
       </div>
+    </div>
+  );
+}
+
+function SectionLabel({ children, top }: { children: React.ReactNode; top?: boolean }) {
+  return (
+    <div className={`bg-[var(--soft)] px-4 py-1.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.07em] text-[var(--faint)] ${top ? "border-t border-[var(--line)]" : ""}`}>
+      {children}
+    </div>
+  );
+}
+
+/** A Shared Drive (Team Drive) row — open in the browser or download the whole thing. */
+function TeamDriveRow({ account, drive }: { account: Account; drive: SharedDrive }) {
+  const download = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const dest = await pickDownloadDest();
+    if (!dest) return;
+    void downloadTeamDrive(account.id, drive.name, drive.id, dest);
+  };
+  return (
+    <div className="group flex items-center gap-2 border-t border-[var(--line)] py-2.5 pr-3 pl-4 transition-colors hover:bg-[var(--soft)]">
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center text-[var(--faint)]">
+        <ExternalLink size={13} />
+      </span>
+      <button onClick={() => void openTeamDrive(account.id, drive.name, drive.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left" data-tip="Open Shared Drive">
+        <HardDrive size={16} className="shrink-0 text-[var(--acc)]" />
+        <span className="truncate text-[13px] font-medium text-[var(--ink)]">{drive.name}</span>
+      </button>
+      <button onClick={download} data-tip="Download Shared Drive" aria-label={`Download ${drive.name}`} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] text-[var(--faint)] opacity-0 transition hover:bg-[var(--line)] hover:text-[var(--ink)] group-hover:opacity-100">
+        <Download size={14} />
+      </button>
     </div>
   );
 }

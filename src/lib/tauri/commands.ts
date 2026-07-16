@@ -174,6 +174,24 @@ export function getOrCreateDriveLink(baseAccountId: string, label: string, folde
   return invoke<Account>("get_or_create_drive_link", { baseAccountId, label, folderId });
 }
 
+/** A Google Shared Drive (Team Drive) available to an account. */
+export interface SharedDrive {
+  id: string;
+  name: string;
+}
+
+/** List the Shared Drives (Team Drives) an account can access. These live outside
+ *  the "Shared with me" namespace, so they don't appear in a normal listing. */
+export function listSharedDrives(accountId: string): Promise<SharedDrive[]> {
+  return invoke<SharedDrive[]>("list_shared_drives", { accountId });
+}
+
+/** Open a Shared Drive (by team_drive id) as an id-rooted linked account, reusing
+ *  an existing link to the same Shared Drive. */
+export function getOrCreateTeamDriveLink(baseAccountId: string, label: string, teamDriveId: string): Promise<Account> {
+  return invoke<Account>("get_or_create_team_drive_link", { baseAccountId, label, teamDriveId });
+}
+
 /**
  * Add a Dropbox shared-folder link as a browseable account. No rclone remote —
  * it lists/downloads via the native Dropbox API, borrowing a connected Dropbox

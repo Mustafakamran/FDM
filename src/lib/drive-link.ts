@@ -1,4 +1,4 @@
-import { getOrCreateDriveLink, type DownloadItem } from "./tauri/commands";
+import { getOrCreateDriveLink, getOrCreateTeamDriveLink, type DownloadItem } from "./tauri/commands";
 import { useApp } from "../store/app";
 import { useTransfers } from "../store/transfers";
 import { useToasts } from "../store/toast";
@@ -26,6 +26,30 @@ export async function openShortcutFolder(baseAccountId: string, label: string, f
 export async function downloadShortcutFolder(baseAccountId: string, label: string, folderId: string, dest: string): Promise<void> {
   try {
     const acct = await getOrCreateDriveLink(baseAccountId, label, folderId);
+    await useApp.getState().loadAccounts();
+    const item: DownloadItem = { path: "", name: label, isDir: true, size: 0, id: "" };
+    useTransfers.getState().enqueue(acct.id, [item], dest);
+    useToasts.getState().push(`Queued ${label}`, "success");
+  } catch (e) {
+    useToasts.getState().push(`Couldn’t download “${label}”: ${e instanceof Error ? e.message : String(e)}`, "error");
+  }
+}
+
+/** Open a Google Shared Drive (Team Drive) as a linked account and browse it. */
+export async function openTeamDrive(baseAccountId: string, label: string, teamDriveId: string): Promise<void> {
+  try {
+    const acct = await getOrCreateTeamDriveLink(baseAccountId, label, teamDriveId);
+    await useApp.getState().loadAccounts();
+    useApp.getState().setView({ kind: "browse", accountId: acct.id, section: "all", path: "" });
+  } catch (e) {
+    useToasts.getState().push(`Couldn’t open “${label}”: ${e instanceof Error ? e.message : String(e)}`, "error");
+  }
+}
+
+/** Queue a whole Shared Drive (Team Drive) for download (its linked root). */
+export async function downloadTeamDrive(baseAccountId: string, label: string, teamDriveId: string, dest: string): Promise<void> {
+  try {
+    const acct = await getOrCreateTeamDriveLink(baseAccountId, label, teamDriveId);
     await useApp.getState().loadAccounts();
     const item: DownloadItem = { path: "", name: label, isDir: true, size: 0, id: "" };
     useTransfers.getState().enqueue(acct.id, [item], dest);

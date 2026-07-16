@@ -417,39 +417,100 @@ pub async fn account_email(
     .map_err(|e| e.to_string())?
 }
 
-/// Core: create a `drivelink_*` remote rooted at a folder id, reusing a connected
-/// Drive account's token. Shared by the `add_drive_link` command and the BDM agent.
-pub fn create_drive_link(
+/// Core: create a `drivelink_*` remote reusing a connected Drive account's token,
+/// with extra Drive params — `root_folder_id` for a folder, or `team_drive` for a
+/// Shared Drive. Shared by the folder-link and Shared-Drive paths + the BDM agent.
+fn create_drivelink(
     conn: &RcConnection,
     base_account_id: &str,
     label: &str,
-    folder_id: &str,
+    extra: serde_json::Value,
 ) -> Result<Account, String> {
     if parse_remote(base_account_id).map(|a| a.provider) != Some("drive".to_string()) {
         return Err("base account must be a Google Drive account".into());
-    }
-    if folder_id.trim().is_empty() {
-        return Err("missing folder id".into());
     }
     let dump = rc_post(conn, "config/dump", &serde_json::json!({}))?;
     let (token, client_id, client_secret) =
         crate::drive::remote_creds(&dump, base_account_id).ok_or_else(|| "no Drive credentials".to_string())?;
 
     let remote = remote_name("drivelink", label);
-    let params = serde_json::json!({
-        "name": remote,
-        "type": "drive",
-        "parameters": {
-            "token": token,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "root_folder_id": folder_id.trim(),
-            "scope": "drive.readonly"
-        },
-        "opt": { "nonInteractive": true, "all": true }
-    });
-    rc_post(conn, "config/create", &params)?;
+    let mut params = serde_json::Map::new();
+    params.insert("token".into(), serde_json::json!(token));
+    params.insert("client_id".into(), serde_json::json!(client_id));
+    params.insert("client_secret".into(), serde_json::json!(client_secret));
+    params.insert("scope".into(), serde_json::json!("drive.readonly"));
+    if let Some(obj) = extra.as_object() {
+        for (k, v) in obj {
+            params.insert(k.clone(), v.clone());
+        }
+    }
+    rc_post(
+        conn,
+        "config/create",
+        &serde_json::json!({
+            "name": remote,
+            "type": "drive",
+            "parameters": params,
+            "opt": { "nonInteractive": true, "all": true }
+        }),
+    )?;
     parse_remote(&remote).ok_or_else(|| format!("bad remote name: {remote}"))
+}
+
+/// Create a `drivelink_*` remote rooted at a folder id. Shared by `add_drive_link`
+/// and the BDM agent.
+pub fn create_drive_link(
+    conn: &RcConnection,
+    base_account_id: &str,
+    label: &str,
+    folder_id: &str,
+) -> Result<Account, String> {
+    if folder_id.trim().is_empty() {
+        return Err("missing folder id".into());
+    }
+    create_drivelink(conn, base_account_id, label, serde_json::json!({ "root_folder_id": folder_id.trim() }))
+}
+
+/// One Google Shared Drive (Team Drive) available to an account.
+#[derive(serde::Serialize)]
+pub struct SharedDrive {
+    pub id: String,
+    pub name: String,
+}
+
+/// List the Shared Drives (Team Drives) an account can access, via rclone's
+/// `drives` backend command. These live OUTSIDE the "Shared with me" namespace, so
+/// they never show up in a normal listing — each is browsed by rooting a link at
+/// its team_drive id (see get_or_create_team_drive_link).
+#[tauri::command]
+pub fn list_shared_drives(rclone: tauri::State<RcloneState>, account_id: String) -> Result<Vec<SharedDrive>, String> {
+    let conn = rclone
+        .connection
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or_else(|| "rclone not started".to_string())?;
+    let resp = rc_post(
+        &conn,
+        "backend/command",
+        &serde_json::json!({ "command": "drives", "fs": format!("{account_id}:"), "arg": [], "opt": {} }),
+    )?;
+    // rclone wraps the command output under `result` (an array of {id,name,kind}).
+    let arr = resp
+        .get("result")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .or_else(|| resp.as_array().cloned())
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for d in &arr {
+        let id = d.get("id").and_then(|x| x.as_str()).unwrap_or("");
+        let name = d.get("name").and_then(|x| x.as_str()).unwrap_or(id);
+        if !id.is_empty() {
+            out.push(SharedDrive { id: id.to_string(), name: name.to_string() });
+        }
+    }
+    Ok(out)
 }
 
 /// Add a Google Drive shared-folder link as a browseable account, rooted at the
@@ -471,22 +532,60 @@ pub fn add_drive_link(
     create_drive_link(&conn, &base_account_id, &label, &folder_id)
 }
 
-/// An existing `drivelink_*` account already rooted at `folder_id`, if any, so
-/// opening the same Drive shortcut twice reuses one linked folder instead of
-/// piling up duplicates. Matches on the remote's `root_folder_id`.
-fn find_drive_link_by_root(conn: &RcConnection, folder_id: &str) -> Option<Account> {
+/// An existing `drivelink_*` account already scoped to a matching Drive param
+/// (`root_folder_id` or `team_drive`), if any, so opening the same folder/Shared
+/// Drive twice reuses one link instead of piling up duplicates.
+fn find_drivelink_by_param(conn: &RcConnection, param: &str, value: &str) -> Option<Account> {
     let dump = rc_post(conn, "config/dump", &serde_json::json!({})).ok()?;
-    let obj = dump.as_object()?;
-    for (name, cfg) in obj {
-        if name.starts_with("drivelink_")
-            && cfg.get("root_folder_id").and_then(|v| v.as_str()) == Some(folder_id.trim())
-        {
+    for (name, cfg) in dump.as_object()? {
+        if name.starts_with("drivelink_") && cfg.get(param).and_then(|v| v.as_str()) == Some(value.trim()) {
             if let Some(a) = parse_remote(name) {
                 return Some(a);
             }
         }
     }
     None
+}
+
+/// Open a Google Shared Drive (Team Drive) as a browseable/downloadable account by
+/// rooting a `drivelink_*` remote at its `team_drive` id, reusing an existing link
+/// to the same Shared Drive if one exists. Team Drives are invisible to a normal
+/// listing (they're not in "Shared with me"); this is how FDM reaches them.
+#[tauri::command]
+pub fn get_or_create_team_drive_link(
+    rclone: tauri::State<RcloneState>,
+    base_account_id: String,
+    label: String,
+    team_drive_id: String,
+) -> Result<Account, String> {
+    let conn = rclone
+        .connection
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or_else(|| "rclone not started".to_string())?;
+    if team_drive_id.trim().is_empty() {
+        return Err("missing Shared Drive id".into());
+    }
+    if let Some(existing) = find_drivelink_by_param(&conn, "team_drive", &team_drive_id) {
+        return Ok(existing);
+    }
+    // Borrow a real drive_* account's token (a drivelink can't grant creds).
+    let base = pick_drive_base(&conn, base_account_id);
+    create_drivelink(&conn, &base, &label, serde_json::json!({ "team_drive": team_drive_id.trim() }))
+}
+
+/// The base drive_* account whose token a link borrows: the given account if it's
+/// a real Drive account, else any connected `drive_*`.
+fn pick_drive_base(conn: &RcConnection, account_id: String) -> String {
+    if account_id.starts_with("drivelink_") {
+        rc_post(conn, "config/dump", &serde_json::json!({}))
+            .ok()
+            .and_then(|d| d.as_object()?.keys().find(|k| k.starts_with("drive_")).cloned())
+            .unwrap_or(account_id)
+    } else {
+        account_id
+    }
 }
 
 /// Open a Google Drive folder (by id) as a browseable/downloadable linked-folder
@@ -511,25 +610,13 @@ pub fn get_or_create_drive_link(
     if folder_id.trim().is_empty() {
         return Err("missing folder id".into());
     }
-    if let Some(existing) = find_drive_link_by_root(&conn, &folder_id) {
+    if let Some(existing) = find_drivelink_by_param(&conn, "root_folder_id", &folder_id) {
         return Ok(existing);
     }
     // A drivelink borrows a real Drive account's token; if the base is itself a
     // drivelink (e.g. opening a shortcut found inside a linked folder), fall back
     // to any connected `drive_*` account so create_drive_link's provider check passes.
-    let base = if base_account_id.starts_with("drivelink_") {
-        rc_post(&conn, "config/dump", &serde_json::json!({}))
-            .ok()
-            .and_then(|d| {
-                d.as_object()?
-                    .keys()
-                    .find(|k| k.starts_with("drive_"))
-                    .cloned()
-            })
-            .unwrap_or(base_account_id)
-    } else {
-        base_account_id
-    };
+    let base = pick_drive_base(&conn, base_account_id);
     create_drive_link(&conn, &base, &label, &folder_id)
 }
 
