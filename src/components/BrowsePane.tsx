@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, RefreshCw, Star, ChevronDown, ChevronLeft, ChevronRight, CornerLeftUp, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X, Pause, HardDrive, Link2, FolderPlus } from "lucide-react";
+import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, Columns3, RefreshCw, Star, ChevronDown, ChevronLeft, ChevronRight, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X, Pause, HardDrive, Link2, FolderPlus, MoreHorizontal, Tag, PanelRight, PanelRightClose } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
 import { isVideo, isPreviewable, extOf } from "../lib/review";
@@ -27,7 +27,7 @@ import { SharePopover } from "./SharePopover";
 import { fileType } from "../lib/file-types";
 import { itemAt } from "../lib/account-index";
 import { IndexProgress } from "./IndexProgress";
-import { formatBytes, formatDate, formatSpeed } from "../lib/format";
+import { formatBytes, formatDate } from "../lib/format";
 import { sortItems, DEFAULT_SORT, type SortField, type SortState } from "../lib/sort";
 import { computeVirtualRange } from "../lib/virtual-rows";
 import type { RcItem } from "../lib/rc/browse";
@@ -39,7 +39,16 @@ import { openShortcutFolder, downloadShortcutFolder } from "../lib/drive-link";
 import { loadJson, saveJson } from "../lib/persisted";
 
 const SORT_KEY = "browse_sort";
+const VIEW_KEY = "browse_view";
+const PREVIEW_KEY = "browse_preview";
 const EMPTY: RcItem[] = [];
+
+/** Explorer view mode — Finder-style columns, a flat list, or a grid of cards. */
+type ViewMode = "columns" | "list" | "grid";
+function loadView(): ViewMode {
+  const v = loadJson<ViewMode>(VIEW_KEY, "list");
+  return v === "columns" || v === "grid" ? v : "list";
+}
 const EMPTY_STARS: string[] = [];
 
 /** Restore the persisted sort (field + direction + folders-first), falling back to the default. */
@@ -76,8 +85,8 @@ function SizeCell({ item, folderSize, onCalcSize }: { item: RcItem; folderSize: 
   return (
     <button
       onClick={() => onCalcSize(item.Path)}
-      data-tip={folderSize.kind === "error" ? "Couldn’t size this folder. Click to retry." : "Calculate folder size on demand"}
-      className="rounded-[6px] px-1.5 py-0.5 text-xs text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--accent)]"
+      data-tip={folderSize.kind === "error" ? "Retry sizing" : "Calculate size"}
+      className="-mr-1.5 rounded-[6px] px-1.5 py-0.5 text-xs text-[var(--text-3)] hover:bg-[var(--hover)] hover:text-[var(--accent)]"
     >
       {folderSize.kind === "error" ? "Retry" : "Calculate"}
     </button>
@@ -91,7 +100,7 @@ function FolderBadge({ hasDownloads, visited }: { hasDownloads: boolean; visited
   if (hasDownloads) {
     return (
       <span
-        data-tip="Downloaded from this folder"
+        data-tip="Has downloads"
         className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[var(--dl)] ring-2 ring-[var(--surface)]"
       >
         <Check size={8} strokeWidth={3} className="text-white" />
@@ -101,7 +110,7 @@ function FolderBadge({ hasDownloads, visited }: { hasDownloads: boolean; visited
   if (visited) {
     return (
       <span
-        data-tip="Opened — nothing downloaded yet"
+        data-tip="Opened"
         className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-[var(--text-3)] ring-2 ring-[var(--surface)]"
       />
     );
@@ -112,17 +121,21 @@ function FolderBadge({ hasDownloads, visited }: { hasDownloads: boolean; visited
 /** Stable-callback props every row/grid-item shares — identical shape so both
  * FileRow and FileGridItem can take the same object. */
 interface RowActions {
-  toggle: (p: string, shiftKey?: boolean) => void;
+  toggle: (p: string, shiftKey?: boolean, list?: RcItem[]) => void;
   openFolder: (p: string) => void;
   /** Open a folder ROW: routes a Drive folder-shortcut to its id-rooted linked
    *  folder, else navigates by path. Use for folder clicks (openFolder is still
    *  used for path-only nav like breadcrumbs). */
   openDir: (item: RcItem) => void;
-  /** Single-click: lightweight preview overlay. */
+  /** Single-click a file: show it in the right preview panel. */
+  focus: (item: RcItem) => void;
+  /** Lightweight preview overlay (from the panel / actions). */
   openPreview: (item: RcItem) => void;
   /** Right-click → Review: the full reviewer screen. */
   openReview: (item: RcItem) => void;
   download: (item: RcItem) => void;
+  /** Open the copy/share-link popover for this item. */
+  share: (item: RcItem) => void;
   indexFolder: (p: string) => void;
   calcSize: (p: string) => void;
   toggleStar: (p: string) => void;
@@ -141,10 +154,11 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const canGoForward = useApp((s) => s.forward.length > 0);
   const goBack = useApp((s) => s.goBack);
   const goForward = useApp((s) => s.goForward);
-  const goUp = useApp((s) => s.goUp);
   const openReview = useApp((s) => s.openReview);
   const entry = useIndex((s) => s.byAccount[account.id]);
   const enqueue = useTransfers((s) => s.enqueue);
+  // Active downloads for THIS account — powers the status-footer "N DOWNLOADING".
+  const activeDownloads = useTransfers((s) => s.jobs).filter((j) => j.accountId === account.id && !j.finished && !j.cancelled).length;
   const toast = useToasts((s) => s.push);
   const q = useSearch((s) => s.q);
   const starred = useStarred((s) => s.byAccount[account.id]) ?? EMPTY_STARS;
@@ -184,16 +198,32 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const selectionForAccount = useSelection((s) => s.byAccount[account.id]);
   const selected = useMemo(() => new Set(Object.keys(selectionForAccount ?? {})), [selectionForAccount]);
   const lastToggledPath = useRef<string | null>(null);
-  const [grid, setGrid] = useState(false);
+  const [view, setViewMode] = useState<ViewMode>(loadView);
+  const [showPreview, setShowPreview] = useState<boolean>(() => loadJson<boolean>(PREVIEW_KEY, true));
+  useEffect(() => { saveJson(PREVIEW_KEY, showPreview); }, [showPreview]);
+  const grid = view === "grid";
+  const columns = view === "columns";
+  useEffect(() => { saveJson(VIEW_KEY, view); }, [view]);
+  // Right preview panel target: the last single-clicked item (file or folder).
+  // Cleared on folder navigation so the panel reflects where you are.
+  const [focused, setFocused] = useState<RcItem | null>(null);
+  useEffect(() => { setFocused(null); }, [path, section, account.id]);
   const [sort, setSort] = useState<SortState>(loadSort);
-  const [sortOpen, setSortOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  // Drag-and-drop upload target while an OS drag hovers the browser: null = not
+  // dragging, "" = the current folder (empty area), else the hovered folder's
+  // path. Drives the drop highlight + where a dropped file/folder uploads to.
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const dropTargetRef = useRef<string | null>(null);
 
   // List-view virtualization: a folder full of raw footage can hold thousands
   // of files, and rendering every row as a real DOM node is exactly what was
   // freezing the app on large folders. Only the rows in (or near) the
   // viewport are ever mounted — see the `computeVirtualRange` call below.
   const bodyRef = useRef<HTMLDivElement>(null);
+  // Outer view container (list/grid/columns) — the drag-drop hit-test zone, so a
+  // drop works in every view, not just the virtualized list body.
+  const viewRef = useRef<HTMLDivElement>(null);
   const scrollRaf = useRef<number | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(0);
@@ -289,6 +319,17 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const dateOf = (i: RcItem) => (i.IsDir ? (aggOf(i.Path)?.latest || i.ModTime) : i.ModTime);
   // A folder's recursive file count, once the index has captured its subtree.
   const fileCountOf = (i: RcItem): number | undefined => (i.IsDir ? aggOf(i.Path)?.fileCount : undefined);
+  // Recursive totals for a folder: ALL files + ALL subfolders anywhere beneath
+  // it (not just direct children). Pulled from the crawl index; `indexed` is
+  // false until the subtree has been captured (then the panel offers to index).
+  const folderStats = (p: string): { files: number; folders: number; indexed: boolean } => {
+    if (!folderIndexed(p)) return { files: 0, folders: 0, indexed: false };
+    const files = aggOf(p)?.fileCount ?? 0;
+    const pre = p ? `${p}/` : "";
+    let folders = 0;
+    if (index) for (const k in index.agg) if (k.startsWith(pre) && k !== p) folders++;
+    return { files, folders, indexed: true };
+  };
   const indexFolder = (folderPath: string) => void useIndex.getState().indexFolder(account, folderPath);
 
   // Delete (with confirm). Cloud deletes go to the provider Trash (recoverable).
@@ -355,6 +396,14 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     }
   }, [folderView, path, account]);
 
+  // Restore the saved index from disk on every account open (no crawl) — so
+  // folder sizes/counts persist across restarts and updates without re-indexing,
+  // regardless of the auto-index setting. Only an explicit Re-index (or a new
+  // upload's targeted per-folder index) re-crawls.
+  useEffect(() => {
+    void useIndex.getState().ensureLoaded(account);
+  }, [account.id]);
+
   // Auto-index the drive in the background (when enabled) so every folder's
   // total SIZE + FILE COUNT is available by default. ensure() is idempotent
   // (serves from memory/disk, only crawls once) and runs on background threads,
@@ -388,14 +437,26 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const base: RcItem[] = useMemo(() => {
     // Search + Recent are LIVE server-side queries (no crawl). Starred reads from
     // an index ONLY if one was already built on demand (never auto-crawled).
-    if (q.trim()) return serverItems;
-    if (section === "recent") return serverItems;
-    if (section === "starred") return index ? (starred.map((p) => itemAt(index, p)).filter(Boolean) as RcItem[]) : EMPTY;
-    // all / shared: the LIVE listing is the source of truth (instant). If it's
-    // empty or failed, fall back to an already-built index so folders still show.
-    if (liveItems && liveItems.length) return liveItems;
-    if (indexItems && indexItems.length) return indexItems;
-    return liveItems ?? EMPTY;
+    const pick = () => {
+      if (q.trim()) return serverItems;
+      if (section === "recent") return serverItems;
+      if (section === "starred") return index ? (starred.map((p) => itemAt(index, p)).filter(Boolean) as RcItem[]) : EMPTY;
+      // all / shared: the LIVE listing is the source of truth (instant). If it's
+      // empty or failed, fall back to an already-built index so folders still show.
+      if (liveItems && liveItems.length) return liveItems;
+      if (indexItems && indexItems.length) return indexItems;
+      return liveItems ?? EMPTY;
+    };
+    // Drop exact double-listings of the SAME object (same provider id). Genuinely
+    // distinct files that share a name (Drive allows this) are kept — they're
+    // real duplicates in the drive, not a listing artifact.
+    const seen = new Set<string>();
+    return pick().filter((it) => {
+      const k = it.ID ? `id:${it.ID}` : `p:${it.Path}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
   }, [index, q, section, starred, indexItems, liveItems, serverItems]);
 
   const items = useMemo(() => {
@@ -417,7 +478,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     if (h && h > 0 && Math.abs(h - rowHeight) > 0.5) setRowHeight(h);
   }, [items, grid, rowHeight]);
 
-  const virtualRange = grid ? { start: 0, end: items.length } : computeVirtualRange(scrollTop, viewportH, rowHeight, items.length);
+  const virtualRange = grid || columns ? { start: 0, end: items.length } : computeVirtualRange(scrollTop, viewportH, rowHeight, items.length);
   const visibleItems = items.slice(virtualRange.start, virtualRange.end);
 
   // Consume a pending highlight for THIS folder: select the item, scroll it into
@@ -450,17 +511,19 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const globalSize = totalSelectedSize(selectionAll);
   const globalDrives = selectedDriveCount(selectionAll);
 
-  const entryFor = (p: string): SelectedItem | null => {
-    const it = items.find((i) => i.Path === p);
-    return it ? { item: it, size: sizeOf(it) } : null;
-  };
-
   // Shift+Click selects everything between the last-toggled row and this one
   // (inclusive) — the conventional Finder/Explorer/Gmail range-select. Only a
-  // ref, not state: it doesn't need to trigger a render on its own.
-  function toggle(p: string, shiftKey?: boolean) {
+  // ref, not state: it doesn't need to trigger a render on its own. `list`
+  // scopes the lookup + range to a specific listing (the columns view passes
+  // the clicked column's items; list/grid default to the current folder).
+  function toggle(p: string, shiftKey?: boolean, list?: RcItem[]) {
+    const scope = list ?? items;
+    const entryFor = (pp: string): SelectedItem | null => {
+      const it = scope.find((i) => i.Path === pp);
+      return it ? { item: it, size: sizeOf(it) } : null;
+    };
     if (shiftKey && lastToggledPath.current) {
-      const paths = items.map((i) => i.Path);
+      const paths = scope.map((i) => i.Path);
       const a = paths.indexOf(lastToggledPath.current);
       const b = paths.indexOf(p);
       if (a !== -1 && b !== -1) {
@@ -484,12 +547,6 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     !searching &&
     !account.id.startsWith("dropboxlink_") &&
     (account.provider === "drive" || account.provider === "dropbox");
-  // The in-folder strip is in-progress feedback: show active + failed/cancelled,
-  // but not completed successes (those live on the Uploads screen now). A toast
-  // already announces each success.
-  const myUploads = useTransfers((s) => s.uploads).filter(
-    (u) => u.accountId === account.id && !(u.finished && u.success),
-  );
   async function pickUpload(directory: boolean) {
     setUploadOpen(false);
     const picked = await open(directory ? { directory: true, multiple: true } : { multiple: true });
@@ -498,6 +555,55 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     if (paths.length === 0) return;
     void useTransfers.getState().startUploads(account.id, paths, path);
   }
+
+  // OS drag-and-drop upload: drop files/folders onto the browser to upload them.
+  // Hovering a folder row targets THAT folder; the empty area targets the current
+  // folder. Tauri reports the pointer in physical px, so divide by devicePixelRatio
+  // before elementFromPoint (which wants CSS px).
+  useEffect(() => {
+    if (!canUpload) return;
+    let un: (() => void) | undefined;
+    let disposed = false;
+    void (async () => {
+      try {
+        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+        const unlisten = await getCurrentWebview().onDragDropEvent((ev) => {
+          const pl = ev.payload;
+          if (pl.type === "leave") { dropTargetRef.current = null; setDropTarget(null); return; }
+          if (pl.type === "enter" || pl.type === "over") {
+            // Tauri reports the pointer in PHYSICAL px on some platforms and
+            // already-logical px on others. elementFromPoint wants CSS (logical)
+            // px, so only scale an axis down when it exceeds the CSS viewport
+            // (i.e. it's physical) — dividing an already-logical coord would
+            // land the hit-test on the wrong (higher/left) row.
+            const dpr = window.devicePixelRatio || 1;
+            const x = pl.position.x > window.innerWidth ? pl.position.x / dpr : pl.position.x;
+            const y = pl.position.y > window.innerHeight ? pl.position.y / dpr : pl.position.y;
+            const el = document.elementFromPoint(x, y) as HTMLElement | null;
+            const body = viewRef.current;
+            if (!el || !body || !body.contains(el)) {
+              if (dropTargetRef.current !== null) { dropTargetRef.current = null; setDropTarget(null); }
+              return;
+            }
+            const folderEl = el.closest("[data-folder-path]") as HTMLElement | null;
+            const tgt = folderEl ? (folderEl.getAttribute("data-folder-path") ?? "") : "";
+            if (tgt !== dropTargetRef.current) { dropTargetRef.current = tgt; setDropTarget(tgt); }
+            return;
+          }
+          if (pl.type === "drop") {
+            const tgt = dropTargetRef.current;
+            dropTargetRef.current = null; setDropTarget(null);
+            if (tgt === null) return; // dropped outside the browser body
+            const paths = (pl.paths ?? []).filter((p): p is string => typeof p === "string");
+            if (paths.length === 0) return;
+            void useTransfers.getState().startUploads(account.id, paths, tgt === "" ? path : tgt);
+          }
+        });
+        if (disposed) unlisten(); else un = unlisten;
+      } catch { /* not running inside a Tauri webview (e.g. tests) */ }
+    })();
+    return () => { disposed = true; un?.(); dropTargetRef.current = null; setDropTarget(null); };
+  }, [canUpload, account.id, path]);
 
   // Queue a set of items, always prompting for a destination folder.
   async function enqueueItems(its: RcItem[]) {
@@ -555,9 +661,11 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
       item.LinkFolderId
         ? void openShortcutFolder(account.id, item.Name, item.LinkFolderId)
         : setView({ kind: "browse", accountId: account.id, section: "all", path: item.Path }),
+    focus: (item) => setFocused(item),
     openPreview: (item) => usePreview.getState().open(account.id, reviewTarget(item)),
     openReview: (item) => openReview(account.id, reviewTarget(item)),
     download: (item) => void enqueueItems([item]),
+    share: (item) => setShare(item),
     indexFolder,
     calcSize,
     toggleStar: (p) => toggleStar(account.id, p),
@@ -565,12 +673,14 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     contextMenu: (x, y, item) => setMenu({ x, y, item }),
   };
   const rowActions = useRef<RowActions>({
-    toggle: (p, shiftKey) => actionsRef.current.toggle(p, shiftKey),
+    toggle: (p, shiftKey, list) => actionsRef.current.toggle(p, shiftKey, list),
     openFolder: (p) => actionsRef.current.openFolder(p),
     openDir: (item) => actionsRef.current.openDir(item),
+    focus: (item) => actionsRef.current.focus(item),
     openPreview: (item) => actionsRef.current.openPreview(item),
     openReview: (item) => actionsRef.current.openReview(item),
     download: (item) => actionsRef.current.download(item),
+    share: (item) => actionsRef.current.share(item),
     indexFolder: (p) => actionsRef.current.indexFolder(p),
     calcSize: (p) => actionsRef.current.calcSize(p),
     toggleStar: (p) => actionsRef.current.toggleStar(p),
@@ -586,16 +696,19 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
       out.push({ label: "Open", icon: FolderOpen, onClick: () => actionsRef.current.openDir(item) });
       out.push({ label: "Calculate size", icon: Calculator, onClick: () => calcSize(item.Path) });
       out.push({ label: folderIndexed(item.Path) ? "Re-index folder" : "Index folder", icon: FolderSearch, disabled: showCrawl, onClick: () => indexFolder(item.Path) });
-      // Manual workflow status — mark (or, by clicking the active one, clear).
+      // Manual workflow status — nested submenu keeps the parent menu tidy.
+      // Clicking the active status clears it.
       const cur = folderStatusMap?.[item.Path];
       const STATUS_ICON = { downloading: Download, on_hold: Pause, downloaded: Check, copied: HardDrive } as const;
-      FOLDER_STATUS_ORDER.forEach((st, i) => {
-        out.push({
-          label: cur === st ? `${FOLDER_STATUS_META[st].label} ✓` : `Mark ${FOLDER_STATUS_META[st].label}`,
+      out.push({
+        label: cur ? `Status: ${FOLDER_STATUS_META[cur].label}` : "Status",
+        icon: cur ? STATUS_ICON[cur] : Tag,
+        separator: true,
+        children: FOLDER_STATUS_ORDER.map((st) => ({
+          label: cur === st ? `${FOLDER_STATUS_META[st].label} ✓` : FOLDER_STATUS_META[st].label,
           icon: STATUS_ICON[st],
-          separator: i === 0,
           onClick: () => setFolderStatus(account.id, item.Path, cur === st ? null : st),
-        });
+        })),
       });
     } else if (isPreviewable(item.Name)) {
       out.push({ label: "Preview", icon: Eye, onClick: () => usePreview.getState().open(account.id, reviewTarget(item)) });
@@ -621,14 +734,6 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     : folderView
       ? liveLoading && items.length === 0
       : false;
-
-  const SORTS: { key: SortField; label: string }[] = [
-    { key: "name", label: "Name" },
-    { key: "modified", label: "Date modified" },
-    { key: "size", label: "Size" },
-    { key: "type", label: "Type" },
-  ];
-  const sortLabel = SORTS.find((s) => s.key === sort.field)?.label ?? "Name";
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -664,7 +769,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             onClick={goBack}
             disabled={!canGoBack}
             aria-label="Back"
-            data-tip="Back (Alt+←)"
+            data-tip="Back"
             className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] transition-colors hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
           >
             <ChevronLeft size={17} />
@@ -673,43 +778,89 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             onClick={goForward}
             disabled={!canGoForward}
             aria-label="Forward"
-            data-tip="Forward (Alt+→)"
+            data-tip="Forward"
             className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] transition-colors hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
           >
             <ChevronRight size={17} />
           </button>
-          <button
-            onClick={goUp}
-            disabled={!path}
-            aria-label="Up one folder"
-            data-tip="Up one folder"
-            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[var(--mut)] transition-colors hover:bg-[var(--soft)] hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
-          >
-            <CornerLeftUp size={16} />
-          </button>
         </div>
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-[15px]">
-          <ProviderIcon provider={account.provider} size={18} />
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden px-1 py-1.5 font-mono text-[11.5px]">
+          <ProviderIcon provider={account.provider} size={13} />
           {q.trim() ? (
-            <span className="ml-1 text-[var(--text-2)]">Search results for “{q}”</span>
+            <span className="truncate text-[var(--mut)]">Search results for “{q}”</span>
           ) : folderView ? (
-            <>
-              <button className="ml-1 font-medium text-[var(--text)] hover:text-[var(--accent)]" onClick={() => setView({ kind: "browse", accountId: account.id, section, path: "" })}>
+            <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+              <button
+                className={`min-w-0 shrink-[2] truncate hover:text-[var(--ink)] ${segments.length === 0 ? "font-semibold text-[var(--ink)]" : "text-[var(--mut)]"}`}
+                onClick={() => setView({ kind: "browse", accountId: account.id, section, path: "" })}
+                data-tip={displayLabel}
+              >
                 {displayLabel}
               </button>
-              {segments.map((seg, i) => (
-                <span key={i} className="flex items-center gap-1.5 text-[var(--text-2)]">
-                  <ChevronDown size={14} className="-rotate-90 text-[var(--text-3)]" />
-                  <button className="hover:text-[var(--text)]" onClick={() => setView({ kind: "browse", accountId: account.id, section, path: segments.slice(0, i + 1).join("/") })}>
-                    {seg}
+              {/* Very deep paths collapse to root / … / current so the bar never
+                  overflows. "…" jumps to the parent folder (full path in its
+                  tooltip). Shallower paths show every segment. */}
+              {segments.length > 4 && (
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <span className="text-[var(--faint)]">/</span>
+                  <button
+                    className="text-[var(--mut)] hover:text-[var(--ink)]"
+                    data-tip={segments.slice(0, -1).join(" / ")}
+                    aria-label="Parent folders"
+                    onClick={() => setView({ kind: "browse", accountId: account.id, section, path: segments.slice(0, -1).join("/") })}
+                  >
+                    …
                   </button>
                 </span>
-              ))}
-            </>
+              )}
+              {(segments.length > 4 ? [segments.length - 1] : segments.map((_, i) => i)).map((i) => {
+                const seg = segments[i];
+                const last = i === segments.length - 1;
+                return (
+                  <span key={i} className="flex min-w-0 items-center gap-1.5">
+                    <span className="text-[var(--faint)]">/</span>
+                    <button
+                      className={`truncate hover:text-[var(--ink)] ${last ? "font-semibold text-[var(--ink)]" : "max-w-[160px] shrink-[2] text-[var(--mut)]"}`}
+                      onClick={() => setView({ kind: "browse", accountId: account.id, section, path: segments.slice(0, i + 1).join("/") })}
+                      data-tip={seg}
+                    >
+                      {seg}
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
           ) : (
-            <span className="ml-1 font-medium text-[var(--text)]">{SECTION_TITLE[section]}</span>
+            <span className="truncate font-semibold text-[var(--ink)]">{SECTION_TITLE[section]}</span>
           )}
         </div>
+      </div>
+
+      {/* Second toolbar row: section pills left, action controls right — the
+          controls live here so the breadcrumb above gets the full width. */}
+      <div className="flex items-center gap-3 px-6 pb-3">
+        {!q.trim() && (
+          <div className="flex items-center gap-1.5">
+            {/* "Shared with me" pill dropped — the Shared Drives screen covers it. */}
+            {(Object.keys(SECTION_TITLE) as Section[]).filter((k) => k !== "shared").map((k) => {
+              const on = section === k;
+              return (
+                <button
+                  key={k}
+                  onClick={() => setView({ kind: "browse", accountId: account.id, section: k, path: "" })}
+                  className={`h-8 rounded-full border px-[15px] text-[12.5px] font-semibold ${
+                    on
+                      ? "border-[var(--acc)] bg-[var(--acc)] text-[var(--onacc)]"
+                      : "border-[var(--line)] bg-[var(--card)] text-[var(--mut)] hover:border-[var(--line2)]"
+                  }`}
+                >
+                  {SECTION_TITLE[k]}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex-1" />
 
         {/* Upload local files/folders into the current folder (files land where
             you're looking). Hidden on read-only sources (Dropbox links). */}
@@ -717,7 +868,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           <div className="relative">
             <button
               onClick={() => setUploadOpen((o) => !o)}
-              data-tip="Upload into this folder"
+              data-tip="Upload here"
               className="flex items-center gap-2 rounded-[8px] border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
             >
               <Upload size={15} /> Upload <ChevronDown size={13} />
@@ -725,7 +876,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             {uploadOpen && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setUploadOpen(false)} />
-                <div className="absolute right-0 top-9 z-20 w-44 overflow-hidden rounded-[8px] border border-[var(--border-strong)] bg-[var(--card)] py-1 shadow-[var(--shadow-lg)]">
+                <div className="animate-pop absolute right-0 top-9 z-20 w-44 overflow-hidden rounded-[8px] border border-[var(--border-strong)] bg-[var(--card)] py-1 shadow-[var(--shadow-lg)]" style={{ transformOrigin: "top right" }}>
                   <button
                     onClick={() => void pickUpload(false)}
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
@@ -744,96 +895,51 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           </div>
         )}
 
-        {/* Sort: field picker + asc/desc toggle (+ folders-first). No overflow-hidden
-            on the group — it would clip the dropdown; edge buttons are rounded instead. */}
-        <div className="flex rounded-[8px] border border-[var(--border)]">
-          <div className="relative">
-            <button
-              onClick={() => setSortOpen((o) => !o)}
-              title="Sort by"
-              className="flex items-center gap-2 rounded-l-[7px] px-3 py-1.5 text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
-            >
-              {sortLabel} <ChevronDown size={14} />
-            </button>
-            {sortOpen && (
-              <>
-                {/* click-outside backdrop */}
-                <div className="fixed inset-0 z-10" onClick={() => setSortOpen(false)} />
-              <div className="absolute right-0 top-9 z-20 w-44 overflow-hidden rounded-[8px] border border-[var(--border-strong)] bg-[var(--card)] py-1 shadow-[var(--shadow-lg)]">
-                {SORTS.map((o) => (
-                  <button
-                    key={o.key}
-                    onClick={() => {
-                      setSort((s) => ({ ...s, field: o.key }));
-                      setSortOpen(false);
-                    }}
-                    title={`Sort by ${o.label.toLowerCase()}`}
-                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
-                  >
-                    {o.label} {sort.field === o.key && <Check size={14} className="text-[var(--accent)]" />}
-                  </button>
-                ))}
-                <div className="my-1 border-t border-[var(--border)]" />
-                <button
-                  onClick={() => {
-                    setSort((s) => ({ ...s, foldersFirst: !s.foldersFirst }));
-                    setSortOpen(false);
-                  }}
-                  title="Group folders above files regardless of sort field"
-                  className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
-                >
-                  <span className="flex items-center gap-2"><FolderTree size={14} /> Folders first</span>
-                  {sort.foldersFirst && <Check size={14} className="text-[var(--accent)]" />}
-                </button>
-              </div>
-              </>
-            )}
-          </div>
-          <button
-            onClick={() => setSort((s) => ({ ...s, dir: s.dir === "asc" ? "desc" : "asc" }))}
-            title={sort.dir === "asc" ? "Ascending (click for descending)" : "Descending (click for ascending)"}
-            aria-label={`Sort direction: ${sort.dir === "asc" ? "ascending" : "descending"}`}
-            className="rounded-r-[7px] border-l border-[var(--border)] px-2 py-1.5 text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
-          >
-            {sort.dir === "asc" ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
-          </button>
-        </div>
+        {/* Sorting moved into the list-view column headers (click a header to
+            sort, click again to flip). Only folders-first stays as a toggle. */}
+        <button
+          onClick={() => setSort((s) => ({ ...s, foldersFirst: !s.foldersFirst }))}
+          title="Folders first"
+          aria-label="Folders first"
+          className={`rounded-[8px] border border-[var(--border)] p-1.5 transition-colors hover:text-[var(--text)] ${sort.foldersFirst ? "text-[var(--text)]" : "text-[var(--text-3)]"}`}
+        >
+          <FolderTree size={15} />
+        </button>
 
-        <div className="flex overflow-hidden rounded-[8px] border border-[var(--border)]">
-          <button className={`px-2 py-1.5 ${!grid ? "bg-[var(--hover)] text-[var(--text)]" : "text-[var(--text-3)]"}`} onClick={() => setGrid(false)} aria-label="List view"><ListIcon size={15} /></button>
-          <button className={`px-2 py-1.5 ${grid ? "bg-[var(--hover)] text-[var(--text)]" : "text-[var(--text-3)]"}`} onClick={() => setGrid(true)} aria-label="Grid view"><LayoutGrid size={15} /></button>
+        <div className="flex rounded-[9px] border border-[var(--border)] bg-[var(--soft)] p-0.5">
+          {([
+            { m: "columns" as const, Icon: Columns3, label: "Columns" },
+            { m: "list" as const, Icon: ListIcon, label: "List" },
+            { m: "grid" as const, Icon: LayoutGrid, label: "Grid" },
+          ]).map(({ m, Icon, label }) => (
+            <button
+              key={m}
+              onClick={() => setViewMode(m)}
+              aria-label={`${label} view`}
+              title={`${label} view`}
+              className={`flex h-[26px] items-center gap-1.5 rounded-[7px] px-2.5 text-[11.5px] font-semibold transition-colors ${view === m ? "bg-[var(--card)] text-[var(--ink)] shadow-[var(--shadow)]" : "text-[var(--faint)] hover:text-[var(--mut)]"}`}
+            >
+              <Icon size={13} /> <span className="hidden lg:inline">{label}</span>
+            </button>
+          ))}
         </div>
-        <button className="rounded-[8px] border border-[var(--border)] p-1.5 text-[var(--text-3)] hover:text-[var(--text)] disabled:opacity-50" onClick={() => useIndex.getState().recrawl(account)} disabled={showCrawl} aria-label="Re-index" title="Re-index (full refresh, picks up new/changed files)"><RefreshCw size={15} className={showCrawl ? "animate-spin" : ""} /></button>
+        <button
+          className={`rounded-[8px] border border-[var(--border)] p-1.5 transition-colors hover:text-[var(--text)] ${showPreview ? "text-[var(--text)]" : "text-[var(--text-3)]"}`}
+          onClick={() => setShowPreview((v) => !v)}
+          aria-label={showPreview ? "Hide preview" : "Show preview"}
+          title={showPreview ? "Hide preview" : "Show preview"}
+        >
+          {showPreview ? <PanelRightClose size={15} /> : <PanelRight size={15} />}
+        </button>
+        <button className="rounded-[8px] border border-[var(--border)] p-1.5 text-[var(--text-3)] hover:text-[var(--text)] disabled:opacity-50" onClick={() => useIndex.getState().recrawl(account)} disabled={showCrawl} aria-label="Re-index" title="Re-index"><RefreshCw size={15} className={showCrawl ? "animate-spin" : ""} /></button>
         {folderView && (
-          <button className="rounded-[8px] border border-[var(--border)] p-1.5 text-[var(--text-3)] transition-colors hover:text-[var(--text)]" onClick={() => setNewFolder("")} aria-label="New folder" title="Create a new folder here"><FolderPlus size={15} /></button>
+          <button className="rounded-[8px] border border-[var(--border)] p-1.5 text-[var(--text-3)] transition-colors hover:text-[var(--text)]" onClick={() => setNewFolder("")} aria-label="New folder" title="New folder"><FolderPlus size={15} /></button>
         )}
       </div>
 
-      {/* Section pills — All Files / Recent / Starred / Shared (moved here from the
-          sidebar to match the redesign; each navigates the current account). */}
-      {!q.trim() && (
-        <div className="flex items-center gap-1.5 px-6 pb-3">
-          {(Object.keys(SECTION_TITLE) as Section[]).map((k) => {
-            const on = section === k;
-            return (
-              <button
-                key={k}
-                onClick={() => setView({ kind: "browse", accountId: account.id, section: k, path: "" })}
-                className={`h-8 rounded-full border px-[15px] text-[12.5px] font-semibold ${
-                  on
-                    ? "border-[var(--acc)] bg-[var(--acc)] text-[var(--onacc)]"
-                    : "border-[var(--line)] bg-[var(--card)] text-[var(--mut)] hover:border-[var(--line2)]"
-                }`}
-              >
-                {SECTION_TITLE[k]}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Body */}
-      <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto px-6 pb-2" data-testid="file-list">
+      {/* Main area: file view + right preview panel */}
+      <div ref={viewRef} className="flex min-h-0 flex-1 border-t border-[var(--line)]">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {status === "error" && (
           <div className="mb-3 flex items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--error)]">
             <AlertCircle size={16} /> {entry?.error}
@@ -866,7 +972,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           </div>
         )}
 
-        {spinner ? (
+        {spinner && !(columns && folderView && !q.trim()) ? (
           <FileListSkeleton />
         ) : serverState === "error" ? (
           <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-sm text-[var(--mut)]">
@@ -876,9 +982,16 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-sm text-[var(--mut)]">
             Recent isn’t available for Dropbox. Use <span className="font-semibold text-[var(--ink)]">Search</span> or browse <span className="font-semibold text-[var(--ink)]">All Files</span>.
           </div>
+        ) : columns && folderView && !q.trim() ? (
+          // Columns handles its own loading/empty per column, so parent columns
+          // stay visible while a newly opened folder loads. Search/Recent/Starred
+          // results always render as a flat list.
+          <ColumnsView account={account} rootLabel={displayLabel} path={path} focusedPath={focused?.Path ?? null} selectedPaths={selected} folderSizeState={folderSizeState} dropTarget={dropTarget} actions={rowActions} visitedSet={visitedSet} folderHasDownloads={folderHasDownloads} folderStatusMap={folderStatusMap} dlStatusMap={dlStatusMap} />
         ) : items.length === 0 ? (
-          <BrowseEmptyState q={q} section={section} />
-        ) : grid ? (
+          <div className="flex-1 px-6 pt-4"><BrowseEmptyState q={q} section={section} /></div>
+        ) : (
+          <div ref={bodyRef} className="@container min-h-0 flex-1 overflow-auto px-6 pb-2" data-testid="file-list">
+          {grid ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3 py-2">
             {items.map((item, gi) => (
               <FileGridItem
@@ -886,6 +999,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                 item={item}
                 gridIndex={gi}
                 isSelected={selected.has(item.Path)}
+                isDropTarget={item.IsDir && item.Path === dropTarget}
                 blink={item.Path === blinkPath}
                 folderSize={folderSizeState(item.Path)}
                 folderCount={fileCountOf(item)}
@@ -902,10 +1016,25 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             <thead>
               <tr className="sticky top-0 z-10 bg-[var(--surface)] text-left text-xs text-[var(--text-3)]">
                 <th className="w-9 py-2.5 pl-1"><input type="checkbox" aria-label="Select all" checked={allSelected} onChange={() => (allSelected ? useSelection.getState().clearAccount(account.id) : useSelection.getState().add(account.id, items.map((i) => ({ item: i, size: sizeOf(i) }))))} /></th>
-                <th className="py-2.5 font-medium">Name</th>
-                <th className="w-44 whitespace-nowrap py-2.5 font-medium">Modified</th>
-                <th className="w-28 whitespace-nowrap py-2.5 text-right font-medium">Size</th>
-                <th className="w-28 py-2.5 pl-6 font-medium">Type</th>
+                {/* Clickable headers: click to sort by that column, click again
+                    to flip ascending/descending. Arrow marks the active field. */}
+                {([
+                  { f: "name" as const, label: "Name", th: "py-2.5 font-medium" },
+                  { f: "modified" as const, label: "Modified", th: "hidden w-32 whitespace-nowrap py-2.5 font-medium lg:table-cell" },
+                  { f: "size" as const, label: "Size", th: "w-24 whitespace-nowrap py-2.5 text-right font-medium" },
+                  { f: "type" as const, label: "Type", th: "hidden w-24 py-2.5 pl-6 font-medium lg:table-cell" },
+                ]).map(({ f, label, th }) => (
+                  <th key={f} className={th}>
+                    <button
+                      onClick={() => setSort((s) => (s.field === f ? { ...s, dir: s.dir === "asc" ? "desc" : "asc" } : { ...s, field: f, dir: "asc" }))}
+                      title={`Sort by ${label.toLowerCase()}`}
+                      className={`inline-flex items-center gap-1 font-medium transition-colors hover:text-[var(--text)] ${sort.field === f ? "text-[var(--text)]" : ""}`}
+                    >
+                      {label}
+                      {sort.field === f && (sort.dir === "asc" ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
+                    </button>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -922,6 +1051,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
                   key={item.ID ?? item.Path}
                   item={item}
                   isSelected={selected.has(item.Path)}
+                  isDropTarget={item.IsDir && item.Path === dropTarget}
                   blink={item.Path === blinkPath}
                   isStarred={starred.includes(item.Path)}
                   dateStr={formatDate(dateOf(item))}
@@ -943,76 +1073,72 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
               )}
             </tbody>
           </table>
+          )}
+          </div>
+        )}
+
+        {/* Drop overlay — shown while dragging over the background (upload to the
+            CURRENT folder). Hovering a folder row highlights that row instead. */}
+        {dropTarget === "" && (
+          <div className="animate-fade pointer-events-none absolute inset-2 z-30 flex items-center justify-center rounded-[14px] border-2 border-dashed border-[var(--acc)] bg-[var(--accw)]">
+            <div className="animate-pop flex items-center gap-2.5 rounded-[13px] border border-[var(--line2)] bg-[var(--card)] px-4 py-2.5 shadow-[var(--shadow-lg)]">
+              <FileUp size={15} className="text-[var(--acc)]" />
+              <span className="text-[12.5px] font-semibold text-[var(--ink)]">
+                Drop to upload to <span className="text-[var(--acc)]">{segments.length ? segments[segments.length - 1] : displayLabel}</span>
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Floating selection pill — spans EVERY drive's selection. */}
+        {globalCount > 0 && (
+          <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3.5 rounded-[13px] border border-[var(--line2)] bg-[var(--card)] py-2 pl-4 pr-2.5 shadow-[var(--shadow-lg)]">
+            <span className="whitespace-nowrap font-mono text-[11.5px] text-[var(--ink)]">
+              <span className="font-semibold">{globalCount} selected</span>
+              <span className="text-[var(--faint)]"> · {formatBytes(globalSize)}{globalDrives > 1 ? ` · ${globalDrives} drives` : ""}</span>
+            </span>
+            <button onClick={() => useSelection.getState().clearAll()} className="text-[12px] font-semibold text-[var(--mut)] hover:text-[var(--ink)]">Clear</button>
+            {selected.size > 0 && (
+              <button onClick={() => setPendingDelete(items.filter((i) => selected.has(i.Path)))} className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--mut)] hover:text-[var(--err)]">
+                <Trash2 size={13} /> Delete
+              </button>
+            )}
+            <button onClick={download} className="flex items-center gap-2 rounded-[9px] bg-[var(--acc)] px-3.5 py-1.5 text-[12.5px] font-semibold text-[var(--onacc)] hover:opacity-90">
+              <Download size={14} /> Download{globalDrives > 1 ? " all" : ""}
+            </button>
+          </div>
         )}
       </div>
 
-      {/* Active uploads strip — live progress per upload; successful ones
-          auto-clear (a toast announces them), failed ones stay dismissable. */}
-      {myUploads.length > 0 && (
-        <div className="border-t border-[var(--border)] bg-[var(--surface)] px-6 py-2">
-          {myUploads.map((u) => {
-            const pct = u.totalBytes > 0 ? Math.min(100, (u.bytes / u.totalBytes) * 100) : 0;
-            const failed = u.finished && !u.success && !u.cancelled;
-            return (
-              <div key={u.jobId} className="flex items-center gap-3 py-1 text-sm">
-                <Upload size={14} className={failed ? "shrink-0 text-[var(--err)]" : "shrink-0 text-[var(--dl)]"} />
-                <span className="min-w-0 max-w-[40%] truncate text-[var(--text)]">{u.name}</span>
-                {failed ? (
-                  <span className="min-w-0 flex-1 truncate text-xs text-[var(--err)]" title={u.error}>
-                    {u.error || "Upload failed"}
-                  </span>
-                ) : u.cancelled ? (
-                  <span className="flex-1 text-xs text-[var(--text-3)]">Cancelled</span>
-                ) : (
-                  <>
-                    <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--soft)]">
-                      <div
-                        className="h-full rounded-full bg-[var(--dl)] transition-[width] duration-500"
-                        style={{ width: u.totalBytes > 0 ? `${pct}%` : "100%" }}
-                      />
-                    </div>
-                    <span className="tnum shrink-0 text-xs text-[var(--text-2)]">
-                      {u.totalBytes > 0 ? `${Math.floor(pct)}%` : formatBytes(u.bytes)}
-                      {u.speed > 0 ? ` · ${formatSpeed(u.speed)}` : ""}
-                    </span>
-                  </>
-                )}
-                <button
-                  onClick={() =>
-                    u.finished || u.cancelled
-                      ? useTransfers.getState().dismissUpload(u.jobId)
-                      : void useTransfers.getState().cancel(u.jobId)
-                  }
-                  aria-label={u.finished || u.cancelled ? `Dismiss ${u.name}` : `Cancel upload of ${u.name}`}
-                  data-tip={u.finished || u.cancelled ? "Dismiss" : "Cancel upload"}
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-[var(--faint)] hover:bg-[var(--hover)] hover:text-[var(--err)]"
-                >
-                  <X size={13} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
+      {/* Right preview panel — toggleable so it doesn't obstruct browsing */}
+      {showPreview && (
+      <PreviewPanel
+        item={focused}
+        rootLabel={displayLabel}
+        currentFolderName={segments.length ? segments[segments.length - 1] : displayLabel}
+        size={focused ? sizeOf(focused) : 0}
+        dateStr={focused ? formatDate(dateOf(focused)) : ""}
+        parentName={segments.length ? segments[segments.length - 1] : "ROOT"}
+        isStarred={focused ? starred.includes(focused.Path) : false}
+        dl={focused ? dlStatusMap.get(focused.Path) : undefined}
+        folderSize={focused && focused.IsDir ? folderSizeState(focused.Path) : undefined}
+        folderStats={folderStats(focused && focused.IsDir ? focused.Path : path)}
+        onIndexFolder={() => indexFolder(focused && focused.IsDir ? focused.Path : path)}
+        indexing={showCrawl}
+        actions={rowActions}
+      />
       )}
+      </div>
 
-      {/* Selection bar — spans EVERY drive's selection (persists across drives). */}
-      {globalCount > 0 && (
-        <div className="flex items-center justify-between gap-4 border-t border-[var(--border)] bg-[var(--surface)] px-6 py-3">
-          <span className="text-sm text-[var(--text-2)]">
-            Selected: <span className="tnum text-[var(--text)]">{globalCount}</span> item{globalCount === 1 ? "" : "s"} · <span className="tnum text-[var(--text)]">{formatBytes(globalSize)}</span>
-            {globalDrives > 1 && <span className="text-[var(--faint)]"> · across {globalDrives} drives</span>}
-          </span>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" onClick={() => useSelection.getState().clearAll()}>Clear</Button>
-            {selected.size > 0 && (
-              <Button variant="ghost" onClick={() => setPendingDelete(items.filter((i) => selected.has(i.Path)))}>
-                <Trash2 size={16} /> Delete{globalDrives > 1 ? " here" : ""}
-              </Button>
-            )}
-            <Button variant="download" onClick={download}><Download size={16} /> Download{globalDrives > 1 ? " all" : ""}</Button>
-          </div>
-        </div>
-      )}
+      {/* Status footer */}
+      <div className="flex items-center justify-between border-t border-[var(--line)] px-4 py-1.5 font-mono text-[10px]">
+        <span className="text-[var(--faint)]">
+          {items.filter((i) => i.IsDir).length} FOLDERS · {items.filter((i) => !i.IsDir).length} FILES
+        </span>
+        <span style={{ color: activeDownloads > 0 ? "var(--acc)" : "var(--faint)" }}>
+          {activeDownloads > 0 ? `${activeDownloads} DOWNLOADING` : "IDLE"}
+        </span>
+      </div>
 
       {/* Delete confirmation (cloud deletes go to the provider Trash — recoverable). */}
       {pendingDelete && pendingDelete.length > 0 && (
@@ -1072,10 +1198,11 @@ function RowAction({
     <button
       onClick={onClick}
       disabled={disabled}
+      data-rowbtn
       data-tip={tip}
       aria-label={label}
-      className={`flex h-7 w-7 items-center justify-center rounded-[6px] transition-opacity hover:bg-[var(--soft)] disabled:opacity-40 ${
-        active ? "text-[var(--acc)] opacity-100" : `text-[var(--faint)] opacity-0 group-hover:opacity-100 ${hover}`
+      className={`flex h-6 w-6 items-center justify-center rounded-[6px] hover:bg-[var(--soft)] disabled:opacity-40 ${
+        active ? "text-[var(--acc)]" : `text-[var(--faint)] ${hover}`
       }`}
     >
       {children}
@@ -1093,6 +1220,7 @@ function RowAction({
 const FileRow = memo(function FileRow({
   item,
   isSelected,
+  isDropTarget,
   blink,
   isStarred,
   dateStr,
@@ -1108,6 +1236,7 @@ const FileRow = memo(function FileRow({
 }: {
   item: RcItem;
   isSelected: boolean;
+  isDropTarget: boolean;
   blink: boolean;
   isStarred: boolean;
   dateStr: string;
@@ -1156,15 +1285,18 @@ const FileRow = memo(function FileRow({
     </>
   );
   const nameCell = item.IsDir ? (
-    <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => actions.openDir(item)}>{body}</button>
-  ) : previewableFlag ? (
-    <button className="flex min-w-0 flex-1 items-center gap-3 text-left" data-tip="Preview (right-click → Review)" onClick={() => actions.openPreview(item)}>{body}</button>
+    <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={(e) => (e.shiftKey ? actions.toggle(item.Path, true) : actions.openDir(item))}>{body}</button>
   ) : (
-    <span className="flex min-w-0 flex-1 items-center gap-3">{body}</span>
+    <button
+      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+      onClick={(e) => (e.shiftKey ? actions.toggle(item.Path, true) : actions.focus(item))}
+      onDoubleClick={() => previewableFlag && actions.openPreview(item)}
+    >{body}</button>
   );
+  const tabBg = isSelected || isDropTarget ? "var(--accw)" : "var(--hover)";
 
   return (
-    <tr data-row onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }} className={`group border-b border-[var(--border)]/60 transition-colors duration-150 ${blink ? "animate-flash" : isSelected ? "bg-[var(--card)]" : "hover:bg-[var(--hover)]"}`}>
+    <tr data-row data-folder-path={item.IsDir ? item.Path : undefined} onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }} className={`group border-b border-[var(--border)]/60 transition-colors duration-100 ${isDropTarget || isSelected ? "bg-[var(--accw)]" : blink ? "animate-flash" : "hover:bg-[var(--hover)]"}`}>
       <td className="w-9 py-2.5 pl-1">
         <input
           type="checkbox"
@@ -1174,12 +1306,38 @@ const FileRow = memo(function FileRow({
           onClick={(e) => actions.toggle(item.Path, e.shiftKey)}
         />
       </td>
-      <td className="min-w-0 py-1.5 pr-3">
+      <td className="relative min-w-0 py-1.5 pr-3">
         <div className="flex min-w-0 items-center gap-3">
           {nameCell}
-          {/* Fixed action cluster — reserved width (opacity, not display),
-              so revealing it on hover never shifts the layout. */}
-          <div className="flex shrink-0 items-center gap-0.5">
+          {/* Actions on hover, chosen by the LIST's own width (container query,
+              so the preview panel eating space flips it too — not the viewport).
+              Wide enough: inline at the row's right on the same line. Narrow: a
+              static flyout tab above the row's right edge (merged hover bg +
+              fillets) so the name keeps its width. */}
+          <div className="hidden shrink-0 items-center gap-0.5 @2xl:group-hover:flex">
+            <ActionButtons />
+          </div>
+          <div
+            className="absolute bottom-full right-2 z-20 hidden items-center gap-0.5 whitespace-nowrap rounded-t-[9px] px-1.5 pb-1.5 pt-1 group-hover:flex @2xl:!hidden"
+            style={{ background: tabBg }}
+          >
+            <span aria-hidden className="pointer-events-none absolute bottom-0 left-[-10px] h-2.5 w-2.5" style={{ background: `radial-gradient(circle 10px at 0 0, transparent 10px, ${tabBg} 10px)` }} />
+            <span aria-hidden className="pointer-events-none absolute bottom-0 right-[-10px] h-2.5 w-2.5" style={{ background: `radial-gradient(circle 10px at 100% 0, transparent 10px, ${tabBg} 10px)` }} />
+            <ActionButtons />
+          </div>
+        </div>
+      </td>
+      <td className="hidden whitespace-nowrap py-2 text-[var(--text-3)] lg:table-cell">{dateStr}</td>
+      <td className="tnum whitespace-nowrap py-2 text-right text-[var(--text-2)]">
+        <SizeCell item={item} folderSize={folderSize} onCalcSize={actions.calcSize} />
+      </td>
+      <td className="hidden py-2.5 pl-6 text-[var(--text-3)] lg:table-cell">{ft.label}</td>
+    </tr>
+  );
+
+  function ActionButtons() {
+    return (
+      <>
             {previewableFlag && (
               <RowAction onClick={() => actions.openPreview(item)} tip="Preview" label={`Preview ${item.Name}`}>
                 <Eye size={14} />
@@ -1193,11 +1351,14 @@ const FileRow = memo(function FileRow({
             <RowAction onClick={() => actions.download(item)} tip="Download" label={`Download ${item.Name}`} green>
               <Download size={14} />
             </RowAction>
+            <RowAction onClick={() => actions.share(item)} tip="Copy link" label={`Copy link to ${item.Name}`}>
+              <Link2 size={14} />
+            </RowAction>
             {item.IsDir && (
               <RowAction
                 onClick={() => actions.indexFolder(item.Path)}
                 disabled={showCrawl}
-                tip={folderIndexedFlag ? "Re-index this folder" : "Index this folder"}
+                tip={folderIndexedFlag ? "Re-index folder" : "Index folder"}
                 label={`Index ${item.Name}`}
               >
                 <FolderSearch size={14} />
@@ -1211,23 +1372,17 @@ const FileRow = memo(function FileRow({
             >
               <Star size={14} fill={isStarred ? "currentColor" : "none"} />
             </RowAction>
-            <RowAction onClick={() => actions.deleteOne(item)} tip="Delete (moves to Trash)" label={`Delete ${item.Name}`} danger>
+            <RowAction onClick={() => actions.deleteOne(item)} tip="Move to Trash" label={`Delete ${item.Name}`} danger>
               <Trash2 size={14} />
             </RowAction>
-          </div>
-        </div>
-      </td>
-      <td className="whitespace-nowrap py-2 text-[var(--text-3)]">{dateStr}</td>
-      <td className="tnum whitespace-nowrap py-2 text-right text-[var(--text-2)]">
-        <SizeCell item={item} folderSize={folderSize} onCalcSize={actions.calcSize} />
-      </td>
-      <td className="py-2.5 pl-6 text-[var(--text-3)]">{ft.label}</td>
-    </tr>
-  );
+      </>
+    );
+  }
 },
 (prev, next) =>
   prev.item === next.item &&
   prev.isSelected === next.isSelected &&
+  prev.isDropTarget === next.isDropTarget &&
   prev.blink === next.blink &&
   prev.isStarred === next.isStarred &&
   prev.dateStr === next.dateStr &&
@@ -1245,6 +1400,7 @@ const FileRow = memo(function FileRow({
 const FileGridItem = memo(function FileGridItem({
   item,
   isSelected,
+  isDropTarget,
   blink,
   folderSize,
   folderCount,
@@ -1257,6 +1413,7 @@ const FileGridItem = memo(function FileGridItem({
 }: {
   item: RcItem;
   isSelected: boolean;
+  isDropTarget: boolean;
   blink: boolean;
   folderSize: FolderSizeState;
   folderCount: number | undefined;
@@ -1270,9 +1427,10 @@ const FileGridItem = memo(function FileGridItem({
   const ft = fileType(item.Name, item.IsDir);
   return (
     <div
+      data-folder-path={item.IsDir ? item.Path : undefined}
       onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }}
       style={{ animationDelay: `${Math.min(gridIndex, 16) * 22}ms` }}
-      className={`animate-item relative flex flex-col items-center gap-3 rounded-[11px] border p-5 transition-colors duration-150 ${blink ? "animate-flash border-[var(--acc)]" : isSelected ? "border-[var(--accent)] bg-[var(--card)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
+      className={`animate-item relative flex flex-col items-center gap-3 rounded-[11px] border p-5 transition-colors duration-100 ${isDropTarget || isSelected ? "border-[var(--acc)] bg-[var(--accw)]" : blink ? "animate-flash border-[var(--acc)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
     >
       <input
         type="checkbox"
@@ -1284,7 +1442,8 @@ const FileGridItem = memo(function FileGridItem({
       />
       <button
         className="flex flex-col items-center gap-2 text-center"
-        onClick={() => (item.IsDir ? actions.openDir(item) : isPreviewable(item.Name) && actions.openPreview(item))}
+        onClick={(e) => (e.shiftKey ? actions.toggle(item.Path, true) : item.IsDir ? actions.openDir(item) : actions.focus(item))}
+        onDoubleClick={() => !item.IsDir && isPreviewable(item.Name) && actions.openPreview(item)}
       >
         <span className="relative flex items-center justify-center">
           <ft.Icon size={30} style={{ color: ft.color }} />
@@ -1305,6 +1464,7 @@ const FileGridItem = memo(function FileGridItem({
 (prev, next) =>
   prev.item === next.item &&
   prev.isSelected === next.isSelected &&
+  prev.isDropTarget === next.isDropTarget &&
   prev.blink === next.blink &&
   prev.folderCount === next.folderCount &&
   prev.visited === next.visited &&
@@ -1317,6 +1477,266 @@ const FileGridItem = memo(function FileGridItem({
 
 /** Shimmer placeholder rows shown while a folder/index loads, shaped like the
  *  file table so the transition to real rows reads as instant. */
+/** One TYPE/SIZE/… row in the preview panel. */
+function PvRow({ k, v, mono, wrap }: { k: string; v: string; mono?: boolean; wrap?: boolean }) {
+  return (
+    <div className={`flex justify-between gap-3 text-[11.5px] ${wrap ? "" : "items-center"}`}>
+      <span className="shrink-0 font-mono text-[10px] tracking-[0.06em] text-[var(--faint)]">{k}</span>
+      <span className={`${mono ? "font-mono text-[10.5px]" : ""} text-[var(--mut)] ${wrap ? "break-all text-right" : "truncate"}`}>{v}</span>
+    </div>
+  );
+}
+
+/** Right preview panel — a focused file's details + actions, or a folder card. */
+function PreviewPanel({
+  item, rootLabel, currentFolderName, size, dateStr, parentName, isStarred, dl, folderSize, folderStats, onIndexFolder, indexing, actions,
+}: {
+  item: RcItem | null;
+  rootLabel: string;
+  currentFolderName: string;
+  size: number;
+  dateStr: string;
+  parentName: string;
+  isStarred: boolean;
+  dl: DlStatus | undefined;
+  folderSize: FolderSizeState | undefined;
+  folderStats: { files: number; folders: number; indexed: boolean };
+  onIndexFolder: () => void;
+  indexing: boolean;
+  actions: RowActions;
+}) {
+  if (item && !item.IsDir) {
+    const ft = fileType(item.Name, false);
+    const previewable = isPreviewable(item.Name);
+    const kind = isVideo(item.Name) ? "VIDEO PREVIEW" : previewable ? "PREVIEW" : (extOf(item.Name).replace(/^\./, "").toUpperCase() || "FILE");
+    const downloading = dl?.state === "downloading";
+    return (
+      <div className="flex w-[296px] shrink-0 flex-col overflow-y-auto border-l border-[var(--line)]">
+        <div className="px-4 pt-4">
+          <div
+            className="relative flex aspect-video flex-col items-center justify-center gap-2 overflow-hidden rounded-[11px] border border-[var(--line)]"
+            style={{ background: "repeating-linear-gradient(45deg,var(--soft) 0 10px,var(--card) 10px 20px)" }}
+          >
+            {previewable ? (
+              <button onClick={() => actions.openPreview(item)} className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--acc)] hover:opacity-90" aria-label="Preview">
+                <Play size={15} className="text-[var(--onacc)]" fill="currentColor" />
+              </button>
+            ) : (
+              <ft.Icon size={26} style={{ color: ft.color }} />
+            )}
+            <span className="font-mono text-[9.5px] tracking-[0.1em] text-[var(--faint)]">{kind}</span>
+          </div>
+          <div className="mt-3 break-all text-[13.5px] font-semibold text-[var(--ink)]">{item.Name}</div>
+          <div className="mt-0.5 font-mono text-[10px] text-[var(--faint)]">{rootLabel.toUpperCase()} · {parentName.toUpperCase()}</div>
+        </div>
+        <div className="flex flex-col gap-2 px-4 py-3">
+          <PvRow k="TYPE" v={ft.label} />
+          <PvRow k="SIZE" v={size > 0 ? formatBytes(size) : "—"} mono />
+          <PvRow k="MODIFIED" v={dateStr || "—"} mono />
+          <PvRow k="PATH" v={"/" + item.Path} mono wrap />
+        </div>
+        <div className="mt-auto flex flex-col gap-2 px-4 pb-4">
+          {downloading && dl && (
+            <div className="flex items-center gap-2">
+              <span className="block h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--soft)]"><span className="block h-full rounded-full bg-[var(--acc)]" style={{ width: `${dl.pct ?? 0}%` }} /></span>
+              <span className="font-mono text-[10.5px] font-semibold text-[var(--acc)]">{dl.pct ?? 0}%</span>
+            </div>
+          )}
+          <button onClick={() => actions.download(item)} className="flex items-center justify-center gap-2 rounded-[11px] bg-[var(--acc)] py-2.5 text-[12.5px] font-semibold text-[var(--onacc)] hover:opacity-90">
+            <Download size={14} /> Download
+          </button>
+          <div className="flex gap-2">
+            {previewable && (
+              <button onClick={() => actions.openReview(item)} className="flex flex-1 items-center justify-center gap-1.5 rounded-[11px] border border-[var(--line2)] py-2 text-[12px] font-semibold text-[var(--mut)] hover:text-[var(--ink)]">
+                <Eye size={13} /> Review
+              </button>
+            )}
+            <button onClick={() => actions.toggleStar(item.Path)} className="flex flex-1 items-center justify-center gap-1.5 rounded-[11px] border border-[var(--line2)] py-2 text-[12px] font-semibold text-[var(--mut)] hover:text-[var(--ink)]">
+              <Star size={13} fill={isStarred ? "currentColor" : "none"} className={isStarred ? "text-[var(--warn)]" : ""} /> Star
+            </button>
+          </div>
+          <button onClick={() => actions.share(item)} className="flex items-center justify-center gap-1.5 rounded-[11px] border border-[var(--line2)] py-2 text-[12px] font-semibold text-[var(--mut)] hover:text-[var(--ink)]">
+            <Link2 size={13} /> Copy link
+          </button>
+        </div>
+      </div>
+    );
+  }
+  // Folder focused, or nothing focused → show the current/selected folder with
+  // its RECURSIVE totals (all files + all subfolders anywhere beneath it).
+  const name = item ? item.Name : currentFolderName;
+  const sizeStr = folderSize?.kind === "known" && folderSize.bytes > 0 ? formatBytes(folderSize.bytes) : folderSize?.kind === "loading" ? "…" : "—";
+  const fmt = (n: number) => n.toLocaleString();
+  return (
+    <div className="flex w-[296px] shrink-0 flex-col overflow-y-auto border-l border-[var(--line)]">
+      <div className="flex flex-col items-center gap-2.5 px-6 pt-6 text-center">
+        <span className="flex h-16 w-16 items-center justify-center rounded-[16px] bg-[var(--accw)]"><Folder size={28} className="text-[var(--acc)]" /></span>
+        <div className="break-all text-[14px] font-semibold text-[var(--ink)]">{name}</div>
+        <div className="font-mono text-[10px] text-[var(--faint)]">{rootLabel.toUpperCase()}</div>
+      </div>
+
+      <div className="flex flex-col gap-2 px-5 py-4">
+        <PvRow k="TYPE" v="Folder" />
+        <PvRow k="SIZE" v={sizeStr} mono />
+        {/* Recursive totals — every file/subfolder anywhere beneath this folder,
+            not just its direct children. Available once the subtree is indexed. */}
+        {folderStats.indexed ? (
+          <>
+            <PvRow k="FILES" v={fmt(folderStats.files)} mono />
+            <PvRow k="FOLDERS" v={fmt(folderStats.folders)} mono />
+          </>
+        ) : (
+          <div className="flex items-center justify-between gap-3 text-[11.5px]">
+            <span className="font-mono text-[10px] tracking-[0.06em] text-[var(--faint)]">CONTENTS</span>
+            <button onClick={onIndexFolder} disabled={indexing} className="flex items-center gap-1.5 rounded-[7px] border border-[var(--line2)] px-2 py-0.5 text-[11px] font-semibold text-[var(--mut)] hover:text-[var(--ink)] disabled:opacity-50">
+              {indexing ? <Loader2 size={11} className="animate-spin" /> : <FolderSearch size={11} />} Count all
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-auto flex flex-col gap-2 px-5 pb-5">
+        {item ? (
+          <button onClick={() => actions.download(item)} className="flex items-center justify-center gap-2 rounded-[11px] bg-[var(--acc)] py-2.5 text-[12.5px] font-semibold text-[var(--onacc)] hover:opacity-90">
+            <Download size={13} /> Download folder
+          </button>
+        ) : (
+          <div className="py-4 text-center text-[11px] text-[var(--faint)]">Select a file to preview it here</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Finder-style Miller-columns view: one column per path level, the active
+ *  child highlighted; click a folder to descend, a file to preview it. Each
+ *  ancestor level is listed on demand from the browse cache. */
+function ColumnsView({
+  account, rootLabel, path, focusedPath, selectedPaths, folderSizeState, dropTarget, actions,
+  visitedSet, folderHasDownloads, folderStatusMap, dlStatusMap,
+}: {
+  account: Account;
+  rootLabel: string;
+  path: string;
+  focusedPath: string | null;
+  selectedPaths: Set<string>;
+  folderSizeState: (p: string) => FolderSizeState;
+  dropTarget: string | null;
+  actions: RowActions;
+  visitedSet: Set<string>;
+  folderHasDownloads: (p: string) => boolean;
+  folderStatusMap: Record<string, FolderStatus> | undefined;
+  dlStatusMap: Map<string, DlStatus>;
+}) {
+  const listings = useBrowse((s) => s.listings);
+  const segs = path ? path.split("/") : [];
+  const prefixes: string[] = [];
+  for (let i = 0; i <= segs.length; i++) prefixes.push(segs.slice(0, i).join("/"));
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    for (const p of prefixes) void useBrowse.getState().ensure(account, p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account, path]);
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [path]);
+
+  return (
+    <div ref={scrollerRef} data-testid="file-list" className="flex min-h-0 flex-1 overflow-x-auto">
+      {prefixes.map((prefix, i) => {
+        const raw = listings[browseKey(account.id, prefix)];
+        const list = raw
+          ? [...raw].sort((a, b) => (a.IsDir !== b.IsDir ? (a.IsDir ? -1 : 1) : a.Name.toLowerCase().localeCompare(b.Name.toLowerCase())))
+          : undefined;
+        const activeName = segs[i]; // the child descended into (undefined in the last column)
+        const header = i === 0 ? rootLabel : (segs[i - 1] ?? "");
+        return (
+          <div key={prefix || "root"} className="w-[250px] shrink-0 overflow-y-auto border-r border-[var(--line)] p-2">
+            <div className="flex justify-between px-2 pb-2 pt-1">
+              <span className="truncate font-mono text-[9.5px] font-semibold tracking-[0.1em] text-[var(--faint)]">{(header || "DRIVE").toUpperCase()}</span>
+              <span className="shrink-0 font-mono text-[9.5px] text-[var(--faint)]">{list?.length ?? ""}</span>
+            </div>
+            {list === undefined ? (
+              // Skeleton confined to THIS column — already-loaded columns stay visible.
+              <div data-testid="column-skeleton">
+                {Array.from({ length: 7 }).map((_, si) => (
+                  <div key={si} className="flex items-center gap-2 px-2 py-[7px]">
+                    <Skeleton className="h-3.5 w-3.5 shrink-0 rounded" />
+                    <Skeleton className="h-3" style={{ width: `${45 + ((si * 19) % 40)}%` }} />
+                  </div>
+                ))}
+              </div>
+            ) : list.length === 0 ? (
+              <div className="px-2 py-2 text-[11px] text-[var(--faint)]">Empty</div>
+            ) : (
+              list.map((it) => {
+                const active = it.IsDir && it.Name === activeName;
+                const focused = it.Path === focusedPath;
+                const checked = selectedPaths.has(it.Path);
+                const ft = fileType(it.Name, it.IsDir);
+                const fs = it.IsDir ? folderSizeState(it.Path) : undefined;
+                const meta = it.IsDir
+                  ? (fs?.kind === "known" && fs.bytes > 0 ? formatBytes(fs.bytes) : "")
+                  : (it.Size > 0 ? formatBytes(it.Size) : "");
+                const hi = active || focused || checked;
+                const hasDl = it.IsDir && folderHasDownloads(it.Path);
+                const visited = it.IsDir && visitedSet.has(it.Path);
+                const dl = dlStatusMap.get(it.Path);
+                const st = folderStatusMap?.[it.Path] ?? (hasDl ? ("downloaded" as const) : undefined);
+                return (
+                  <div
+                    key={it.ID ?? it.Path}
+                    data-folder-path={it.IsDir ? it.Path : undefined}
+                    onClick={(e) => (e.shiftKey ? actions.toggle(it.Path, true, list) : it.IsDir ? actions.openDir(it) : actions.focus(it))}
+                    onDoubleClick={() => !it.IsDir && isPreviewable(it.Name) && actions.openPreview(it)}
+                    onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, it); }}
+                    className={`group flex cursor-pointer items-center gap-2 rounded-[8px] px-2 py-1.5 ${it.Path === dropTarget ? "bg-[var(--accw)] outline outline-1 outline-[var(--acc)]" : hi ? "bg-[var(--accw)]" : "hover:bg-[var(--soft)]"}`}
+                  >
+                    {/* Selection tick — folders too. Shift ranges within this column. */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); actions.toggle(it.Path, e.shiftKey, list); }}
+                      aria-label={`Select ${it.Name}`}
+                      className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[4px] border ${checked ? "border-[var(--acc)] bg-[var(--acc)]" : "border-[var(--line2)] opacity-0 group-hover:opacity-100"}`}
+                    >
+                      {checked && <Check size={8} strokeWidth={4} className="text-[var(--onacc)]" />}
+                    </button>
+                    <span className="relative shrink-0">
+                      {it.IsDir ? <Folder size={14} className={hi ? "text-[var(--acc)]" : "text-[var(--mut)]"} /> : <ft.Icon size={14} style={{ color: ft.color }} />}
+                      {/* Mini open/downloaded dot — column-sized version of FolderBadge. */}
+                      {(hasDl || visited) && (
+                        <span
+                          data-tip={hasDl ? "Has downloads" : "Opened"}
+                          className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-2 ring-[var(--surface)] ${hasDl ? "bg-[var(--dl)]" : "bg-[var(--text-3)]"}`}
+                        />
+                      )}
+                    </span>
+                    <span className={`min-w-0 flex-1 truncate text-[12.5px] ${hi ? "font-semibold text-[var(--acc)]" : "text-[var(--ink)]"}`}>{it.Name}</span>
+                    {dl ? <DownloadBadge status={dl} /> : st ? <StatusBadge status={st} /> : meta ? <span className="shrink-0 font-mono text-[10px] text-[var(--faint)]">{meta}</span> : null}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const r = e.currentTarget.getBoundingClientRect();
+                        actions.contextMenu(r.left, r.bottom + 2, it);
+                      }}
+                      aria-label={`Actions for ${it.Name}`}
+                      className="hidden shrink-0 rounded-[5px] p-0.5 text-[var(--faint)] hover:bg-[var(--line)] hover:text-[var(--ink)] group-hover:block"
+                    >
+                      <MoreHorizontal size={13} />
+                    </button>
+                    {it.IsDir && <ChevronRight size={12} className={`shrink-0 ${active ? "text-[var(--acc)]" : "text-[var(--faint)]"}`} />}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        );
+      })}
+      <div className="min-w-[24px] flex-1" />
+    </div>
+  );
+}
+
 function FileListSkeleton() {
   return (
     <div className="py-2" data-testid="file-list-skeleton">

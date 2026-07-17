@@ -78,7 +78,7 @@ export function TopBar() {
 
       {/* Search + unified command/search dropdown */}
       <div ref={searchRef} className="relative mx-auto w-full max-w-xl">
-        <div className="flex items-center gap-2 rounded-[11px] border border-[var(--line)] bg-[var(--card)] px-3.5 py-2 text-sm focus-within:border-[var(--acc)]">
+        <div className={`flex items-center gap-2 border border-[var(--line)] bg-[var(--card)] px-3.5 py-2 text-sm transition-[border-radius] duration-150 ${open ? "rounded-t-[11px] rounded-b-none border-b-transparent" : "rounded-[11px] focus-within:border-[var(--acc)]"}`}>
           <Search size={15} className="text-[var(--faint)]" />
           <input
             ref={inputRef}
@@ -97,16 +97,18 @@ export function TopBar() {
             <button
               onClick={() => requestFocus()}
               aria-label="Focus search"
-              data-tip="Search & jump to anything"
+              data-tip="Search"
               className="shrink-0 rounded-[5px] border border-[var(--line)] bg-[var(--soft)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--faint)] hover:text-[var(--mut)]"
             >
               {isMac ? "⌘K" : "Ctrl K"}
             </button>
           )}
         </div>
+        {/* Results panel — merged with the search box: no gap, square top
+            corners meeting the box's squared bottom, one continuous outline. */}
         {open && (
-          <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-50">
-            <GlobalSearchResults onClose={() => setOpen(false)} />
+          <div className="animate-dropdown absolute left-0 right-0 top-full z-50">
+            <GlobalSearchResults onClose={() => setOpen(false)} attached />
           </div>
         )}
       </div>

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import {
   indexStart,
+  indexLoad,
   indexRecrawl,
   indexGet,
   indexRemove,
@@ -39,6 +40,9 @@ export interface IndexEntry {
 interface IndexState {
   byAccount: Record<string, IndexEntry>;
   ensure: (account: Account) => Promise<void>;
+  /** Restore a saved index from disk into memory (no crawl) — call on open so
+   *  persisted folder sizes/counts come back instantly, even with auto-index off. */
+  ensureLoaded: (account: Account) => Promise<void>;
   /** Like ensure(), but a no-op once the user has cancelled this account's
    *  auto-crawl — so navigating away and back never silently restarts it. */
   ensureAuto: (account: Account) => Promise<void>;
@@ -131,6 +135,14 @@ export const useIndex = create<IndexState>((set, get) => {
     ensureAuto: async (account) => {
       if (autoIndexCancelled.has(account.id)) return; // user stopped it; don't restart
       await get().ensure(account);
+    },
+
+    ensureLoaded: async (account) => {
+      // Already have it in memory (or a crawl is running) → nothing to restore.
+      const cur = get().byAccount[account.id];
+      if (cur?.index || cur?.status === "loading" || cur?.status === "crawling") return;
+      await ensureListeners();
+      await indexLoad(account.id).catch(() => {});
     },
 
     recrawl: async (account) => {

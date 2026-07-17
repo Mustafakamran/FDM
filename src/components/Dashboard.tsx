@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { HardDrive, Download, Database, FolderPlus, Globe, ArrowRight } from "lucide-react";
 import { useApp } from "../store/app";
 import { useStorage } from "../store/storage";
@@ -6,6 +6,7 @@ import { useTransfers } from "../store/transfers";
 import { useHistory } from "../store/history";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { useNewFolders } from "../lib/use-new-folders";
+import { isSharedLink } from "../lib/lane";
 import { SpeedTestCard } from "./SpeedTestCard";
 import { CountUp } from "./ui/CountUp";
 
@@ -21,17 +22,21 @@ export function Dashboard() {
   const history = useHistory((s) => s.items);
   const { count: newFolderCount, totalSize: newFolderSize, allSized } = useNewFolders();
 
+  // Real accounts only — shared/linked drives (teamdrive_/drivelink_) piggyback a
+  // parent's login + quota, so counting them double-counts drives and storage.
+  const realAccounts = useMemo(() => accounts.filter((a) => !isSharedLink(a.id)), [accounts]);
+
   useEffect(() => {
-    for (const a of accounts) void fetchStorage(a);
-  }, [accounts, fetchStorage]);
+    for (const a of realAccounts) void fetchStorage(a);
+  }, [realAccounts, fetchStorage]);
 
   const active = jobs.filter((j) => !j.finished && !j.cancelled);
   const totalSpeed = active.reduce((s, j) => s + Math.max(0, j.speed), 0);
   const activeCount = active.length + queue.filter((q) => !q.paused).length;
   const completed = history.filter((h) => h.status === "success").length;
 
-  const totalUsed = accounts.reduce((s, a) => s + (storage[a.id]?.used ?? 0), 0);
-  const totalCap = accounts.reduce((s, a) => s + (storage[a.id]?.total ?? 0), 0);
+  const totalUsed = realAccounts.reduce((s, a) => s + (storage[a.id]?.used ?? 0), 0);
+  const totalCap = realAccounts.reduce((s, a) => s + (storage[a.id]?.total ?? 0), 0);
 
   return (
     <div className="h-full overflow-auto px-8 py-7">
@@ -40,7 +45,7 @@ export function Dashboard() {
         <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--faint)]">Dashboard</div>
         <h1 className="mt-1 text-[26px] font-bold tracking-[-0.025em] text-[var(--ink)]">Welcome back</h1>
         <p className="mt-1 text-[13.5px] text-[var(--mut)]">
-          {accounts.length} {accounts.length === 1 ? "account" : "accounts"} connected ·{" "}
+          {realAccounts.length} {realAccounts.length === 1 ? "account" : "accounts"} connected ·{" "}
           {totalSpeed > 0 ? <span className="font-semibold text-[var(--dl)]">{formatSpeed(totalSpeed)} downloading</span> : "idle"}
         </p>
       </div>
@@ -51,7 +56,7 @@ export function Dashboard() {
           range below 1024px. Step through 3 at the floor, 4 once there's
           genuinely room. */}
       <div className="grid grid-cols-2 gap-3.5 md:grid-cols-3 xl:grid-cols-4">
-        <Stat icon={<HardDrive size={18} />} label="Connected drives" value={<CountUp value={accounts.length} />} sub={accountProviders(accounts)} />
+        <Stat icon={<HardDrive size={18} />} label="Connected drives" value={<CountUp value={realAccounts.length} />} sub={accountProviders(realAccounts)} />
         <Stat
           icon={<Download size={18} />}
           label="Active downloads"

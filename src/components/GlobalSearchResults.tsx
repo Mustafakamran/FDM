@@ -109,7 +109,7 @@ function HitRow({
 /** Results of a search across ALL connected drives at once. Shown (in place of
  *  the normal view) whenever the top-bar search box has a query. Each hit shows
  *  which drive it lives on and opens/downloads against that drive directly. */
-export function GlobalSearchResults({ onClose }: { onClose: () => void }) {
+export function GlobalSearchResults({ onClose, attached }: { onClose: () => void; attached?: boolean }) {
   const q = useSearch((s) => s.q);
   const setScope = useSearch((s) => s.setScope);
   const { scope, available, hits, loading, error, folderPath, folderRecursive, account: scopeAccount } = useScopedSearch();
@@ -255,7 +255,7 @@ export function GlobalSearchResults({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="flex max-h-[min(70vh,560px)] min-h-0 flex-col overflow-hidden rounded-[14px] border border-[var(--line)] bg-[var(--card)] shadow-[var(--shadow-lg)]">
+    <div className={`flex max-h-[min(70vh,560px)] min-h-0 flex-col overflow-hidden border border-[var(--line)] bg-[var(--card)] shadow-[var(--shadow-lg)] ${attached ? "rounded-b-[14px] rounded-t-none border-t-0" : "rounded-[14px]"}`}>
       {/* Header + scope chips only once you've typed a query. */}
       {hasQuery && (
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--line)] px-4 py-2.5 text-[13px]">

@@ -78,7 +78,7 @@ export function UrlDownload() {
 
   return (
     <div ref={wrapRef} className="relative">
-      <Button variant="download" onClick={() => setOpen((o) => !o)} data-tip="Add a web download link">
+      <Button variant="download" onClick={() => setOpen((o) => !o)} data-tip="Add link">
         <Plus size={15} /> Add download
       </Button>
 
@@ -110,7 +110,7 @@ export function UrlDownload() {
               <button
                 onClick={() => void pickFolder()}
                 aria-label="Choose download folder"
-                data-tip="Choose download folder"
+                data-tip="Choose folder"
                 className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[var(--line)] text-[var(--faint)] hover:bg-[var(--soft)] hover:text-[var(--ink)]"
               >
                 <Folder size={15} />

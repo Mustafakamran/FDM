@@ -104,7 +104,7 @@ function TeamDriveRow({ account, drive, first }: { account: Account; drive: Shar
         tabIndex={0}
         onClick={download}
         onKeyDown={(e) => { if (e.key === "Enter") void download(e as unknown as React.MouseEvent); }}
-        data-tip="Download whole Shared Drive"
+        data-tip="Download drive"
         aria-label={`Download ${drive.name}`}
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-[var(--faint)] opacity-0 transition hover:bg-[var(--line)] hover:text-[var(--ink)] group-hover:opacity-100"
       >

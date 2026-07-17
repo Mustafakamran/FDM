@@ -59,7 +59,7 @@ function PreviewBody() {
         {isVideoFile && (
           <button
             onClick={toReview}
-            data-tip="Open in the full reviewer (comments, timecode, export)"
+            data-tip="Open reviewer"
             className="flex items-center gap-1.5 rounded-[8px] bg-white/10 px-3 py-1.5 text-[12.5px] font-semibold hover:bg-white/20"
           >
             <MessageSquarePlus size={14} /> Review
@@ -96,7 +96,7 @@ function PreviewBody() {
           )
         ) : !isVideoFile ? (
           <Fallback
-            title="Can’t preview this format in-app"
+            title="No in-app preview"
             body={`.${target.name.split(".").pop()} can’t be shown in the app (e.g. a RAW still). Download it to view in your editor.`}
           />
         ) : err ? (

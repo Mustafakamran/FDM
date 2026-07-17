@@ -67,7 +67,7 @@ export function NewFoldersView() {
       {count === 0 ? (
         <EmptyState
           icon={<FolderPlus size={20} />}
-          title="Nothing new right now"
+          title="No new folders"
           body={`When a client adds a folder to one of your drives, it appears here so you know what still needs downloading. Right-click a folder to mark it Downloading / On hold / Downloaded / Copied. Folders you've already downloaded are hidden.`}
         />
       ) : (

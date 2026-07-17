@@ -722,6 +722,38 @@ pub fn index_cancel(app: AppHandle, account_id: String) {
     }
 }
 
+/// Load a previously-saved index from disk into memory WITHOUT crawling. Called
+/// on every account open so persisted folder sizes/counts come back instantly
+/// across restarts — even when auto-index is off. If no cached file exists (or a
+/// crawl is already running), it does nothing and never hits the network.
+#[tauri::command]
+pub fn index_load(app: AppHandle, account_id: String) {
+    {
+        let state = app.state::<IndexState>();
+        // Already in memory → just re-announce so the UI picks it up.
+        if lock(&state.indexes).contains_key(&account_id) {
+            let _ = app.emit("index-ready", json!({ "accountId": account_id }));
+            return;
+        }
+        // Don't disturb an in-flight crawl/load.
+        if matches!(
+            lock(&state.status).get(&account_id).map(|s| s.status.as_str()),
+            Some("crawling") | Some("loading")
+        ) {
+            return;
+        }
+    }
+    std::thread::spawn(move || {
+        if let Some(entries) = load_from_disk(&app, &account_id) {
+            let index = build_index(&entries);
+            lock(&app.state::<IndexState>().indexes).insert(account_id.clone(), index);
+            set_status(&app, &account_id, "ready", 0, 0, &stats_of(&entries), "");
+            let _ = app.emit("index-ready", json!({ "accountId": account_id }));
+        }
+        // else: no cached index yet — stay idle, do NOT crawl.
+    });
+}
+
 /// Return the built index ({tree, agg}) once ready, else None.
 #[tauri::command]
 pub fn index_get(app: AppHandle, account_id: String) -> Option<AccountIndex> {

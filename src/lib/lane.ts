@@ -24,3 +24,14 @@ export function laneOf(accountId: string): Lane {
   }
   return "secondary";
 }
+
+/**
+ * Shared/linked pseudo-accounts — Google Shared Drives (`teamdrive_*`) and opened
+ * Drive folder shortcuts / shared folders (`drivelink_*`). They piggyback a real
+ * account's login + quota and are reached from the Shared Drives screen or a
+ * shortcut in a listing, so they're kept out of the ACCOUNTS list and drive/
+ * storage counts (which would otherwise double-count the parent's quota).
+ */
+export function isSharedLink(accountId: string): boolean {
+  return accountId.startsWith("teamdrive_") || accountId.startsWith("drivelink_");
+}

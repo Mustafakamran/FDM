@@ -246,6 +246,7 @@ pub fn run() {
             drive::drive_share_link,
             drive::dropbox_share_link,
             index::index_start,
+            index::index_load,
             index::index_recrawl,
             index::index_folder,
             index::index_cancel,

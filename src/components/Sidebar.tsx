@@ -14,7 +14,7 @@ import { AddAccountDialog } from "./AddAccountDialog";
 import { AddLinkDialog } from "./AddLinkDialog";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { useNewFolders } from "../lib/use-new-folders";
-import { laneOf } from "../lib/lane";
+import { laneOf, isSharedLink } from "../lib/lane";
 import type { Account, Provider } from "../lib/tauri/commands";
 
 export function Sidebar() {
@@ -54,7 +54,7 @@ export function Sidebar() {
 
   useEffect(() => {
     for (const a of accounts) {
-      if (a.id.startsWith("teamdrive_")) continue; // hidden Shared-Drive links
+      if (isSharedLink(a.id)) continue; // links piggyback a real account's quota
       void fetchStorage(a);
       void fetchEmail(a.id);
     }
@@ -96,12 +96,13 @@ export function Sidebar() {
   );
 
   // User-arranged account order (drag-free: move up/down from the tile menu).
-  // Shared-Drive links (teamdrive_*) are opened from the Shared Drives screen and
-  // must NOT clutter the account list — hide them here (they stay in `accounts`
-  // so their browse view still resolves).
+  // Shared/linked drives — Shared Drives (teamdrive_*) and opened Drive folder
+  // shortcuts / shared folders (drivelink_*) — are reached from the Shared Drives
+  // screen or the shortcut in a normal listing, so they must NOT clutter the
+  // account list. They stay in `accounts` so their browse view still resolves.
   const accountOrder = useAccountOrder((s) => s.order);
   const orderedAccounts = useMemo(
-    () => orderAccounts(accounts, accountOrder).filter((a) => !a.id.startsWith("teamdrive_")),
+    () => orderAccounts(accounts, accountOrder).filter((a) => !isSharedLink(a.id)),
     [accounts, accountOrder],
   );
   const onMoveAccount = useCallback(

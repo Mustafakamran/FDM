@@ -198,7 +198,7 @@ export function ReviewView({ accountId, target }: { accountId: string; target: R
             )
           ) : !isVideoFile ? (
             <Fallback
-              title="Can't preview this format in-app"
+              title="No in-app preview"
               body={`.${target.name.split(".").pop()} can't be shown in the app (e.g. a RAW still). Download it to review in your editor, comments here still export to PDF.`}
             />
           ) : err ? (

@@ -84,6 +84,11 @@ export function indexStart(accountId: string): Promise<void> {
   return invoke("index_start", { accountId });
 }
 
+/** Load a saved index from disk into memory WITHOUT crawling (restore on open). */
+export function indexLoad(accountId: string): Promise<void> {
+  return invoke("index_load", { accountId });
+}
+
 /** Force a fresh crawl. */
 export function indexRecrawl(accountId: string): Promise<void> {
   return invoke("index_recrawl", { accountId });
