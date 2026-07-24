@@ -240,6 +240,7 @@ pub fn run() {
             download::cancel_job,
             download::clear_finished_jobs,
             download::delete_item,
+            download::move_item,
             drive::drive_uploader,
             drive::drive_folder_path,
             drive::drive_resolve_shortcut,
@@ -260,6 +261,15 @@ pub fn run() {
             speedtest::cancel_speed_test,
         ])
         .setup(|app| {
+            // Window chrome: macOS keeps the native title bar (Overlay style →
+            // traffic lights float over the content, configured in tauri.conf).
+            // Windows/Linux get our in-app controls instead, so strip the native
+            // decorations there. Done before the frontend shows the window.
+            #[cfg(not(target_os = "macos"))]
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_decorations(false);
+            }
+
             // System-tray / menu-bar icon: left-click (or "Show") reveals the
             // window; "Quit" is the ONLY thing that actually exits (close just
             // hides — see the CloseRequested handler below). Building the tray is

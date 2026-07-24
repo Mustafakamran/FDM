@@ -99,44 +99,16 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
             <div key={i} className="relative" onMouseEnter={() => setSub(hasSub ? i : null)}>
               {it.separator && <div className="my-1 h-px bg-[var(--border)]" />}
               {itemButton(it, hasSub)}
-              {/* Flyout submenu — flush against the parent menu's edge, top corner
-                  aligned with its item so the two read as one merged surface. */}
+              {/* Flyout submenu — a clean rounded panel beside the parent, with a
+                  small gap. (Earlier "merged fillet" corners poked above the
+                  parent when the item sat at the top; a plain flyout is robust.) */}
               {hasSub && sub === i && (
                 <div
                   role="menu"
-                  className={`absolute -top-1 z-[152] min-w-[170px] border border-[var(--border-strong)] bg-[var(--surface)] py-1 ${
-                    subLeft
-                      ? "right-full -mr-px rounded-[10px] rounded-r-none border-r-0 shadow-[-10px_12px_28px_-10px_rgba(0,0,0,0.3)]"
-                      : "left-full -ml-px rounded-[10px] rounded-l-none border-l-0 shadow-[10px_12px_28px_-10px_rgba(0,0,0,0.3)]"
+                  className={`absolute -top-1 z-[152] min-w-[170px] rounded-[10px] border border-[var(--border-strong)] bg-[var(--surface)] py-1 shadow-[var(--shadow-lg)] ${
+                    subLeft ? "right-full mr-1" : "left-full ml-1"
                   }`}
-                  // Hard-stop the shadow at the seam so none of its blur bleeds
-                  // onto the parent menu. The shadow is directional (cast away
-                  // from the parent), so nothing visible gets cut off.
-                  style={{ clipPath: subLeft ? "inset(-40px 0 -40px -40px)" : "inset(-40px -40px -40px 0)" }}
                 >
-                  {/* Concave fillets at the attachment edge — the flyout's outer
-                      silhouette curves INTO the parent menu (inverse curve), and
-                      the touching edges carry no border, so the two menus read
-                      as one continuous surface. The radial gradient draws the
-                      curved border stroke and covers the straight border stubs. */}
-                  <span
-                    aria-hidden
-                    className={`pointer-events-none absolute top-[-10px] h-[11px] w-[10px] ${subLeft ? "right-0" : "left-0"}`}
-                    style={{
-                      background: subLeft
-                        ? "radial-gradient(circle 10px at 0 0, transparent 9px, var(--border-strong) 9px, var(--surface) 10px)"
-                        : "radial-gradient(circle 10px at 100% 0, transparent 9px, var(--border-strong) 9px, var(--surface) 10px)",
-                    }}
-                  />
-                  <span
-                    aria-hidden
-                    className={`pointer-events-none absolute bottom-[-10px] h-[11px] w-[10px] ${subLeft ? "right-0" : "left-0"}`}
-                    style={{
-                      background: subLeft
-                        ? "radial-gradient(circle 10px at 0 100%, transparent 9px, var(--border-strong) 9px, var(--surface) 10px)"
-                        : "radial-gradient(circle 10px at 100% 100%, transparent 9px, var(--border-strong) 9px, var(--surface) 10px)",
-                    }}
-                  />
                   {it.children!.map((c, j) => (
                     <div key={j}>
                       {c.separator && <div className="my-1 h-px bg-[var(--border)]" />}

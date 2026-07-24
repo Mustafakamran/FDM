@@ -1,5 +1,5 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, Columns3, RefreshCw, Star, ChevronDown, ChevronLeft, ChevronRight, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, X, Pause, HardDrive, Link2, FolderPlus, MoreHorizontal, Tag, PanelRight, PanelRightClose } from "lucide-react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Download, Upload, Loader2, AlertCircle, List as ListIcon, LayoutGrid, Columns3, RefreshCw, Star, ChevronDown, ChevronLeft, ChevronRight, Check, Play, Eye, FolderSearch, FolderOpen, Folder, FileSearch, FileUp, FolderUp, ArrowUp, ArrowDown, FolderTree, Trash2, Calculator, Copy, Pause, HardDrive, Link2, FolderPlus, MoreHorizontal, Tag, PanelRight, PanelRightClose, Layers, FolderInput, ArrowDownUp } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp, type Section, type ReviewTarget } from "../store/app";
 import { isVideo, isPreviewable, extOf } from "../lib/review";
@@ -24,24 +24,31 @@ import { StatusBadge } from "./ui/StatusBadge";
 import { DownloadBadge } from "./ui/DownloadBadge";
 import { useDownloadStatusMap, type DlStatus } from "../lib/download-status";
 import { SharePopover } from "./SharePopover";
+import { MoveDialog } from "./MoveDialog";
 import { fileType } from "../lib/file-types";
 import { itemAt } from "../lib/account-index";
-import { IndexProgress } from "./IndexProgress";
 import { formatBytes, formatDate } from "../lib/format";
-import { sortItems, DEFAULT_SORT, type SortField, type SortState } from "../lib/sort";
+import { sortItems, groupItems, DEFAULT_SORT, type SortField, type SortState, type GroupBy } from "../lib/sort";
 import { computeVirtualRange } from "../lib/virtual-rows";
 import type { RcItem } from "../lib/rc/browse";
 import { createFolder } from "../lib/rc/browse";
-import { deleteItem } from "../lib/tauri/commands";
+import { deleteItem, moveItem } from "../lib/tauri/commands";
 import type { Account, DownloadItem } from "../lib/tauri/commands";
 import { pickDownloadDest } from "../lib/ingest";
 import { openShortcutFolder, downloadShortcutFolder } from "../lib/drive-link";
 import { loadJson, saveJson } from "../lib/persisted";
 
 const SORT_KEY = "browse_sort";
+const GROUP_KEY = "browse_group";
 const VIEW_KEY = "browse_view";
 const PREVIEW_KEY = "browse_preview";
 const EMPTY: RcItem[] = [];
+
+/** Name that fades out at the right edge when it overflows, instead of a hard
+ *  "…" ellipsis. The mask only bites into text that actually reaches the last
+ *  ~1.5rem, so short names show no fade. Both mask props for WKWebView. */
+const FADE_NAME =
+  "overflow-hidden whitespace-nowrap [mask-image:linear-gradient(to_right,#000_calc(100%-1.5rem),transparent)] [-webkit-mask-image:linear-gradient(to_right,#000_calc(100%-1.5rem),transparent)]";
 
 /** Explorer view mode — Finder-style columns, a flat list, or a grid of cards. */
 type ViewMode = "columns" | "list" | "grid";
@@ -118,6 +125,18 @@ function FolderBadge({ hasDownloads, visited }: { hasDownloads: boolean; visited
   return null;
 }
 
+/** Section header shown above a group of items in the grid (and list via a
+ *  spanning row) when grouping is on. */
+function GroupHeader({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="flex items-center gap-2 pb-1.5 pt-4">
+      <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--faint)]">{label}</span>
+      <span className="font-mono text-[10px] text-[var(--faint)]">· {count}</span>
+      <span className="h-px flex-1 bg-[var(--line)]" />
+    </div>
+  );
+}
+
 /** Stable-callback props every row/grid-item shares — identical shape so both
  * FileRow and FileGridItem can take the same object. */
 interface RowActions {
@@ -141,6 +160,13 @@ interface RowActions {
   toggleStar: (p: string) => void;
   deleteOne: (item: RcItem) => void;
   contextMenu: (x: number, y: number, item: RcItem) => void;
+  /** In-app drag-to-move/copy. dragStart records the dragged item; dragOverFolder
+   *  returns true (and highlights) when `folder` is a valid drop target; drop
+   *  performs the move (copy=true on ⌥/Alt); dragEnd clears state. */
+  dragStart: (item: RcItem) => void;
+  dragEnd: () => void;
+  dragOverFolder: (folder: RcItem) => boolean;
+  drop: (folder: RcItem, copy: boolean) => void;
 }
 
 function folderSizeEqual(a: FolderSizeState, b: FolderSizeState): boolean {
@@ -209,6 +235,12 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const [focused, setFocused] = useState<RcItem | null>(null);
   useEffect(() => { setFocused(null); }, [path, section, account.id]);
   const [sort, setSort] = useState<SortState>(loadSort);
+  const [groupBy, setGroupBy] = useState<GroupBy>(() => {
+    const g = loadJson<GroupBy>(GROUP_KEY, "none");
+    return g === "type" || g === "date" || g === "size" ? g : "none";
+  });
+  useEffect(() => { saveJson(GROUP_KEY, groupBy); }, [groupBy]);
+  const [groupOpen, setGroupOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   // Drag-and-drop upload target while an OS drag hovers the browser: null = not
   // dragging, "" = the current folder (empty area), else the hovered folder's
@@ -338,7 +370,13 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
   const [pendingDelete, setPendingDelete] = useState<RcItem[] | null>(null);
   // Right-click context menu (cursor-anchored, one item at a time).
   const [menu, setMenu] = useState<{ x: number; y: number; item: RcItem } | null>(null);
+  // Background menu — right-clicking the empty space of a folder view.
+  const [bgMenu, setBgMenu] = useState<{ x: number; y: number } | null>(null);
+  // Marquee (click-drag rubber-band) selection rectangle, in viewport coords.
+  // `leaving` drives the macOS-style fade-out on release.
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number; leaving?: boolean } | null>(null);
   const [share, setShare] = useState<RcItem | null>(null);
+  const [moveItems, setMoveItems] = useState<RcItem[] | null>(null);
   const [newFolder, setNewFolder] = useState<string | null>(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const submitNewFolder = async () => {
@@ -378,6 +416,134 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     setPendingDelete(null);
   }
   const reviewTarget = (i: RcItem): ReviewTarget => ({ path: i.Path, name: i.Name, fileId: i.ID ?? "", size: sizeOf(i), ext: extOf(i.Name) });
+
+  // Marquee selection: drag on empty space (list, grid, OR columns) to rubber-band
+  // select. Holding Shift/Cmd adds to the existing selection. Hit-tests rendered
+  // items by their DOM rects within the container the drag started in.
+  const startMarquee = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const t = e.target as HTMLElement;
+    if (t.closest("[data-row],[data-item],button,input,a,thead")) return; // real interaction
+    const container = e.currentTarget;
+    e.preventDefault(); // don't start a native text selection
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    const additive = e.shiftKey || e.metaKey;
+    const base = additive ? Object.values(useSelection.getState().byAccount[account.id] ?? {}) : [];
+    // Resolve any hit path to its RcItem across ALL loaded listings of this
+    // account (so the Columns view's ancestor columns resolve too).
+    const byPath = new Map<string, RcItem>();
+    const allListings = useBrowse.getState().listings;
+    const prefix = `${account.id} `;
+    for (const k in allListings) if (k.startsWith(prefix)) for (const it of allListings[k] ?? []) byPath.set(it.Path, it);
+    for (const it of items) byPath.set(it.Path, it);
+    // Keep the rectangle (and hit-test) inside the file section — never spill
+    // over the sidebar or the preview panel.
+    const cr = container.getBoundingClientRect();
+    const clampX = (v: number) => Math.max(cr.left, Math.min(v, cr.right));
+    const clampY = (v: number) => Math.max(cr.top, Math.min(v, cr.bottom));
+    const sx = clampX(e.clientX), sy = clampY(e.clientY);
+    let moved = false;
+    const onMove = (ev: MouseEvent) => {
+      if (Math.abs(ev.clientX - sx) < 4 && Math.abs(ev.clientY - sy) < 4) return; // ignore jitter
+      moved = true;
+      ev.preventDefault();
+      window.getSelection()?.removeAllRanges();
+      const cx = clampX(ev.clientX), cy = clampY(ev.clientY);
+      const x0 = Math.min(sx, cx), y0 = Math.min(sy, cy);
+      const x1 = Math.max(sx, cx), y1 = Math.max(sy, cy);
+      setMarquee({ x0, y0, x1, y1 });
+      const hits: SelectedItem[] = [];
+      container.querySelectorAll<HTMLElement>("[data-path]").forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.right > x0 && r.left < x1 && r.bottom > y0 && r.top < y1) {
+          const it = byPath.get(el.dataset.path!);
+          if (it) hits.push({ item: it, size: sizeOf(it) });
+        }
+      });
+      useSelection.getState().setAccount(account.id, [...base, ...hits]);
+    };
+    const onUp = () => {
+      // Fade the rectangle out (macOS-style) instead of snapping it away.
+      if (moved) {
+        setMarquee((m) => (m ? { ...m, leaving: true } : null));
+        setTimeout(() => setMarquee(null), 340);
+      } else {
+        setMarquee(null);
+      }
+      document.body.style.userSelect = prevUserSelect;
+      // A plain click on empty space (no drag) clears the selection.
+      if (!moved && !additive) useSelection.getState().clearAccount(account.id);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  // In-app drag-to-move/copy. The dragged item lives in a ref (available during
+  // dragover, unlike dataTransfer); `moveOver` is the folder path being hovered
+  // (drives the drop highlight). Move/copy is server-side on Drive/Dropbox.
+  const draggedRef = useRef<RcItem | null>(null);
+  // True while an IN-APP drag (move/copy) is in flight. On macOS WKWebView an
+  // element drag is a native drag session that comes through the OS drag handler
+  // (HTML5 dragover/drop don't fire), so the OS handler routes to MOVE while this
+  // is set — highlight the hovered folder, suppress the upload overlay, and move
+  // on drop. `moveTargetRef` holds the valid folder path currently under cursor.
+  const inAppDragRef = useRef(false);
+  const moveTargetRef = useRef<string | null>(null);
+  // Can the dragged item be dropped into folder `fp` (path-only, for the OS
+  // handler which only has the path string)?
+  const canDropOnPath = (fp: string): boolean => {
+    const d = draggedRef.current;
+    if (!d || d.Path === fp) return false;
+    if (d.IsDir && (fp === d.Path || fp.startsWith(`${d.Path}/`))) return false;
+    return fp !== parentOf(d.Path);
+  };
+  async function performMoveToPath(dstDir: string, copy: boolean) {
+    const d = draggedRef.current;
+    draggedRef.current = null;
+    inAppDragRef.current = false;
+    moveTargetRef.current = null;
+    setMoveOver(null);
+    if (!d || !canDropOnPath(dstDir)) return;
+    try {
+      await moveItem(account.id, d.Path, dstDir, d.IsDir, copy);
+      if (!copy) dropPath(account.id, d.Path);
+      void useBrowse.getState().ensure(account, parentOf(d.Path));
+      void useBrowse.getState().ensure(account, dstDir);
+      useSelection.getState().clearAccount(account.id);
+      toast(`${copy ? "Copied" : "Moved"} ${d.Name} → ${dstDir === "" ? "root" : dstDir.split("/").pop()}`, "success");
+    } catch (e) {
+      toast(`${copy ? "Copy" : "Move"} failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+    }
+  }
+  const [moveOver, setMoveOver] = useState<string | null>(null);
+  const parentOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
+  const canDropOn = (folder: RcItem): boolean => {
+    const d = draggedRef.current;
+    if (!d || !folder.IsDir || d.Path === folder.Path) return false;
+    // Not into itself/a descendant, and not a no-op onto its current parent.
+    if (d.IsDir && (folder.Path === d.Path || folder.Path.startsWith(`${d.Path}/`))) return false;
+    if (folder.Path === parentOf(d.Path)) return false;
+    return true;
+  };
+  async function performMove(folder: RcItem, copy: boolean) {
+    const d = draggedRef.current;
+    draggedRef.current = null;
+    setMoveOver(null);
+    if (!d || !canDropOn(folder)) return;
+    try {
+      await moveItem(account.id, d.Path, folder.Path, d.IsDir, copy);
+      if (!copy) dropPath(account.id, d.Path);
+      void useBrowse.getState().ensure(account, parentOf(d.Path));
+      void useBrowse.getState().ensure(account, folder.Path);
+      useSelection.getState().clearAccount(account.id);
+      toast(`${copy ? "Copied" : "Moved"} ${d.Name} → ${folder.Name}`, "success");
+    } catch (e) {
+      toast(`${copy ? "Copy" : "Move"} failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+    }
+  }
 
   // Browse is LIVE: each folder is listed on demand (instant), independent of the
   // background index (which now only powers Recent + Search). Index entries are a
@@ -463,6 +629,67 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     return sortItems(base, sort, { sizeOf, dateOf, sizeKnown: sizeKnownOf });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, sort, index, browseSizes]);
+
+  // Optional grouping (Type / Date / Size) over the sorted list — opt-in; "none"
+  // yields a single unlabeled group so the render path is uniform.
+  const grouped = groupBy !== "none";
+  const groups = useMemo(
+    () => groupItems(items, groupBy, { sizeOf, dateOf, sizeKnown: sizeKnownOf }, Date.now()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, groupBy, index, browseSizes],
+  );
+  // Apply the current sort to any listing (used by the Columns view's columns).
+  const sortList = useCallback(
+    (list: RcItem[]) => sortItems(list, sort, { sizeOf, dateOf, sizeKnown: sizeKnownOf }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sort, index, browseSizes],
+  );
+  // Sort + group any listing into sections (Columns view; macOS groups every view).
+  const arrange = useCallback(
+    (list: RcItem[]) => groupItems(sortList(list), groupBy, { sizeOf, dateOf, sizeKnown: sizeKnownOf }, Date.now()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sortList, groupBy, index, browseSizes],
+  );
+
+  // Row / card renderers shared by the flat and grouped paths (so grouping never
+  // duplicates the per-item wiring).
+  const renderGrid = (item: RcItem, gi: number) => (
+    <FileGridItem
+      key={item.ID ?? item.Path}
+      item={item}
+      gridIndex={gi}
+      isSelected={selected.has(item.Path)}
+      isDropTarget={item.IsDir && (item.Path === dropTarget || item.Path === moveOver)}
+      blink={item.Path === blinkPath}
+      folderSize={folderSizeState(item.Path)}
+      folderCount={fileCountOf(item)}
+      visited={item.IsDir && visitedSet.has(item.Path)}
+      hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
+      status={folderStatusMap?.[item.Path] ?? (item.IsDir && folderHasDownloads(item.Path) ? ("downloaded" as const) : undefined)}
+      dl={dlStatusMap.get(item.Path)}
+      actions={rowActions}
+    />
+  );
+  const renderRow = (item: RcItem) => (
+    <FileRow
+      key={item.ID ?? item.Path}
+      item={item}
+      isSelected={selected.has(item.Path)}
+      isDropTarget={item.IsDir && (item.Path === dropTarget || item.Path === moveOver)}
+      blink={item.Path === blinkPath}
+      isStarred={starred.includes(item.Path)}
+      dateStr={formatDate(dateOf(item))}
+      folderSize={folderSizeState(item.Path)}
+      folderCount={fileCountOf(item)}
+      showCrawl={showCrawl}
+      folderIndexedFlag={folderIndexed(item.Path)}
+      visited={item.IsDir && visitedSet.has(item.Path)}
+      hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
+      status={folderStatusMap?.[item.Path] ?? (item.IsDir && folderHasDownloads(item.Path) ? ("downloaded" as const) : undefined)}
+      dl={dlStatusMap.get(item.Path)}
+      actions={rowActions}
+    />
+  );
 
   // NOTE: folder sizes are no longer auto-computed for every visible folder.
   // Owned folders get an instant size from the persisted index; shared / unindexed
@@ -569,7 +796,12 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
         const { getCurrentWebview } = await import("@tauri-apps/api/webview");
         const unlisten = await getCurrentWebview().onDragDropEvent((ev) => {
           const pl = ev.payload;
-          if (pl.type === "leave") { dropTargetRef.current = null; setDropTarget(null); return; }
+          const inApp = inAppDragRef.current; // an in-app move drag (vs external upload)
+          if (pl.type === "leave") {
+            dropTargetRef.current = null; setDropTarget(null);
+            moveTargetRef.current = null; setMoveOver(null);
+            return;
+          }
           if (pl.type === "enter" || pl.type === "over") {
             // Tauri reports the pointer in PHYSICAL px on some platforms and
             // already-logical px on others. elementFromPoint wants CSS (logical)
@@ -581,16 +813,29 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             const y = pl.position.y > window.innerHeight ? pl.position.y / dpr : pl.position.y;
             const el = document.elementFromPoint(x, y) as HTMLElement | null;
             const body = viewRef.current;
-            if (!el || !body || !body.contains(el)) {
-              if (dropTargetRef.current !== null) { dropTargetRef.current = null; setDropTarget(null); }
+            const folderEl = el && body && body.contains(el) ? (el.closest("[data-folder-path]") as HTMLElement | null) : null;
+            const folderPath = folderEl?.getAttribute("data-folder-path") ?? null;
+            if (inApp) {
+              // Move: highlight ONLY a valid destination folder — never the
+              // background (dropping a folder into its own folder is a no-op).
+              const tgt = folderPath !== null && canDropOnPath(folderPath) ? folderPath : null;
+              if (tgt !== moveTargetRef.current) { moveTargetRef.current = tgt; setMoveOver(tgt); }
               return;
             }
-            const folderEl = el.closest("[data-folder-path]") as HTMLElement | null;
-            const tgt = folderEl ? (folderEl.getAttribute("data-folder-path") ?? "") : "";
+            // Upload: folder under cursor, else the current folder (background).
+            const inBody = !!(el && body && body.contains(el));
+            const tgt = inBody ? (folderPath ?? "") : null;
             if (tgt !== dropTargetRef.current) { dropTargetRef.current = tgt; setDropTarget(tgt); }
             return;
           }
           if (pl.type === "drop") {
+            if (inApp) {
+              const tgt = moveTargetRef.current;
+              if (tgt !== null) void performMoveToPath(tgt, false);
+              inAppDragRef.current = false; draggedRef.current = null;
+              moveTargetRef.current = null; setMoveOver(null);
+              return;
+            }
             const tgt = dropTargetRef.current;
             dropTargetRef.current = null; setDropTarget(null);
             if (tgt === null) return; // dropped outside the browser body
@@ -671,6 +916,14 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     toggleStar: (p) => toggleStar(account.id, p),
     deleteOne: (item) => setPendingDelete([item]),
     contextMenu: (x, y, item) => setMenu({ x, y, item }),
+    dragStart: (item) => { draggedRef.current = item; inAppDragRef.current = true; },
+    dragEnd: () => { draggedRef.current = null; inAppDragRef.current = false; setMoveOver(null); },
+    dragOverFolder: (folder) => {
+      if (!canDropOn(folder)) return false;
+      if (moveOver !== folder.Path) setMoveOver(folder.Path);
+      return true;
+    },
+    drop: (folder, copy) => void performMove(folder, copy),
   };
   const rowActions = useRef<RowActions>({
     toggle: (p, shiftKey, list) => actionsRef.current.toggle(p, shiftKey, list),
@@ -686,6 +939,10 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     toggleStar: (p) => actionsRef.current.toggleStar(p),
     deleteOne: (item) => actionsRef.current.deleteOne(item),
     contextMenu: (x, y, item) => actionsRef.current.contextMenu(x, y, item),
+    dragStart: (item) => actionsRef.current.dragStart(item),
+    dragEnd: () => actionsRef.current.dragEnd(),
+    dragOverFolder: (folder) => actionsRef.current.dragOverFolder(folder),
+    drop: (folder, copy) => actionsRef.current.drop(folder, copy),
   }).current;
 
   // Build the right-click menu for one item — reuses every existing row action.
@@ -716,9 +973,51 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
     }
     out.push({ label: "Download", icon: Download, onClick: () => void enqueueItems([item]) });
     out.push({ label: isStar ? "Unstar" : "Star", icon: Star, onClick: () => toggleStar(account.id, item.Path) });
-    out.push({ label: "Copy link", icon: Link2, separator: true, onClick: () => setShare(item) });
+    if (canUpload) out.push({ label: "Move to…", icon: FolderInput, separator: true, onClick: () => setMoveItems(selected.has(item.Path) && selected.size > 1 ? items.filter((i) => selected.has(i.Path)) : [item]) });
+    out.push({ label: "Copy link", icon: Link2, separator: !canUpload, onClick: () => setShare(item) });
     out.push({ label: "Copy name", icon: Copy, onClick: () => void navigator.clipboard?.writeText(item.Name) });
     out.push({ label: "Delete", icon: Trash2, danger: true, separator: true, onClick: () => setPendingDelete([item]) });
+    return out;
+  };
+
+  // Menu for right-clicking the empty space of a folder view (no item under it).
+  const bgMenuItems = (): MenuItem[] => {
+    const out: MenuItem[] = [];
+    // Sort + Group submenus — the only way to sort in Columns view (no headers).
+    const SORT_FIELDS: { f: SortField; label: string }[] = [
+      { f: "name", label: "Name" }, { f: "modified", label: "Date modified" },
+      { f: "size", label: "Size" }, { f: "type", label: "Type" },
+    ];
+    out.push({
+      label: "Sort by",
+      icon: ArrowDownUp,
+      children: [
+        ...SORT_FIELDS.map((s) => ({
+          label: sort.field === s.f ? `${s.label} ✓` : s.label,
+          onClick: () => setSort((cur) => ({ ...cur, field: s.f })),
+        })),
+        { label: sort.dir === "asc" ? "Ascending ✓" : "Ascending", icon: ArrowUp, separator: true, onClick: () => setSort((cur) => ({ ...cur, dir: "asc" })) },
+        { label: sort.dir === "desc" ? "Descending ✓" : "Descending", icon: ArrowDown, onClick: () => setSort((cur) => ({ ...cur, dir: "desc" })) },
+        { label: sort.foldersFirst ? "Folders first ✓" : "Folders first", icon: FolderTree, separator: true, onClick: () => setSort((cur) => ({ ...cur, foldersFirst: !cur.foldersFirst })) },
+      ],
+    });
+    out.push({
+      label: "Group by",
+      icon: Layers,
+      children: ([
+        { g: "none" as const, label: "None" }, { g: "type" as const, label: "Type" },
+        { g: "date" as const, label: "Date modified" }, { g: "size" as const, label: "Size" },
+      ]).map(({ g, label }) => ({ label: groupBy === g ? `${label} ✓` : label, onClick: () => setGroupBy(g) })),
+    });
+    if (folderView) out.push({ label: "New folder", icon: FolderPlus, separator: true, onClick: () => setNewFolder("") });
+    if (canUpload) {
+      out.push({ label: "Upload files…", icon: FileUp, separator: out.length > 0, onClick: () => void pickUpload(false) });
+      out.push({ label: "Upload folder…", icon: FolderUp, onClick: () => void pickUpload(true) });
+    }
+    if (items.length > 0) {
+      out.push({ label: "Select all", icon: Check, separator: out.length > 0, onClick: () => useSelection.getState().add(account.id, items.map((i) => ({ item: i, size: sizeOf(i) }))) });
+    }
+    out.push({ label: "Refresh", icon: RefreshCw, separator: out.length > 0, onClick: () => void useBrowse.getState().ensure(account, path) });
     return out;
   };
 
@@ -737,15 +1036,7 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Crawl progress */}
-      {status === "loading" && (
-        <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-5 py-2.5 text-sm text-[var(--text-2)]">
-          <Loader2 size={15} className="animate-spin text-[var(--accent)]" />
-          <span>Loading cached index…</span>
-          <Skeleton className="ml-1 h-2 w-24" />
-        </div>
-      )}
-      {status === "crawling" && entry && <IndexProgress accountId={account.id} entry={entry} />}
+      {/* Indexing/crawl progress is shown by the floating IndexBanner, not here. */}
 
       {/* Live-listing error (so a failed folder list isn't a silent empty screen). */}
       {folderView && liveError && (
@@ -923,6 +1214,38 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
             </button>
           ))}
         </div>
+        {/* Group by — Type / Date / Size (or none). Applies to List + Grid. */}
+        <div className="relative">
+          <button
+            onClick={() => setGroupOpen((o) => !o)}
+            title="Group by"
+            aria-label="Group by"
+            className={`rounded-[8px] border border-[var(--border)] p-1.5 transition-colors hover:text-[var(--text)] ${groupBy !== "none" ? "text-[var(--acc)]" : "text-[var(--text-3)]"}`}
+          >
+            <Layers size={15} />
+          </button>
+          {groupOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setGroupOpen(false)} />
+              <div className="animate-pop absolute right-0 top-9 z-20 w-40 overflow-hidden rounded-[8px] border border-[var(--border-strong)] bg-[var(--card)] py-1 shadow-[var(--shadow-lg)]" style={{ transformOrigin: "top right" }}>
+                {([
+                  { g: "none" as const, label: "No grouping" },
+                  { g: "type" as const, label: "Type" },
+                  { g: "date" as const, label: "Date modified" },
+                  { g: "size" as const, label: "Size" },
+                ]).map(({ g, label }) => (
+                  <button
+                    key={g}
+                    onClick={() => { setGroupBy(g); setGroupOpen(false); }}
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-[var(--text-2)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                  >
+                    {label} {groupBy === g && <Check size={14} className="text-[var(--acc)]" />}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <button
           className={`rounded-[8px] border border-[var(--border)] p-1.5 transition-colors hover:text-[var(--text)] ${showPreview ? "text-[var(--text)]" : "text-[var(--text-3)]"}`}
           onClick={() => setShowPreview((v) => !v)}
@@ -939,36 +1262,20 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
 
       {/* Main area: file view + right preview panel */}
       <div ref={viewRef} className="flex min-h-0 flex-1 border-t border-[var(--line)]">
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div
+        className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+        onContextMenu={(e) => {
+          // Only when right-clicking empty space — rows/cards handle their own.
+          if ((e.target as HTMLElement).closest("[data-row],[data-item]")) return;
+          if (!folderView && !canUpload && items.length === 0) return;
+          e.preventDefault();
+          setBgMenu({ x: e.clientX, y: e.clientY });
+        }}
+      >
         {status === "error" && (
           <div className="mb-3 flex items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--error)]">
             <AlertCircle size={16} /> {entry?.error}
             <button className="ml-2 underline" onClick={() => useIndex.getState().recrawl(account)}>retry</button>
-          </div>
-        )}
-
-        {newFolder !== null && (
-          <div className="mb-3 flex animate-rise items-center gap-2 rounded-[8px] border border-[var(--accent)] bg-[var(--card)] px-3 py-2">
-            <FolderPlus size={15} className="shrink-0 text-[var(--accent)]" />
-            <input
-              autoFocus
-              value={newFolder}
-              placeholder="New folder name…"
-              onChange={(e) => setNewFolder(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void submitNewFolder();
-                else if (e.key === "Escape") setNewFolder(null);
-              }}
-              className="min-w-0 flex-1 bg-transparent text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-3)]"
-            />
-            <button
-              className="rounded-[7px] bg-[var(--accent)] px-2.5 py-1 text-[12px] font-semibold text-[var(--accent-ink)] transition active:translate-y-px disabled:opacity-50"
-              disabled={!newFolder.trim() || creatingFolder}
-              onClick={() => void submitNewFolder()}
-            >
-              {creatingFolder ? "Creating…" : "Create"}
-            </button>
-            <button className="shrink-0 text-[var(--text-3)] hover:text-[var(--text)]" onClick={() => setNewFolder(null)} aria-label="Cancel"><X size={15} /></button>
           </div>
         )}
 
@@ -986,32 +1293,26 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
           // Columns handles its own loading/empty per column, so parent columns
           // stay visible while a newly opened folder loads. Search/Recent/Starred
           // results always render as a flat list.
-          <ColumnsView account={account} rootLabel={displayLabel} path={path} focusedPath={focused?.Path ?? null} selectedPaths={selected} folderSizeState={folderSizeState} dropTarget={dropTarget} actions={rowActions} visitedSet={visitedSet} folderHasDownloads={folderHasDownloads} folderStatusMap={folderStatusMap} dlStatusMap={dlStatusMap} />
+          <ColumnsView account={account} rootLabel={displayLabel} path={path} focusedPath={focused?.Path ?? null} selectedPaths={selected} folderSizeState={folderSizeState} dropTarget={dropTarget ?? moveOver} actions={rowActions} visitedSet={visitedSet} folderHasDownloads={folderHasDownloads} folderStatusMap={folderStatusMap} dlStatusMap={dlStatusMap} arrange={arrange} onMarquee={startMarquee} />
         ) : items.length === 0 ? (
           <div className="flex-1 px-6 pt-4"><BrowseEmptyState q={q} section={section} /></div>
         ) : (
-          <div ref={bodyRef} className="@container min-h-0 flex-1 overflow-auto px-6 pb-2" data-testid="file-list">
+          <div ref={bodyRef} onMouseDown={startMarquee} className="@container min-h-0 flex-1 overflow-auto px-6 pb-2" data-testid="file-list">
           {grid ? (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3 py-2">
-            {items.map((item, gi) => (
-              <FileGridItem
-                key={item.ID ?? item.Path}
-                item={item}
-                gridIndex={gi}
-                isSelected={selected.has(item.Path)}
-                isDropTarget={item.IsDir && item.Path === dropTarget}
-                blink={item.Path === blinkPath}
-                folderSize={folderSizeState(item.Path)}
-                folderCount={fileCountOf(item)}
-                visited={item.IsDir && visitedSet.has(item.Path)}
-                hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
-                status={folderStatusMap?.[item.Path] ?? (item.IsDir && folderHasDownloads(item.Path) ? ("downloaded" as const) : undefined)}
-                dl={dlStatusMap.get(item.Path)}
-                actions={rowActions}
-              />
-            ))}
+          grouped ? (
+            groups.map((g) => (
+              <section key={g.key}>
+                <GroupHeader label={g.label} count={g.items.length} />
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(136px,1fr))] gap-1 pb-3 pt-1">
+                  {g.items.map((item, gi) => renderGrid(item, gi))}
+                </div>
+              </section>
+            ))
+          ) : (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(136px,1fr))] gap-1 py-2">
+            {items.map((item, gi) => renderGrid(item, gi))}
           </div>
-        ) : (
+        )) : (
           <table className="w-full table-fixed border-collapse text-sm">
             <thead>
               <tr className="sticky top-0 z-10 bg-[var(--surface)] text-left text-xs text-[var(--text-3)]">
@@ -1038,43 +1339,54 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
               </tr>
             </thead>
             <tbody>
-              {/* Spacer rows reserve the scroll height of the rows scrolled past
-                  above/below the window, so the scrollbar and sticky header stay
-                  accurate without every row actually being mounted. */}
-              {virtualRange.start > 0 && (
-                <tr aria-hidden style={{ height: virtualRange.start * rowHeight }}>
-                  <td colSpan={5} />
-                </tr>
-              )}
-              {visibleItems.map((item) => (
-                <FileRow
-                  key={item.ID ?? item.Path}
-                  item={item}
-                  isSelected={selected.has(item.Path)}
-                  isDropTarget={item.IsDir && item.Path === dropTarget}
-                  blink={item.Path === blinkPath}
-                  isStarred={starred.includes(item.Path)}
-                  dateStr={formatDate(dateOf(item))}
-                  folderSize={folderSizeState(item.Path)}
-                  folderCount={fileCountOf(item)}
-                  showCrawl={showCrawl}
-                  folderIndexedFlag={folderIndexed(item.Path)}
-                  visited={item.IsDir && visitedSet.has(item.Path)}
-                  hasDownloads={item.IsDir && folderHasDownloads(item.Path)}
-                  status={folderStatusMap?.[item.Path] ?? (item.IsDir && folderHasDownloads(item.Path) ? ("downloaded" as const) : undefined)}
-                  dl={dlStatusMap.get(item.Path)}
-                  actions={rowActions}
-                />
-              ))}
-              {virtualRange.end < items.length && (
-                <tr aria-hidden style={{ height: (items.length - virtualRange.end) * rowHeight }}>
-                  <td colSpan={5} />
-                </tr>
+              {grouped ? (
+                // Grouped: header rows + all items (virtualization off — opt-in).
+                groups.map((g) => (
+                  <Fragment key={g.key}>
+                    <tr className="bg-[var(--surface)]">
+                      <td colSpan={5} className="pb-1 pl-1 pt-4">
+                        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--faint)]">{g.label} · {g.items.length}</span>
+                      </td>
+                    </tr>
+                    {g.items.map((item) => renderRow(item))}
+                  </Fragment>
+                ))
+              ) : (
+                <>
+                  {/* Spacer rows reserve the scroll height of the rows scrolled past
+                      above/below the window, so the scrollbar and sticky header stay
+                      accurate without every row actually being mounted. */}
+                  {virtualRange.start > 0 && (
+                    <tr aria-hidden style={{ height: virtualRange.start * rowHeight }}>
+                      <td colSpan={5} />
+                    </tr>
+                  )}
+                  {visibleItems.map((item) => renderRow(item))}
+                  {virtualRange.end < items.length && (
+                    <tr aria-hidden style={{ height: (items.length - virtualRange.end) * rowHeight }}>
+                      <td colSpan={5} />
+                    </tr>
+                  )}
+                </>
               )}
             </tbody>
           </table>
           )}
           </div>
+        )}
+
+        {/* Marquee rubber-band rectangle (viewport-anchored). Fades + shrinks
+            slightly on release, like macOS. */}
+        {marquee && (
+          <div
+            className="pointer-events-none fixed z-[55] border border-[var(--acc)] bg-[var(--acc)]/10 ease-out"
+            style={{
+              left: marquee.x0, top: marquee.y0,
+              width: marquee.x1 - marquee.x0, height: marquee.y1 - marquee.y0,
+              opacity: marquee.leaving ? 0 : 1,
+              transition: marquee.leaving ? "opacity 320ms ease-out" : "none",
+            }}
+          />
         )}
 
         {/* Drop overlay — shown while dragging over the background (upload to the
@@ -1098,6 +1410,11 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
               <span className="text-[var(--faint)]"> · {formatBytes(globalSize)}{globalDrives > 1 ? ` · ${globalDrives} drives` : ""}</span>
             </span>
             <button onClick={() => useSelection.getState().clearAll()} className="text-[12px] font-semibold text-[var(--mut)] hover:text-[var(--ink)]">Clear</button>
+            {selected.size > 0 && canUpload && (
+              <button onClick={() => setMoveItems(items.filter((i) => selected.has(i.Path)))} className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--mut)] hover:text-[var(--ink)]">
+                <FolderInput size={13} /> Move
+              </button>
+            )}
             {selected.size > 0 && (
               <button onClick={() => setPendingDelete(items.filter((i) => selected.has(i.Path)))} className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--mut)] hover:text-[var(--err)]">
                 <Trash2 size={13} /> Delete
@@ -1165,9 +1482,43 @@ export function BrowsePane({ account, section, path }: { account: Account; secti
         </div>
       )}
 
-      {/* Right-click context menu */}
+      {/* New-folder dialog — name it, then create in the current folder. */}
+      {newFolder !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-6" onClick={() => !creatingFolder && setNewFolder(null)}>
+          <div className="animate-pop w-full max-w-sm rounded-[12px] border border-[var(--border-strong)] bg-[var(--card)] p-5 shadow-[var(--shadow-lg)]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 text-[var(--text)]">
+              <FolderPlus size={18} className="text-[var(--acc)]" />
+              <h2 className="text-base font-semibold">New folder</h2>
+            </div>
+            <p className="mt-1.5 text-[12.5px] text-[var(--text-2)]">
+              In <span className="font-mono text-[var(--text)]">{segments.length ? segments[segments.length - 1] : displayLabel}</span>
+            </p>
+            <input
+              autoFocus
+              value={newFolder}
+              placeholder="Folder name"
+              onChange={(e) => setNewFolder(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submitNewFolder();
+                else if (e.key === "Escape") setNewFolder(null);
+              }}
+              className="mt-3 w-full rounded-[9px] border border-[var(--line2)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-3)] focus:border-[var(--acc)]"
+            />
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setNewFolder(null)} disabled={creatingFolder}>Cancel</Button>
+              <Button variant="download" onClick={() => void submitNewFolder()} disabled={!newFolder.trim() || creatingFolder}>
+                {creatingFolder ? <Loader2 size={16} className="animate-spin" /> : <FolderPlus size={16} />} Create
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Right-click context menu (an item, or the empty background) */}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.item)} onClose={() => setMenu(null)} />}
+      {bgMenu && <ContextMenu x={bgMenu.x} y={bgMenu.y} items={bgMenuItems()} onClose={() => setBgMenu(null)} />}
       {share && <SharePopover account={account} item={share} onClose={() => setShare(null)} />}
+      {moveItems && moveItems.length > 0 && <MoveDialog account={account} items={moveItems} onClose={() => setMoveItems(null)} onMoved={() => setMoveItems(null)} />}
     </div>
   );
 }
@@ -1275,7 +1626,7 @@ const FileRow = memo(function FileRow({
       {tile}
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
-          <span className="truncate text-[13.5px] font-medium text-[var(--ink)]">{item.Name}</span>
+          <span className={`min-w-0 flex-1 text-[13.5px] font-medium text-[var(--ink)] ${FADE_NAME}`}>{item.Name}</span>
           {dl ? <DownloadBadge status={dl} /> : status ? <StatusBadge status={status} /> : null}
           {isStarred && <Star size={11} fill="currentColor" className="shrink-0 text-[var(--warn)]" />}
           {video && <Play size={11} className="shrink-0 text-[var(--faint)] opacity-0 group-hover:opacity-100" />}
@@ -1296,7 +1647,18 @@ const FileRow = memo(function FileRow({
   const tabBg = isSelected || isDropTarget ? "var(--accw)" : "var(--hover)";
 
   return (
-    <tr data-row data-folder-path={item.IsDir ? item.Path : undefined} onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }} className={`group border-b border-[var(--border)]/60 transition-colors duration-100 ${isDropTarget || isSelected ? "bg-[var(--accw)]" : blink ? "animate-flash" : "hover:bg-[var(--hover)]"}`}>
+    <tr
+      data-row
+      data-path={item.Path}
+      data-folder-path={item.IsDir ? item.Path : undefined}
+      draggable
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = "copyMove"; actions.dragStart(item); }}
+      onDragEnd={() => actions.dragEnd()}
+      onDragOver={item.IsDir ? (e) => { if (actions.dragOverFolder(item)) { e.preventDefault(); e.dataTransfer.dropEffect = e.altKey ? "copy" : "move"; } } : undefined}
+      onDrop={item.IsDir ? (e) => { e.preventDefault(); actions.drop(item, e.altKey); } : undefined}
+      onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }}
+      className={`group border-b border-[var(--border)]/60 transition-colors duration-100 ${isDropTarget ? "bg-[var(--accw)] outline-dashed outline-1 -outline-offset-1 outline-[var(--acc)]" : isSelected ? "bg-[var(--accw)]" : blink ? "animate-flash" : "hover:bg-[var(--hover)]"}`}
+    >
       <td className="w-9 py-2.5 pl-1">
         <input
           type="checkbox"
@@ -1425,12 +1787,25 @@ const FileGridItem = memo(function FileGridItem({
   actions: RowActions;
 }) {
   const ft = fileType(item.Name, item.IsDir);
+  // Size + count line (gray, under the name). macOS-style: shown only when known.
+  const sizeStr = !item.IsDir
+    ? (item.Size > 0 ? formatBytes(item.Size) : "")
+    : (folderSize.kind === "known" && folderSize.bytes > 0 ? formatBytes(folderSize.bytes) : "");
+  const countStr = item.IsDir && folderCount != null ? `${folderCount.toLocaleString()} file${folderCount === 1 ? "" : "s"}` : "";
+  const meta = [sizeStr, countStr].filter(Boolean).join(" · ");
   return (
     <div
+      data-item
+      data-path={item.Path}
       data-folder-path={item.IsDir ? item.Path : undefined}
+      draggable
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = "copyMove"; actions.dragStart(item); }}
+      onDragEnd={() => actions.dragEnd()}
+      onDragOver={item.IsDir ? (e) => { if (actions.dragOverFolder(item)) { e.preventDefault(); e.dataTransfer.dropEffect = e.altKey ? "copy" : "move"; } } : undefined}
+      onDrop={item.IsDir ? (e) => { e.preventDefault(); actions.drop(item, e.altKey); } : undefined}
       onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, item); }}
       style={{ animationDelay: `${Math.min(gridIndex, 16) * 22}ms` }}
-      className={`animate-item relative flex flex-col items-center gap-3 rounded-[11px] border p-5 transition-colors duration-100 ${isDropTarget || isSelected ? "border-[var(--acc)] bg-[var(--accw)]" : blink ? "animate-flash border-[var(--acc)]" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
+      className={`animate-item group relative flex flex-col items-center rounded-[12px] px-1 pb-2.5 pt-3 transition-colors duration-100 ${isDropTarget ? "bg-[var(--accw)] outline-dashed outline-1 -outline-offset-1 outline-[var(--acc)]" : blink ? "animate-flash" : ""}`}
     >
       <input
         type="checkbox"
@@ -1438,26 +1813,24 @@ const FileGridItem = memo(function FileGridItem({
         checked={isSelected}
         onChange={() => {}}
         onClick={(e) => actions.toggle(item.Path, e.shiftKey)}
-        className="absolute left-3 top-3"
+        className={`absolute left-2 top-2 z-10 transition-opacity ${isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
       />
       <button
-        className="flex flex-col items-center gap-2 text-center"
+        className="flex w-full flex-col items-center gap-1.5"
         onClick={(e) => (e.shiftKey ? actions.toggle(item.Path, true) : item.IsDir ? actions.openDir(item) : actions.focus(item))}
         onDoubleClick={() => !item.IsDir && isPreviewable(item.Name) && actions.openPreview(item)}
       >
-        <span className="relative flex items-center justify-center">
-          <ft.Icon size={30} style={{ color: ft.color }} />
+        {/* Icon "container" — big glyph on a rounded tile that lights up on
+            hover/selection (the macOS Finder look). The name sits BELOW it. */}
+        <span className={`relative flex h-[64px] w-[64px] items-center justify-center rounded-[16px] transition-colors ${isSelected ? "bg-[var(--accw)]" : "group-hover:bg-[var(--soft)]"}`}>
+          <ft.Icon size={38} style={{ color: ft.color }} />
           {item.IsDir && <FolderBadge hasDownloads={hasDownloads} visited={visited} />}
         </span>
-        <span className="line-clamp-2 text-sm text-[var(--text)]">{item.Name}</span>
+        {/* Name under the icon; selected name gets a macOS-style pill. */}
+        <span className={`mt-0.5 line-clamp-2 max-w-full rounded-[6px] px-1.5 text-center text-[12.5px] leading-tight ${isSelected ? "bg-[var(--acc)] text-[var(--onacc)]" : "text-[var(--text)]"}`}>{item.Name}</span>
+        {meta && <span className="tnum text-[11px] text-[var(--text-3)]">{meta}</span>}
         {dl ? <DownloadBadge status={dl} /> : status ? <StatusBadge status={status} /> : null}
       </button>
-      <span className="tnum text-xs text-[var(--text-3)]">
-        <SizeCell item={item} folderSize={folderSize} onCalcSize={actions.calcSize} />
-        {item.IsDir && folderCount != null && (
-          <span className="text-[var(--text-3)]"> · {folderCount.toLocaleString()} file{folderCount === 1 ? "" : "s"}</span>
-        )}
-      </span>
     </div>
   );
 },
@@ -1613,7 +1986,7 @@ function PreviewPanel({
  *  ancestor level is listed on demand from the browse cache. */
 function ColumnsView({
   account, rootLabel, path, focusedPath, selectedPaths, folderSizeState, dropTarget, actions,
-  visitedSet, folderHasDownloads, folderStatusMap, dlStatusMap,
+  visitedSet, folderHasDownloads, folderStatusMap, dlStatusMap, arrange, onMarquee,
 }: {
   account: Account;
   rootLabel: string;
@@ -1627,6 +2000,8 @@ function ColumnsView({
   folderHasDownloads: (p: string) => boolean;
   folderStatusMap: Record<string, FolderStatus> | undefined;
   dlStatusMap: Map<string, DlStatus>;
+  arrange: (items: RcItem[]) => { key: string; label: string; items: RcItem[] }[];
+  onMarquee: (e: React.MouseEvent<HTMLDivElement>) => void;
 }) {
   const listings = useBrowse((s) => s.listings);
   const segs = path ? path.split("/") : [];
@@ -1643,12 +2018,11 @@ function ColumnsView({
   }, [path]);
 
   return (
-    <div ref={scrollerRef} data-testid="file-list" className="flex min-h-0 flex-1 overflow-x-auto">
+    <div ref={scrollerRef} onMouseDown={onMarquee} data-testid="file-list" className="flex min-h-0 flex-1 overflow-x-auto">
       {prefixes.map((prefix, i) => {
         const raw = listings[browseKey(account.id, prefix)];
-        const list = raw
-          ? [...raw].sort((a, b) => (a.IsDir !== b.IsDir ? (a.IsDir ? -1 : 1) : a.Name.toLowerCase().localeCompare(b.Name.toLowerCase())))
-          : undefined;
+        const groups = raw ? arrange(raw) : undefined;
+        const list = groups ? groups.flatMap((g) => g.items) : undefined;
         const activeName = segs[i]; // the child descended into (undefined in the last column)
         const header = i === 0 ? rootLabel : (segs[i - 1] ?? "");
         return (
@@ -1670,7 +2044,15 @@ function ColumnsView({
             ) : list.length === 0 ? (
               <div className="px-2 py-2 text-[11px] text-[var(--faint)]">Empty</div>
             ) : (
-              list.map((it) => {
+              groups!.map((g) => (
+                <Fragment key={g.key}>
+                  {g.label && (
+                    <div className="flex items-center gap-2 px-2 pb-1 pt-2.5">
+                      <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-[var(--faint)]">{g.label}</span>
+                      <span className="font-mono text-[9px] text-[var(--faint)]">· {g.items.length}</span>
+                    </div>
+                  )}
+                  {g.items.map((it) => {
                 const active = it.IsDir && it.Name === activeName;
                 const focused = it.Path === focusedPath;
                 const checked = selectedPaths.has(it.Path);
@@ -1687,11 +2069,18 @@ function ColumnsView({
                 return (
                   <div
                     key={it.ID ?? it.Path}
+                    data-item
+                    data-path={it.Path}
                     data-folder-path={it.IsDir ? it.Path : undefined}
+                    draggable
+                    onDragStart={(e) => { e.dataTransfer.effectAllowed = "copyMove"; actions.dragStart(it); }}
+                    onDragEnd={() => actions.dragEnd()}
+                    onDragOver={it.IsDir ? (e) => { if (actions.dragOverFolder(it)) { e.preventDefault(); e.dataTransfer.dropEffect = e.altKey ? "copy" : "move"; } } : undefined}
+                    onDrop={it.IsDir ? (e) => { e.preventDefault(); actions.drop(it, e.altKey); } : undefined}
                     onClick={(e) => (e.shiftKey ? actions.toggle(it.Path, true, list) : it.IsDir ? actions.openDir(it) : actions.focus(it))}
                     onDoubleClick={() => !it.IsDir && isPreviewable(it.Name) && actions.openPreview(it)}
                     onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, it); }}
-                    className={`group flex cursor-pointer items-center gap-2 rounded-[8px] px-2 py-1.5 ${it.Path === dropTarget ? "bg-[var(--accw)] outline outline-1 outline-[var(--acc)]" : hi ? "bg-[var(--accw)]" : "hover:bg-[var(--soft)]"}`}
+                    className={`group flex cursor-pointer items-center gap-2 rounded-[8px] px-2 py-1.5 ${it.Path === dropTarget ? "bg-[var(--accw)] outline-dashed outline-1 outline-[var(--acc)]" : hi ? "bg-[var(--accw)]" : "hover:bg-[var(--soft)]"}`}
                   >
                     {/* Selection tick — folders too. Shift ranges within this column. */}
                     <button
@@ -1711,7 +2100,7 @@ function ColumnsView({
                         />
                       )}
                     </span>
-                    <span className={`min-w-0 flex-1 truncate text-[12.5px] ${hi ? "font-semibold text-[var(--acc)]" : "text-[var(--ink)]"}`}>{it.Name}</span>
+                    <span className={`min-w-0 flex-1 text-[12.5px] ${FADE_NAME} ${hi ? "font-semibold text-[var(--acc)]" : "text-[var(--ink)]"}`}>{it.Name}</span>
                     {dl ? <DownloadBadge status={dl} /> : st ? <StatusBadge status={st} /> : meta ? <span className="shrink-0 font-mono text-[10px] text-[var(--faint)]">{meta}</span> : null}
                     <button
                       onClick={(e) => {
@@ -1727,7 +2116,9 @@ function ColumnsView({
                     {it.IsDir && <ChevronRight size={12} className={`shrink-0 ${active ? "text-[var(--acc)]" : "text-[var(--faint)]"}`} />}
                   </div>
                 );
-              })
+                  })}
+                </Fragment>
+              ))
             )}
           </div>
         );

@@ -10,6 +10,7 @@ import { TransfersView } from "./TransfersView";
 import { Dashboard } from "./Dashboard";
 import { ConnectView } from "./ConnectView";
 import { DownloadsDock } from "./DownloadsDock";
+import { IndexBanner } from "./IndexBanner";
 import { ToastHost } from "./ToastHost";
 import { NotificationsPanel } from "./NotificationsPanel";
 import { SettingsDialog } from "./SettingsDialog";
@@ -114,6 +115,8 @@ export function AppShell() {
           {/* The Transfers screen shows its own progress table, so the dock would
               duplicate it there — only float it over other screens. */}
           {view.kind !== "transfers" && <DownloadsDock />}
+          {/* Indexing status floats bottom-left, everywhere. */}
+          <IndexBanner />
         </div>
       </div>
     </div>

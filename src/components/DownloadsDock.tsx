@@ -233,11 +233,11 @@ export function DownloadsDock() {
     <div className="animate-pop fixed bottom-3 right-3 z-40 flex w-[384px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[14px] border border-[var(--line2)] bg-[var(--card)] shadow-[var(--shadow-lg)]">
       {/* Header */}
       <div className="flex items-center gap-2 px-3.5 py-2.5">
-        <button onClick={() => setOpen((o) => !o)} title={open ? "Collapse" : "Expand"} className="flex min-w-0 flex-1 items-center gap-2 text-[13px] font-semibold text-[var(--ink)]">
+        <button onClick={() => setOpen((o) => !o)} aria-label={open ? "Collapse transfers" : "Expand transfers"} className="flex min-w-0 flex-1 items-center gap-2 text-[13px] font-semibold text-[var(--ink)]">
           <ArrowDownUp size={15} className="shrink-0 text-[var(--acc)]" />
           <span>Transfers</span>
           {activeCount > 0 && <span className="tnum text-[var(--mut)]">· {activeCount} active</span>}
-          <span className="ml-auto flex h-6 w-6 items-center justify-center text-[var(--faint)]">{open ? <ChevronDown size={16} /> : <ChevronUp size={16} />}</span>
+          <span title={open ? "Collapse" : "Expand"} className="ml-auto flex h-6 w-6 items-center justify-center text-[var(--faint)]">{open ? <ChevronDown size={16} /> : <ChevronUp size={16} />}</span>
         </button>
         {(completedCount > 0 || failedCount > 0) && (
           <button onClick={() => clearFinished()} title="Clear finished" className="shrink-0 text-[11px] font-medium text-[var(--faint)] hover:text-[var(--ink)]">Clear</button>

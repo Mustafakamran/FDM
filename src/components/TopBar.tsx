@@ -70,7 +70,7 @@ export function TopBar() {
   }, [open]);
 
   return (
-    <header data-tauri-drag-region className="flex h-14 shrink-0 select-none items-center gap-3 bg-transparent pl-4 pr-2">
+    <header data-tauri-drag-region className={`flex h-14 shrink-0 select-none items-center gap-3 bg-transparent pr-2 ${isMac ? "pl-[104px]" : "pl-4"}`}>
       {/* Brand — the single logo, home button. */}
       <button onClick={showHome} aria-label="Home" data-tip="Dashboard" className="shrink-0">
         <Logo size={30} wordSize={15} />
@@ -117,6 +117,7 @@ export function TopBar() {
       <div className="flex items-center gap-1">
         <button
           onClick={() => togglePanel()}
+          data-notif-toggle
           aria-label="Activity"
           data-tip="Activity"
           className="relative flex h-9 w-9 items-center justify-center rounded-full text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]"
@@ -145,17 +146,21 @@ export function TopBar() {
           <SettingsIcon size={16} />
         </button>
 
-        <div className="ml-1 flex items-center gap-0.5">
-          <button onClick={() => appWindow.minimize()} aria-label="Minimize" className="flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]">
-            <Minus size={15} />
-          </button>
-          <button onClick={() => appWindow.toggleMaximize()} aria-label={maximized ? "Restore" : "Maximize"} className="flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]">
-            <Square size={13} />
-          </button>
-          <button onClick={() => appWindow.close()} aria-label="Close" className="flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--mut)] hover:bg-[var(--err)] hover:text-white">
-            <X size={16} />
-          </button>
-        </div>
+        {/* Custom window controls on Windows/Linux; macOS uses its native
+            traffic lights (top-left) instead. */}
+        {!isMac && (
+          <div className="ml-1 flex items-center gap-0.5">
+            <button onClick={() => appWindow.minimize()} aria-label="Minimize" className="flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]">
+              <Minus size={15} />
+            </button>
+            <button onClick={() => appWindow.toggleMaximize()} aria-label={maximized ? "Restore" : "Maximize"} className="flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]">
+              <Square size={13} />
+            </button>
+            <button onClick={() => appWindow.close()} aria-label="Close" className="flex h-8 w-9 items-center justify-center rounded-[6px] text-[var(--mut)] hover:bg-[var(--err)] hover:text-white">
+              <X size={16} />
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

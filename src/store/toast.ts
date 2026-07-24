@@ -22,7 +22,7 @@ interface ToastState {
 const DEFAULT_TTL = 3200;
 const EXIT_MS = 200; // must match the .animate-toast-out duration
 
-export const useToasts = create<ToastState>((set) => {
+export const useToasts = create<ToastState>((set, get) => {
   // Two-phase removal: flag `leaving` (drives the exit animation), then drop the
   // toast after the animation finishes. Idempotent — a double dismiss is harmless.
   const beginDismiss = (id: number) => {
@@ -32,6 +32,12 @@ export const useToasts = create<ToastState>((set) => {
   return {
     toasts: [],
     push: (message, type = "success", ttl = DEFAULT_TTL) => {
+      // Dedup identical string toasts still on screen (e.g. a background event
+      // that fires more than once) — return the existing id instead of stacking.
+      if (typeof message === "string") {
+        const dup = get().toasts.find((t) => !t.leaving && t.type === type && t.message === message);
+        if (dup) return dup.id;
+      }
       const id = ++seq;
       set((s) => ({ toasts: [...s.toasts, { id, message, type }] }));
       if (ttl > 0) setTimeout(() => beginDismiss(id), ttl);

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { X, FolderPlus, Bell } from "lucide-react";
 import { useNotifications } from "../store/notifications";
 import { useApp } from "../store/app";
@@ -7,6 +8,21 @@ import { formatBytes, formatDate } from "../lib/format";
 export function NotificationsPanel() {
   const { panelOpen, items, togglePanel, clear } = useNotifications();
   const setView = useApp((s) => s.setView);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Close on click outside the panel (ignoring the Activity toggle button, so
+  // clicking it still toggles rather than close-then-reopen).
+  useEffect(() => {
+    if (!panelOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (panelRef.current?.contains(t) || t.closest("[data-notif-toggle]")) return;
+      togglePanel(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [panelOpen, togglePanel]);
+
   if (!panelOpen) return null;
 
   const openNotification = (n: (typeof items)[number]) => {
@@ -15,7 +31,7 @@ export function NotificationsPanel() {
   };
 
   return (
-    <div className="animate-pop fixed right-3 top-12 z-[90] flex max-h-[70vh] w-96 flex-col overflow-hidden rounded-[11px] border border-[var(--border-strong)] bg-[var(--card)] shadow-[var(--shadow-lg)]">
+    <div ref={panelRef} className="animate-pop fixed right-3 top-12 z-[90] flex max-h-[70vh] w-96 flex-col overflow-hidden rounded-[11px] border border-[var(--border-strong)] bg-[var(--card)] shadow-[var(--shadow-lg)]">
       <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
         <span className="flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
           <Bell size={15} /> Activity

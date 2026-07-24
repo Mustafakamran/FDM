@@ -35,6 +35,9 @@ export interface IndexEntry {
   progress: IndexProgressData;
   index: AccountIndex | null;
   error?: string;
+  /** What's currently being indexed: a single folder's name (per-folder index),
+   *  or undefined for a whole-account crawl. Drives the indexing banner label. */
+  target?: string;
 }
 
 interface IndexState {
@@ -100,14 +103,17 @@ export const useIndex = create<IndexState>((set, get) => {
         await listen<{ accountId: string }>("index-ready", async (ev) => {
           // Only toast when a crawl was actually in progress — not on the silent
           // cached-index load that happens on every account open.
-          const wasCrawling = get().byAccount[ev.payload.accountId]?.status === "crawling";
+          const prev = get().byAccount[ev.payload.accountId];
+          const wasCrawling = prev?.status === "crawling";
+          const target = prev?.target;
           const idx = await indexGet(ev.payload.accountId);
-          patch(ev.payload.accountId, { status: "ready", progress: blankProgress(), index: idx, error: undefined });
+          patch(ev.payload.accountId, { status: "ready", progress: blankProgress(), index: idx, error: undefined, target: undefined });
           if (wasCrawling) {
-            const files = idx?.tree
-              ? Object.values(idx.tree).reduce((n, arr) => n + arr.filter((i) => !i.IsDir).length, 0)
-              : 0;
-            useToasts.getState().push(`Index complete · ${files.toLocaleString()} files`, "success");
+            // Per-folder index → name that folder; whole-drive → total file count.
+            const msg = target
+              ? `Indexed ${target}`
+              : `Index complete · ${(idx?.tree ? Object.values(idx.tree).reduce((n, arr) => n + arr.filter((i) => !i.IsDir).length, 0) : 0).toLocaleString()} files`;
+            useToasts.getState().push(msg, "success");
           }
         });
         await listen<{ accountId: string; error: string }>("index-error", (ev) => {
@@ -128,7 +134,7 @@ export const useIndex = create<IndexState>((set, get) => {
       const cur = get().byAccount[account.id];
       if (cur && cur.status !== "idle" && cur.status !== "error") return;
       await ensureListeners();
-      patch(account.id, { status: "loading" });
+      patch(account.id, { status: "loading", target: undefined });
       await indexStart(account.id).catch((e) => patch(account.id, { status: "error", error: String(e) }));
     },
 
@@ -148,7 +154,7 @@ export const useIndex = create<IndexState>((set, get) => {
     recrawl: async (account) => {
       autoIndexCancelled.delete(account.id);
       await ensureListeners();
-      patch(account.id, { status: "loading", index: get().byAccount[account.id]?.index ?? null });
+      patch(account.id, { status: "loading", index: get().byAccount[account.id]?.index ?? null, target: undefined });
       await indexRecrawl(account.id).catch((e) => patch(account.id, { status: "error", error: String(e) }));
     },
 
@@ -161,6 +167,7 @@ export const useIndex = create<IndexState>((set, get) => {
         progress: blankProgress(),
         index: get().byAccount[account.id]?.index ?? null,
         error: undefined,
+        target: folderPath.split("/").pop() || folderPath,
       });
       await indexFolder(account.id, folderPath).catch((e) => patch(account.id, { status: "error", error: String(e) }));
     },

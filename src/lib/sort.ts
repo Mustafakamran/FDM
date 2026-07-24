@@ -122,3 +122,64 @@ export function sortItems(
 
   return keys.map((k) => k.item);
 }
+
+/** How to bucket items into visual groups. `none` = a flat list. */
+export type GroupBy = "none" | "type" | "date" | "size";
+
+export interface Group {
+  key: string;
+  label: string;
+  items: RcItem[];
+}
+
+const SIZE_BUCKETS: { max: number; label: string }[] = [
+  { max: 1024 ** 2, label: "Under 1 MB" },
+  { max: 100 * 1024 ** 2, label: "1–100 MB" },
+  { max: 1024 ** 3, label: "100 MB – 1 GB" },
+  { max: 10 * 1024 ** 3, label: "1–10 GB" },
+  { max: Infinity, label: "Over 10 GB" },
+];
+
+/** Partition an ALREADY-SORTED list into ordered groups. Items keep their
+ *  incoming order inside each group; only opt-in (`groupBy !== "none"`). `nowMs`
+ *  is passed in so the pure function never reads the clock itself. */
+export function groupItems(items: RcItem[], groupBy: GroupBy, res: SortResolvers, nowMs: number): Group[] {
+  if (groupBy === "none") return [{ key: "all", label: "", items }];
+  const order: string[] = [];
+  const map = new Map<string, Group>();
+  const push = (key: string, label: string, it: RcItem) => {
+    let g = map.get(key);
+    if (!g) { g = { key, label, items: [] }; map.set(key, g); order.push(key); }
+    g.items.push(it);
+  };
+  const dayMs = 86_400_000;
+  for (const it of items) {
+    if (groupBy === "type") {
+      if (it.IsDir) push("folder", "Folders", it);
+      else { const l = fileType(it.Name, false).label; push(`t:${l}`, l, it); }
+    } else if (groupBy === "date") {
+      const d = res.dateOf(it);
+      const t = d ? Date.parse(d) : NaN;
+      if (Number.isNaN(t)) push("z-unknown", "No date", it);
+      else {
+        const age = nowMs - t;
+        const [k, l] = age < dayMs ? ["a-today", "Today"]
+          : age < 2 * dayMs ? ["b-yesterday", "Yesterday"]
+          : age < 7 * dayMs ? ["c-week", "Previous 7 days"]
+          : age < 30 * dayMs ? ["d-month", "Previous 30 days"]
+          : age < 365 * dayMs ? ["e-year", "This year"]
+          : ["f-older", "Older"];
+        push(k, l, it);
+      }
+    } else {
+      // size
+      if (it.IsDir && !(res.sizeKnown?.(it) ?? true)) { push("z-folder", "Folders (uncounted)", it); continue; }
+      const s = res.sizeOf(it);
+      const b = SIZE_BUCKETS.find((x) => s < x.max) ?? SIZE_BUCKETS[SIZE_BUCKETS.length - 1];
+      push(`s:${b.label}`, b.label, it);
+    }
+  }
+  // Type/size keep bucket order stable; date keys are already prefixed a–f/z.
+  if (groupBy === "date") order.sort();
+  return order.map((k) => map.get(k)!);
+}

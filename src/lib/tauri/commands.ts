@@ -215,6 +215,15 @@ export function deleteItem(accountId: string, path: string, isDir: boolean): Pro
 }
 
 /**
+ * Move (or copy) a file/folder into another folder within the SAME account —
+ * in-app drag-and-drop reorg. Server-side on Drive/Dropbox (no re-download).
+ * Returns the item's new path.
+ */
+export function moveItem(accountId: string, srcPath: string, dstDir: string, isDir: boolean, copy: boolean): Promise<string> {
+  return invoke<string>("move_item", { accountId, srcPath, dstDir, isDir, copy });
+}
+
+/**
  * Decide how the review player should source a clip given its `sourceParams`
  * query string: "direct" (already-playable H.264/AAC → no transcode, instant) or
  * "hls" (needs the JIT transcoder). Probes the codec server-side; falls back to

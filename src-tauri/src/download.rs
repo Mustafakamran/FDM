@@ -656,6 +656,66 @@ pub fn delete_item(
     Ok(())
 }
 
+/// Move or copy a file/folder to another folder WITHIN the same account (in-app
+/// drag-and-drop reorg). Google Drive / Dropbox do these server-side, so no data
+/// is re-downloaded. A file uses `operations/movefile`/`copyfile`; a folder uses
+/// `sync/move`/`sync/copy` into `dest/<name>` (then rmdir the emptied source on a
+/// move). Read-only shared links and self/descendant targets are refused.
+/// Returns the item's new path.
+#[tauri::command]
+pub fn move_item(
+    rclone: tauri::State<RcloneState>,
+    account_id: String,
+    src_path: String,
+    dst_dir: String,
+    is_dir: bool,
+    copy: bool,
+) -> Result<String, String> {
+    if account_id.starts_with("dropboxlink_") {
+        return Err("can't move inside a Dropbox shared link (it's read-only)".into());
+    }
+    let src = src_path.trim().trim_matches('/');
+    if src.is_empty() {
+        return Err("refusing to move the account root".into());
+    }
+    let name = src.rsplit('/').next().unwrap_or(src);
+    let dst_dir = dst_dir.trim().trim_matches('/');
+    let dst_path = if dst_dir.is_empty() { name.to_string() } else { format!("{dst_dir}/{name}") };
+    if dst_path == src {
+        return Err("It's already in that folder.".into());
+    }
+    // A folder can't be dropped into itself or one of its own descendants.
+    if is_dir && (dst_dir == src || dst_dir.starts_with(&format!("{src}/"))) {
+        return Err("Can't move a folder into itself.".into());
+    }
+    let conn = connection(&rclone)?;
+    let fs = account_fs(&account_id)?; // e.g. "drive_x:"
+    if is_dir {
+        let src_fs = format!("{fs}{src}");
+        let dst_fs = format!("{fs}{dst_path}");
+        let endpoint = if copy { "sync/copy" } else { "sync/move" };
+        rc_post(
+            &conn,
+            endpoint,
+            &json!({ "srcFs": src_fs, "dstFs": dst_fs, "createEmptySrcDirs": true }),
+        )
+        .map_err(humanize_write_err)?;
+        // sync/move leaves the now-empty source directory behind — remove it.
+        if !copy {
+            let _ = rc_post(&conn, "operations/rmdir", &json!({ "fs": fs, "remote": src }));
+        }
+    } else {
+        let endpoint = if copy { "operations/copyfile" } else { "operations/movefile" };
+        rc_post(
+            &conn,
+            endpoint,
+            &json!({ "srcFs": fs, "srcRemote": src, "dstFs": fs, "dstRemote": dst_path }),
+        )
+        .map_err(humanize_write_err)?;
+    }
+    Ok(dst_path)
+}
+
 /// Turn rclone's raw write (delete/upload) failure into a human message for the
 /// common permission cases.
 fn humanize_write_err(e: String) -> String {
