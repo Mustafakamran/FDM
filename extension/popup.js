@@ -97,7 +97,13 @@ function test() {
     }
     // Nudge to re-setup when the app bundles a newer extension than the loaded one.
     const loaded = chrome.runtime.getManifest().version;
-    $update.hidden = !(res.extVersion && cmpVersions(res.extVersion, loaded) > 0);
+    const outdated = res.extVersion && cmpVersions(res.extVersion, loaded) > 0;
+    $update.hidden = !outdated;
+    if (outdated) {
+      document.getElementById("update-msg").innerHTML =
+        `FDM bundles <b>v${res.extVersion}</b> — you have <b>v${loaded}</b>. In FDM: ` +
+        `<b>Settings → Browser extension → Set up</b>, then reload this extension in chrome://extensions.`;
+    }
   });
 }
 
