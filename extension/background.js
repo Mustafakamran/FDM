@@ -230,13 +230,17 @@ function filenameFromItem(item) {
   return undefined;
 }
 
+// Returns true if the download was handed to FDM (so the caller must NOT let
+// Chrome continue). `item` here comes from onDeterminingFilename, so item.filename
+// is the REAL suggested name Chrome derived (Content-Disposition, else the URL) —
+// exactly what we want FDM to save as, instead of a bare UUID from the URL path.
 async function handleInterception(item) {
   // Choose the URL FDM should fetch: the post-redirect final URL if known.
   const url = item.finalUrl || item.url;
-  if (!isInterceptableUrl(url)) return;
+  if (!isInterceptableUrl(url)) return false;
 
   const { intercept } = await getConfig();
-  if (!intercept) return;
+  if (!intercept) return false;
 
   // Only intercept if FDM is currently reachable. If it's NOT, do nothing and
   // let the browser download normally — we must never break downloads.
@@ -247,13 +251,14 @@ async function handleInterception(item) {
       refreshReachable(),
       new Promise((resolve) => setTimeout(() => resolve(false), 600)),
     ]);
-    if (!ok) return;
+    if (!ok) return false;
   }
 
-  // Gather cookies + referrer + UA so cookie/referer-gated downloads succeed.
-  const cookie = await cookieHeaderForUrl(url);
+  const filename = filenameFromItem(item);
 
-  // Cancel and erase the Chrome download so it doesn't also land on disk.
+  // Cancel + erase the Chrome download. Doing this from onDeterminingFilename
+  // (which fires BEFORE Chrome's own Save dialog) means the browser never shows
+  // a second prompt — FDM is the only one that asks where to save.
   try {
     await chrome.downloads.cancel(item.id);
   } catch (_) {
@@ -265,23 +270,36 @@ async function handleInterception(item) {
     /* ignore */
   }
 
+  // Gather cookies + referrer + UA so cookie/referer-gated downloads succeed.
+  const cookie = await cookieHeaderForUrl(url);
   const res = await sendToFdm({
     url,
     kind: "file",
-    filename: filenameFromItem(item),
+    filename,
     referrer: item.referrer || undefined,
     cookie: cookie || undefined,
     ua: navigator.userAgent,
   });
 
   if (res && res.ok) {
-    notify("Handed to FDM", `${filenameFromItem(item) || url} is downloading in FDM.`);
+    notify("Handed to FDM", `${filename || url} is downloading in FDM.`);
   }
+  return true;
 }
 
-if (chrome.downloads && chrome.downloads.onCreated) {
+// Intercept at filename-determination time: this fires before Chrome shows any
+// Save dialog AND carries the resolved filename. If we hand it to FDM we cancel
+// the Chrome download and don't call suggest(); otherwise we release it normally.
+if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
+  chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+    handleInterception(item)
+      .then((handled) => { if (!handled) suggest(); })
+      .catch(() => suggest());
+    return true; // async: we call suggest() ourselves when we don't take it
+  });
+} else if (chrome.downloads && chrome.downloads.onCreated) {
+  // Fallback for engines without onDeterminingFilename (filename may be empty).
   chrome.downloads.onCreated.addListener((item) => {
-    // Fire-and-forget; never block the event loop on the download path.
     handleInterception(item).catch(() => {});
   });
 }

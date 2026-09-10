@@ -271,6 +271,18 @@ html,
 body,
 #root {
   height: 100%;
+  /* Kill the macOS WebView rubber-band: dragging on empty/non-scrolling areas
+     must not bounce the whole window like a web page. Inner panes still scroll
+     normally; this only stops overscroll from chaining up to the document. */
+  overscroll-behavior: none;
+}
+
+/* Inner scroll regions shouldn't bounce past their ends either, nor chain their
+   overscroll to the window. */
+.overflow-auto,
+.overflow-y-auto,
+.overflow-x-auto {
+  overscroll-behavior: contain;
 }
 
 body {
