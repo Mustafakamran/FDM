@@ -1,7 +1,8 @@
 // FDM Downloader — popup logic
 //
-// Lets the user paste the pairing token + port (persisted in
-// chrome.storage.local) and test the connection against FDM's /fdm/ping.
+// Everyday view is just the connection status + the intercept toggle; the
+// pairing fields live in a collapsible "Connection" section that only opens
+// itself when there's no token yet. The status auto-checks on open.
 
 const DEFAULT_PORT = 53713;
 
@@ -12,29 +13,47 @@ const $test = document.getElementById("test");
 const $reveal = document.getElementById("reveal");
 const $intercept = document.getElementById("intercept");
 const $status = document.getElementById("status");
+const $setup = document.getElementById("setup");
+const $summary = $setup.querySelector("summary");
 const $msg = $status.querySelector(".msg");
 
 function setStatus(state, text) {
   $status.classList.remove("ok", "fail");
-  if (state === "ok") $status.classList.add("ok");
-  else if (state === "fail") $status.classList.add("fail");
+  if (state === "ok" || state === "fail") $status.classList.add(state);
   $msg.textContent = text;
 }
 
-// ---- Load persisted config --------------------------------------------------
+// Reflect "paired" in the collapsed summary so the closed section still tells
+// you the connection is set up.
+function markPaired(paired) {
+  let badge = $summary.querySelector(".paired");
+  if (paired) {
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "paired";
+      badge.textContent = "Paired";
+      $summary.insertBefore(badge, $summary.querySelector(".chev"));
+    }
+  } else if (badge) {
+    badge.remove();
+  }
+}
+
+// ---- Persisted config -------------------------------------------------------
 
 async function load() {
-  const {
-    fdmToken = "",
-    fdmPort = DEFAULT_PORT,
-    fdmIntercept = true,
-  } = await chrome.storage.local.get(["fdmToken", "fdmPort", "fdmIntercept"]);
+  const { fdmToken = "", fdmPort = DEFAULT_PORT, fdmIntercept = true } =
+    await chrome.storage.local.get(["fdmToken", "fdmPort", "fdmIntercept"]);
   $token.value = fdmToken;
   $port.value = fdmPort || DEFAULT_PORT;
   $intercept.checked = fdmIntercept !== false;
+  const paired = !!fdmToken.trim();
+  markPaired(paired);
+  // Open the setup section only when there's nothing paired yet.
+  $setup.open = !paired;
+  // Auto-check the connection so the status is live without a click.
+  test();
 }
-
-// ---- Save -------------------------------------------------------------------
 
 async function save() {
   const fdmToken = $token.value.trim();
@@ -43,28 +62,25 @@ async function save() {
     fdmPort = DEFAULT_PORT;
     $port.value = DEFAULT_PORT;
   }
-  const fdmIntercept = !!$intercept.checked;
-  await chrome.storage.local.set({ fdmToken, fdmPort, fdmIntercept });
-  setStatus("", fdmToken ? "Saved. Click Test connection." : "Saved (no token yet).");
+  await chrome.storage.local.set({ fdmToken, fdmPort, fdmIntercept: !!$intercept.checked });
+  markPaired(!!fdmToken);
 }
 
 // ---- Test connection --------------------------------------------------------
 
 function test() {
   const port = parseInt($port.value, 10) || DEFAULT_PORT;
-  setStatus("", "Testing…");
+  setStatus("", "Checking…");
   chrome.runtime.sendMessage({ type: "fdm:ping", port }, (res) => {
     const err = chrome.runtime.lastError;
     if (err || !res || !res.ok) {
-      setStatus(
-        "fail",
-        "Can't reach FDM. Make sure the app is running and the port matches."
-      );
+      setStatus("fail", "FDM isn’t running (or wrong port).");
       return;
     }
-    const v = res.version ? ` (v${res.version})` : "";
+    const v = res.version ? ` · v${res.version}` : "";
     if (!$token.value.trim()) {
-      setStatus("ok", `FDM is running${v}. Now paste a token and Save.`);
+      setStatus("ok", `FDM found${v} — paste a token below.`);
+      $setup.open = true;
     } else {
       setStatus("ok", `Connected to FDM${v}.`);
     }
@@ -73,25 +89,18 @@ function test() {
 
 // ---- Wire up ----------------------------------------------------------------
 
-$save.addEventListener("click", save);
-$test.addEventListener("click", async () => {
-  // Persist before testing so the background uses fresh values.
-  await save();
-  test();
-});
+$save.addEventListener("click", async () => { await save(); test(); });
+$test.addEventListener("click", async () => { await save(); test(); });
 
 $reveal.addEventListener("click", () => {
   $token.type = $token.type === "password" ? "text" : "password";
 });
 
-// Persist the interception toggle immediately so it takes effect without
-// requiring the user to click Save.
 $intercept.addEventListener("change", () => {
   chrome.storage.local.set({ fdmIntercept: !!$intercept.checked });
 });
 
-// Save automatically when the popup closes / loses focus, so a pasted token
-// isn't lost if the user forgets to click Save.
+// Save automatically when the popup closes, so a pasted token isn't lost.
 window.addEventListener("blur", save);
 
 load();

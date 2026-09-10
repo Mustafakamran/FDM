@@ -5,229 +5,188 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>FDM Downloader</title>
     <style>
-      /* FDM dark theme tokens (hardcoded — extension can't read app CSS vars). */
+      /* FDM design tokens, mirrored from the app (the extension can't read the
+         app's CSS vars). Dark by default — the app's default theme — flipping to
+         the app's light palette on a light OS. */
       :root {
-        --bg: #000000;
-        --surface: #0e0e10;
-        --card: #161618;
-        --hover: #1f1f22;
-        --border: #262629;
-        --border-strong: #38383c;
-        --text: #f4f4f6;
-        --text-2: #a0a0a6;
-        --text-3: #66666d;
-        --accent: #ffffff;
-        --accent-ink: #000000;
-        --ok: #3fb950;
-        --warn: #d29922;
-        --fail: #f85149;
+        --bg: #0e0f12;
+        --card: #17181c;
+        --soft: #202229;
+        --line: #272930;
+        --line2: #34363d;
+        --ink: #f2f3f5;
+        --mut: #9aa1ad;
+        --faint: #6b7280;
+        --acc: #f2f3f5;
+        --onacc: #15161a;
+        --accw: rgba(242, 243, 245, 0.1);
+        --ok: #22c55e;
+        --warn: #e0a13a;
+        --err: #f0616a;
+        --shadow: 0 10px 28px rgba(8, 9, 14, 0.45);
+        --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #eef0f6;
+          --card: #ffffff;
+          --soft: #f5f6f9;
+          --line: #ebedf1;
+          --line2: #dfe2e8;
+          --ink: #1a1c23;
+          --mut: #646b78;
+          --faint: #9aa1ad;
+          --acc: #1a1c23;
+          --onacc: #ffffff;
+          --accw: rgba(26, 28, 35, 0.07);
+          --ok: #16a34a;
+          --warn: #d9881f;
+          --err: #e5484d;
+          --shadow: 0 10px 28px rgba(20, 22, 40, 0.14);
+        }
       }
       * { box-sizing: border-box; }
       html, body {
         margin: 0;
-        padding: 0;
         background: var(--bg);
-        color: var(--text);
-        font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        width: 320px;
+        color: var(--ink);
+        font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        width: 300px;
       }
-      .wrap { padding: 14px 14px 16px; }
-      header {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        margin-bottom: 12px;
+      .wrap { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+      header { display: flex; align-items: center; gap: 10px; }
+      .logo {
+        width: 30px; height: 30px; border-radius: 9px;
+        background: var(--acc); color: var(--onacc);
+        display: grid; place-items: center; flex: none;
       }
-      header .logo {
-        width: 28px; height: 28px;
-        border-radius: 8px;
-        background: var(--accent);
-        color: var(--accent-ink);
-        display: grid; place-items: center;
-        font-size: 15px;
-        border: 1px solid var(--border-strong);
+      .logo svg { width: 17px; height: 17px; }
+      header h1 { font-size: 14px; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+      header .sub { font-size: 11px; color: var(--faint); margin-top: 1px; }
+
+      /* Status pill — the everyday state. */
+      .status {
+        display: flex; align-items: center; gap: 9px;
+        padding: 10px 12px; border-radius: 11px;
+        background: var(--card); border: 1px solid var(--line);
+        font-size: 12.5px; font-weight: 500;
       }
-      header h1 { font-size: 14px; margin: 0; font-weight: 700; color: var(--text); }
-      header .sub { font-size: 11px; color: var(--text-2); margin-top: 1px; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+      .status.ok { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+      .status.ok .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+      .status.fail { border-color: color-mix(in srgb, var(--err) 45%, var(--line)); }
+      .status.fail .dot { background: var(--err); }
+      .status .msg { min-width: 0; line-height: 1.3; }
+
+      /* Intercept toggle — the one everyday control. */
+      .toggle {
+        display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        padding: 11px 12px; border-radius: 11px;
+        background: var(--card); border: 1px solid var(--line);
+      }
+      .t-title { font-size: 12.5px; font-weight: 600; }
+      .t-sub { font-size: 11px; color: var(--faint); margin-top: 2px; line-height: 1.3; }
+      .switch { position: relative; width: 38px; height: 22px; flex: none; }
+      .switch input { opacity: 0; width: 0; height: 0; }
+      .slider {
+        position: absolute; inset: 0; cursor: pointer; border-radius: 999px;
+        background: var(--soft); border: 1px solid var(--line2);
+        transition: background 0.15s ease, border-color 0.15s ease;
+      }
+      .slider::before {
+        content: ""; position: absolute; height: 16px; width: 16px; left: 2px; top: 2px;
+        background: var(--faint); border-radius: 50%;
+        transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), background 0.15s ease;
+      }
+      .switch input:checked + .slider { background: var(--acc); border-color: var(--acc); }
+      .switch input:checked + .slider::before { transform: translateX(16px); background: var(--onacc); }
+
+      /* Setup — collapsed once paired; the details/summary is native + JS-opened
+         automatically when there's no token yet. */
+      details.setup {
+        border: 1px solid var(--line); border-radius: 11px;
+        background: var(--card); overflow: hidden;
+      }
+      details.setup > summary {
+        list-style: none; cursor: pointer; user-select: none;
+        display: flex; align-items: center; gap: 8px;
+        padding: 10px 12px; font-size: 12.5px; font-weight: 600; color: var(--ink);
+      }
+      details.setup > summary::-webkit-details-marker { display: none; }
+      summary .chev { margin-left: auto; color: var(--faint); transition: transform 0.18s ease; }
+      details[open] summary .chev { transform: rotate(90deg); }
+      summary .paired { font-size: 11px; font-weight: 500; color: var(--ok); margin-left: auto; }
+      .setup-body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 10px; }
 
       label {
-        display: block;
-        font-size: 11px;
-        color: var(--text-3);
-        margin: 12px 0 4px;
-        text-transform: uppercase;
-        letter-spacing: .04em;
+        display: block; font-family: var(--mono);
+        font-size: 10px; font-weight: 600; color: var(--faint);
+        text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 5px;
       }
       input[type="text"], input[type="password"], input[type="number"] {
-        width: 100%;
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        color: var(--text);
-        padding: 8px 9px;
-        font: inherit;
-        outline: none;
-        transition: border-color .12s ease;
+        width: 100%; background: var(--bg); color: var(--ink);
+        border: 1px solid var(--line2); border-radius: 8px;
+        padding: 8px 10px; font: inherit; outline: none;
+        transition: border-color 0.12s ease;
       }
-      input::placeholder { color: var(--text-3); }
-      input:focus { border-color: var(--border-strong); }
+      input::placeholder { color: var(--faint); }
+      input:focus { border-color: var(--acc); }
       .row { display: flex; gap: 8px; }
       .row > .grow { flex: 1; }
-      .row > .port { width: 92px; }
+      .row > .port { width: 84px; flex: none; }
 
-      /* Primary button: light accent fill with dark ink. */
       button {
-        font: inherit;
-        font-weight: 600;
-        color: var(--accent-ink);
-        background: var(--accent);
-        border: 1px solid var(--border-strong);
-        border-radius: 8px;
-        padding: 9px 12px;
-        cursor: pointer;
-        transition: opacity .12s ease, transform .05s ease;
+        font: inherit; font-weight: 600; cursor: pointer;
+        border-radius: 8px; padding: 9px 12px; border: 1px solid transparent;
+        transition: opacity 0.12s ease, background 0.12s ease, transform 0.04s ease;
       }
-      button:hover { opacity: .88; }
       button:active { transform: translateY(1px); }
-      /* Secondary button: dark card surface with light text. */
-      button.secondary {
-        background: var(--card);
-        color: var(--text);
-        border-color: var(--border);
+      button.primary { background: var(--acc); color: var(--onacc); }
+      button.primary:hover { opacity: 0.9; }
+      button.ghost { background: var(--card); color: var(--ink); border-color: var(--line2); }
+      button.ghost:hover { background: var(--soft); }
+      button.full { width: 100%; }
+      .iconbtn {
+        flex: none; width: 40px; display: grid; place-items: center;
+        background: var(--card); color: var(--mut); border: 1px solid var(--line2);
+        border-radius: 8px; cursor: pointer;
       }
-      button.secondary:hover { background: var(--hover); opacity: 1; }
-      .actions { display: flex; gap: 8px; margin-top: 14px; }
-      .actions button { flex: 1; }
-
-      .status {
-        margin-top: 12px;
-        font-size: 12px;
-        padding: 9px 10px;
-        border-radius: 8px;
-        background: var(--card);
-        border: 1px solid var(--border);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-height: 36px;
-      }
-      .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-3); flex: none; }
-      .status.ok   { border-color: rgba(63,185,80,.5); }
-      .status.ok   .dot { background: var(--ok); }
-      .status.fail { border-color: rgba(248,81,73,.5); }
-      .status.fail .dot { background: var(--fail); }
-      .status .msg { line-height: 1.35; color: var(--text); }
+      .iconbtn:hover { background: var(--soft); color: var(--ink); }
+      .iconbtn svg { width: 15px; height: 15px; }
 
       .hint {
-        margin-top: 12px;
-        font-size: 11px;
-        color: var(--text-2);
-        line-height: 1.5;
+        font-size: 11px; color: var(--faint); line-height: 1.5;
       }
       .hint code {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        padding: 1px 5px;
-        font-size: 11px;
-        color: var(--text);
-      }
-      .hint strong { color: var(--text); }
-      /* Small icon button (reveal token). */
-      .iconbtn {
-        background: var(--card);
-        border: 1px solid var(--border);
-        color: var(--text);
-        border-radius: 8px;
-        padding: 0 10px;
-        cursor: pointer;
-        font-weight: 600;
-        transition: background .12s ease;
-      }
-      .iconbtn:hover { background: var(--hover); opacity: 1; }
-
-      /* Toggle row for "Intercept browser downloads". */
-      .toggle {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        margin-top: 14px;
-        padding: 10px 11px;
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-      }
-      .toggle .t-text { line-height: 1.3; }
-      .toggle .t-title { font-size: 12px; font-weight: 600; color: var(--text); }
-      .toggle .t-sub { font-size: 11px; color: var(--text-2); margin-top: 2px; }
-      .switch { position: relative; width: 40px; height: 22px; flex: none; }
-      .switch input { opacity: 0; width: 0; height: 0; }
-      .switch .slider {
-        position: absolute;
-        inset: 0;
-        background: var(--surface);
-        border: 1px solid var(--border-strong);
-        border-radius: 999px;
-        cursor: pointer;
-        transition: background .15s ease, border-color .15s ease;
-      }
-      .switch .slider::before {
-        content: "";
-        position: absolute;
-        height: 16px; width: 16px;
-        left: 2px; top: 2px;
-        background: var(--text-3);
-        border-radius: 50%;
-        transition: transform .15s ease, background .15s ease;
-      }
-      .switch input:checked + .slider {
-        background: var(--accent);
-        border-color: var(--accent);
-      }
-      .switch input:checked + .slider::before {
-        transform: translateX(18px);
-        background: var(--accent-ink);
+        font-family: var(--mono); font-size: 10.5px;
+        background: var(--soft); border: 1px solid var(--line);
+        border-radius: 5px; padding: 1px 5px; color: var(--mut);
       }
     </style>
   </head>
   <body>
     <div class="wrap">
       <header>
-        <div class="logo">⬇</div>
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M6 12l6 6 6-6M5 20h14" /></svg>
+        </div>
         <div>
           <h1>FDM Downloader</h1>
-          <div class="sub">Send links straight to the FDM app</div>
+          <div class="sub">Send links straight to FDM</div>
         </div>
       </header>
 
-      <label for="token">Pairing token</label>
-      <div class="row">
-        <input
-          id="token"
-          class="grow"
-          type="password"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="Paste from FDM Settings → Browser extension"
-        />
-        <button id="reveal" class="iconbtn" type="button" title="Show / hide">👁</button>
-      </div>
-
-      <label for="port">Port</label>
-      <div class="row">
-        <input id="port" class="port" type="number" min="1" max="65535" value="53713" />
-        <button id="save" class="grow" type="button">Save</button>
-      </div>
-
-      <div class="actions">
-        <button id="test" type="button">Test connection</button>
+      <div id="status" class="status">
+        <span class="dot"></span>
+        <span class="msg">Checking…</span>
       </div>
 
       <div class="toggle">
-        <div class="t-text">
-          <div class="t-title">Intercept browser downloads</div>
-          <div class="t-sub">Hand new downloads to FDM (when FDM is running).</div>
+        <div>
+          <div class="t-title">Intercept downloads</div>
+          <div class="t-sub">Hand new downloads to FDM.</div>
         </div>
         <label class="switch" title="Intercept browser downloads">
           <input id="intercept" type="checkbox" checked />
@@ -235,16 +194,34 @@
         </label>
       </div>
 
-      <div id="status" class="status">
-        <span class="dot"></span>
-        <span class="msg">Not tested yet.</span>
-      </div>
-
-      <div class="hint">
-        In FDM, open <code>Settings → Browser extension</code>, copy the token,
-        paste it above and click <strong>Save</strong>. Then
-        <strong>Test connection</strong> to confirm FDM is running.
-      </div>
+      <details class="setup" id="setup">
+        <summary>
+          Connection
+          <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg></span>
+        </summary>
+        <div class="setup-body">
+          <div>
+            <label for="token">Pairing token</label>
+            <div class="row">
+              <input id="token" class="grow" type="password" autocomplete="off" spellcheck="false" placeholder="Paste from FDM Settings" />
+              <button id="reveal" class="iconbtn" type="button" title="Show / hide">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></svg>
+              </button>
+            </div>
+          </div>
+          <div>
+            <label for="port">Port</label>
+            <div class="row">
+              <input id="port" class="port" type="number" min="1" max="65535" value="53713" />
+              <button id="save" class="primary grow" type="button">Save</button>
+            </div>
+          </div>
+          <button id="test" class="ghost full" type="button">Test connection</button>
+          <div class="hint">
+            In FDM: <code>Settings → Browser extension</code> → copy the token, paste it above, <strong>Save</strong>.
+          </div>
+        </div>
+      </details>
     </div>
 
     <script src="popup.js"></script>
