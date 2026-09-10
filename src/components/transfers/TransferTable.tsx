@@ -1,8 +1,26 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Pause, Play, X, Square, Zap, Trash2, RotateCcw, Copy, FolderOpen, FolderSymlink, AlertCircle } from "lucide-react";
+import { Pause, Play, X, Square, Zap, Trash2, RotateCcw, Copy, FolderOpen, FolderSymlink, AlertCircle, ExternalLink, FileArchive } from "lucide-react";
 import { formatBytes, formatSpeed, formatEta } from "../../lib/format";
 import { laneOf } from "../../lib/lane";
+import { isArchive } from "../../lib/review";
+import { openInFileManager, extractArchive, revealPath } from "../../lib/tauri/commands";
+import { useToasts } from "../../store/toast";
+
+/** Join a folder + leaf with the folder's own separator (handles Windows paths). */
+const joinPath = (dir: string, name: string) =>
+  dir.endsWith("/") || dir.endsWith("\\") ? dir + name : dir + (dir.includes("\\") && !dir.includes("/") ? "\\" : "/") + name;
+
+/** Extract a completed archive next to it, then reveal the output. */
+async function extractHere(file: string) {
+  try {
+    const out = await extractArchive(file);
+    useToasts.getState().push(`Extracted to “${out.split(/[\\/]/).pop()}”`, "success");
+    void revealPath(out);
+  } catch (e) {
+    useToasts.getState().push(`Extract failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+  }
+}
 import { fileType } from "../../lib/file-types";
 import { SpeedGraph } from "../ui/SpeedGraph";
 import { ContextMenu, type MenuItem } from "../ui/ContextMenu";
@@ -59,8 +77,15 @@ function buildMenu(row: TransferRow, a: RowActions, onRequestDelete: (r: Transfe
   // Navigate to source (in-app, Drive/Dropbox only) and open the local
   // destination in the OS file manager.
   const primary = !row.upload && laneOf(row.accountId) === "primary";
-  if (a.onGoToSource && primary) items.push({ label: "Go to source folder", icon: FolderSymlink, separator: items.length > 0, onClick: () => a.onGoToSource!(row) });
-  if (a.onOpenDest && !row.upload && row.dest) items.push({ label: "Open destination folder", icon: FolderOpen, separator: items.length > 0 && !primary, onClick: () => a.onOpenDest!(row) });
+  // A finished download → open the actual file in its default app.
+  if (row.state === "completed" && !row.upload && row.dest && row.name) {
+    items.push({ label: "Open file", icon: ExternalLink, separator: items.length > 0, onClick: () => void openInFileManager(joinPath(row.dest, row.name)) });
+    if (isArchive(row.name)) {
+      items.push({ label: "Extract archive", icon: FileArchive, onClick: () => void extractHere(joinPath(row.dest, row.name)) });
+    }
+  }
+  if (a.onGoToSource && primary) items.push({ label: "Go to source folder", icon: FolderSymlink, separator: items.length > 0 && row.state !== "completed", onClick: () => a.onGoToSource!(row) });
+  if (a.onOpenDest && !row.upload && row.dest) items.push({ label: "Open destination folder", icon: FolderOpen, separator: items.length > 0 && !primary && row.state !== "completed", onClick: () => a.onOpenDest!(row) });
   items.push({ label: "Copy source", icon: Copy, separator: true, onClick: () => copy(row.source) });
   items.push({ label: "Copy destination", icon: Copy, onClick: () => copy(row.dest) });
   if (a.onDelete) items.push({ label: "Delete…", icon: Trash2, danger: true, separator: true, onClick: () => onRequestDelete(row) });

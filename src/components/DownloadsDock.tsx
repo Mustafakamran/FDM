@@ -1,6 +1,11 @@
 import { memo, useMemo, useState } from "react";
-import { ChevronDown, X, Check, AlertCircle, AlertTriangle, RefreshCw, Ban, Clock, Pause, Play, Globe, ArrowDown, ArrowUp, ArrowDownUp } from "lucide-react";
+import { ChevronDown, X, Check, AlertCircle, AlertTriangle, RefreshCw, Ban, Clock, Pause, Play, Globe, ArrowDown, ArrowUp, ArrowDownUp, ExternalLink } from "lucide-react";
 import { useTransfers, type QueueItem, type BlockKind } from "../store/transfers";
+import { openInFileManager } from "../lib/tauri/commands";
+
+/** Join a folder + leaf with the folder's own separator (handles Windows paths). */
+const joinDock = (dir: string, name: string) =>
+  dir.endsWith("/") || dir.endsWith("\\") ? dir + name : dir + (dir.includes("\\") && !dir.includes("/") ? "\\" : "/") + name;
 
 /** Short fix hint per block kind, shown on a "needs attention" transfer. */
 const BLOCK_HINT: Record<BlockKind, string> = {
@@ -192,6 +197,8 @@ const Row = memo(function Row({ job, labelOf }: { job: JobStatus; labelOf: Label
         </div>
       ) : isUpload ? (
         <button onClick={() => dismissUpload(job.jobId)} aria-label={`Dismiss ${job.name}`} title="Dismiss" className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] text-[var(--faint)] opacity-0 transition hover:bg-[var(--soft)] hover:text-[var(--ink)] group-hover:opacity-100"><X size={13} /></button>
+      ) : job.finished && job.success && job.dest && job.name ? (
+        <button onClick={() => void openInFileManager(joinDock(job.dest, job.name))} aria-label={`Open ${job.name}`} title="Open file" className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] text-[var(--faint)] transition hover:bg-[var(--soft)] hover:text-[var(--acc)]"><ExternalLink size={13} /></button>
       ) : (
         <span className="w-6 shrink-0" />
       )}

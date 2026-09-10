@@ -168,6 +168,20 @@ fn header(k: &str, v: &str) -> Header {
     Header::from_bytes(k.as_bytes(), v.as_bytes()).expect("valid header")
 }
 
+/// Version of the extension bundled with THIS app build (read from the resource
+/// `extension/manifest.json`). Surfaced in `/fdm/ping` so the popup can tell the
+/// user when the loaded (Chrome) copy is older than what the app now ships.
+fn bundled_ext_version(app: &AppHandle) -> String {
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|d| d.join("extension").join("manifest.json"))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("version").and_then(|x| x.as_str()).map(String::from))
+        .unwrap_or_default()
+}
+
 /// The CORS headers every response carries (the extension calls cross-origin).
 fn cors_headers() -> [Header; 3] {
     [
@@ -223,7 +237,7 @@ fn respond_json(req: tiny_http::Request, status: u16, body: serde_json::Value) {
 /// Handle one incoming request. Pure routing + side effects (event emit); kept
 /// small so the unit-tested helpers (`token_matches`, `normalize_kind`) carry the
 /// logic.
-fn handle(app: &AppHandle, version: &str, expected_token: &str, mut req: tiny_http::Request) {
+fn handle(app: &AppHandle, version: &str, ext_version: &str, expected_token: &str, mut req: tiny_http::Request) {
     let method = req.method().clone();
     let url = req.url().to_string();
     let path = url.split('?').next().unwrap_or(&url).to_string();
@@ -240,7 +254,7 @@ fn handle(app: &AppHandle, version: &str, expected_token: &str, mut req: tiny_ht
 
     match (&method, path.as_str()) {
         (Method::Get, "/fdm/ping") => {
-            respond_json(req, 200, json!({ "ok": true, "version": version }));
+            respond_json(req, 200, json!({ "ok": true, "version": version, "extVersion": ext_version }));
         }
         (Method::Post, "/fdm/ingest") => {
             // Gate on the pairing token before reading/acting on the body.
@@ -319,13 +333,15 @@ pub fn start_ingest_server(app: &AppHandle) {
     };
 
     let version = app.package_info().version.to_string();
+    let ext_version = bundled_ext_version(app);
     let app = app.clone();
     std::thread::spawn(move || {
         for req in server.incoming_requests() {
             let app = app.clone();
             let version = version.clone();
+            let ext_version = ext_version.clone();
             let token = expected_token.clone();
-            std::thread::spawn(move || handle(&app, &version, &token, req));
+            std::thread::spawn(move || handle(&app, &version, &ext_version, &token, req));
         }
     });
 }

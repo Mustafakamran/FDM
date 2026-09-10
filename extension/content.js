@@ -464,11 +464,12 @@
     btn.className = "ytp-button";
     btn.title = "Download with FDM";
     btn.setAttribute("aria-label", "Download with FDM");
-    // 36x36 viewBox to match native YouTube control icons; a download arrow.
+    // 36x36 viewBox to match native YouTube control icons; a clean, centered
+    // download glyph (stroke-based, like the native controls) instead of the old
+    // off-center filled paths that rendered broken.
     btn.innerHTML =
-      '<svg height="100%" viewBox="0 0 36 36" width="100%" fill="#fff">' +
-      '<path d="M18 21.5l-5-5h3.2V10h3.6v6.5H26z" />' +
-      '<path d="M11 24.5h14v2H11z" />' +
+      '<svg height="100%" viewBox="0 0 36 36" width="100%" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M18 11v10" /><path d="M13 17l5 5 5-5" /><path d="M12 26h12" />' +
       "</svg>";
     btn.style.verticalAlign = "top";
 

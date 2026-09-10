@@ -152,6 +152,7 @@ export async function ingest(
     dest?: () => Promise<string>;
     askWhereToSave?: () => boolean;
     saveDialog?: (opts: { defaultPath?: string }) => Promise<string | null>;
+    folderDialog?: () => Promise<string | null>;
   } = {},
 ): Promise<void> {
   const url = payload.url?.trim();
@@ -160,6 +161,7 @@ export async function ingest(
   const pushToast = deps.pushToast ?? ((m: string) => useToasts.getState().push(m, "success"));
   const askWhere = (deps.askWhereToSave ?? getAskWhereToSave)();
   const saveDialog = deps.saveDialog ?? save;
+  const folderDialog = deps.folderDialog ?? pickDownloadDest;
 
   const defaultFolder = await (deps.dest ?? resolveDest)();
   const suggested = suggestedName(payload);
@@ -169,12 +171,21 @@ export async function ingest(
   let name = suggested;
 
   if (askWhere || payload.prompt) {
-    const defaultPath = defaultFolder ? joinPath(defaultFolder, suggested) : suggested;
-    const chosen = await saveDialog({ defaultPath });
-    if (!chosen) return; // user cancelled — no download
-    const split = splitSavePath(chosen);
-    dest = split.dir;
-    name = split.name;
+    if (payload.kind === "media") {
+      // yt-dlp resolves the real title itself and names the file with it, so a
+      // Save-As with a URL-derived name (e.g. "watch") is wrong and confusing —
+      // only the folder matters. Prompt for a folder instead.
+      const dir = await folderDialog();
+      if (!dir) return;
+      dest = dir;
+    } else {
+      const defaultPath = defaultFolder ? joinPath(defaultFolder, suggested) : suggested;
+      const chosen = await saveDialog({ defaultPath });
+      if (!chosen) return; // user cancelled — no download
+      const split = splitSavePath(chosen);
+      dest = split.dir;
+      name = split.name;
+    }
   }
 
   const item = itemForUrl(url, name, headers);

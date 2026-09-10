@@ -273,6 +273,24 @@ export function openInFileManager(path: string): Promise<void> {
   return invoke("open_in_file_manager", { path });
 }
 
+/** One entry inside an archive (from `list_archive`). */
+export interface ArchiveEntry {
+  name: string;
+  size: number;
+  isDir: boolean;
+}
+
+/** List a local ZIP/RAR archive's contents without extracting. */
+export function listArchive(path: string): Promise<ArchiveEntry[]> {
+  return invoke<ArchiveEntry[]>("list_archive", { path });
+}
+
+/** Extract a local ZIP/RAR into a fresh folder (defaults to the archive's own
+ *  folder). Returns the created output folder path. */
+export function extractArchive(path: string, dest?: string): Promise<string> {
+  return invoke<string>("extract_archive", { path, dest });
+}
+
 /** Delete a download's files on disk (`dest/name` + any `.fdmpart`). Guarded. */
 export function deleteDownloadFiles(dest: string, name: string): Promise<void> {
   return invoke("delete_download_files", { dest, name });

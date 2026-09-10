@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod archive;
 pub mod bdm;
 pub mod download;
 pub mod drive;
@@ -245,6 +246,8 @@ pub fn run() {
         .manage(speedtest::SpeedTestState::default())
         .invoke_handler(tauri::generate_handler![
             take_pending_magnets,
+            archive::list_archive,
+            archive::extract_archive,
             rc_call,
             quit_app,
             start_hidden,

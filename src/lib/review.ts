@@ -25,9 +25,25 @@ const IMAGE = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]);
  */
 const IMAGE_BEST_EFFORT = new Set(["heic", "heif"]);
 
+/** Audio the webview <audio> can play (streamed straight from the media proxy). */
+const AUDIO = new Set(["mp3", "wav", "aac", "m4a", "flac", "oga", "opus", "aiff", "aif", "wma"]);
+/** Documents the webview renders inline (WKWebView/WebView2 have a PDF viewer). */
+const PDF = new Set(["pdf"]);
+/** Archives — no inline render, but the extractor lists/extracts them. */
+const ARCHIVE = new Set(["zip", "rar", "7z", "tar", "gz", "tgz", "bz2"]);
+
 export function extOf(name: string): string {
   const i = name.lastIndexOf(".");
   return i >= 0 ? name.slice(i + 1).toLowerCase() : "";
+}
+export function isAudio(name: string): boolean {
+  return AUDIO.has(extOf(name));
+}
+export function isPdf(name: string): boolean {
+  return PDF.has(extOf(name));
+}
+export function isArchive(name: string): boolean {
+  return ARCHIVE.has(extOf(name));
 }
 export function isVideo(name: string): boolean {
   return VIDEO.has(extOf(name));
@@ -39,9 +55,9 @@ export function isImage(name: string): boolean {
   const ext = extOf(name);
   return IMAGE.has(ext) || IMAGE_BEST_EFFORT.has(ext);
 }
-/** Anything that gets an in-app preview affordance at all (video or image). */
+/** Anything that gets an in-app preview affordance at all (video/image/audio/pdf). */
 export function isPreviewable(name: string): boolean {
-  return isVideo(name) || isImage(name);
+  return isVideo(name) || isImage(name) || isAudio(name) || isPdf(name);
 }
 
 /** UTF-8-safe base64url (no padding) — matches the Rust URL_SAFE_NO_PAD decoder. */

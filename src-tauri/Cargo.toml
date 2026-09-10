@@ -1,6 +1,6 @@
 [package]
 name = "google-drive-downloader"
-version = "2.8.9"
+version = "2.9.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -30,6 +30,10 @@ tauri-plugin-single-instance = "2"
 # Deep links: register FDM as the OS handler for magnet: links so clicking a
 # magnet in a browser opens FDM and queues the torrent.
 tauri-plugin-deep-link = "2"
+# Archive listing + extraction for the file preview (ZIP pure-Rust; RAR via the
+# unrar C lib, compiled by the crate — builds on macOS + the Windows CI runner).
+zip = { version = "2", default-features = false, features = ["deflate", "bzip2", "deflate64"] }
+unrar = "0.5"
 rand = "0.10.1"
 # rustls-tls is required for the external HTTPS calls (Google/Dropbox token +
 # API endpoints); loopback rc calls are plain HTTP but need a TLS backend present.

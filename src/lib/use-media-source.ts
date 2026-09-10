@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReviewTarget } from "../store/app";
 import { useHistory } from "../store/history";
 import { streamMode } from "./tauri/commands";
-import { hlsMasterUrl, isImage, isPlayable, isVideo, sourceParams, streamUrl } from "./review";
+import { hlsMasterUrl, isAudio, isImage, isPdf, isPlayable, isVideo, sourceParams, streamUrl } from "./review";
 
 /**
  * Above this size, even a playable-codec video is streamed via the transcoded
@@ -21,7 +21,11 @@ export interface MediaSource {
   isImg: boolean;
   /** True for any recognized video (playable or transcode-needed). */
   isVideoFile: boolean;
-  /** True for anything we can show in-app at all (video or image). */
+  /** True for audio files (rendered via <audio>). */
+  isAudioFile: boolean;
+  /** True for PDFs (rendered via the webview's built-in PDF viewer). */
+  isPdfFile: boolean;
+  /** True for anything we can show in-app at all (video/image/audio/pdf). */
   previewable: boolean;
   /** A background-probe error string to surface only if playback also fails. */
   diag: string;
@@ -51,8 +55,12 @@ export interface MediaSource {
 export function useMediaSource(accountId: string, target: ReviewTarget): MediaSource {
   const isImg = isImage(target.name);
   const isVideoFile = isVideo(target.name);
+  const isAudioFile = isAudio(target.name);
+  const isPdfFile = isPdf(target.name);
   const playable = isPlayable(target.name);
-  const previewable = isImg || isVideoFile;
+  const previewable = isImg || isVideoFile || isAudioFile || isPdfFile;
+  // These stream straight from the media proxy like an image (no HLS probe).
+  const directOnly = isImg || isAudioFile || isPdfFile;
 
   const historyItems = useHistory((s) => s.items);
   const localDest = useMemo(
@@ -78,7 +86,9 @@ export function useMediaSource(accountId: string, target: ReviewTarget): MediaSo
         const direct = await streamUrl(accountId, target, localDest);
         if (!alive) return;
         setUrl(direct);
-        if (isImg) return; // <img onError> handles failures; no probing needed.
+        // Images/audio/PDF play/render straight from the direct URL; only video
+        // needs the codec probe + possible HLS transcode below.
+        if (directOnly) return;
 
         // Decide direct vs transcoded (HLS), matching how Drive/Dropbox web
         // preview a clip:
@@ -123,7 +133,7 @@ export function useMediaSource(accountId: string, target: ReviewTarget): MediaSo
     return () => {
       alive = false;
     };
-  }, [accountId, target, previewable, isImg, playable, localDest]);
+  }, [accountId, target, previewable, directOnly, playable, localDest]);
 
-  return { url, hlsUrl, isImg, isVideoFile, previewable, diag, err, setErr, localDest };
+  return { url, hlsUrl, isImg, isVideoFile, isAudioFile, isPdfFile, previewable, diag, err, setErr, localDest };
 }

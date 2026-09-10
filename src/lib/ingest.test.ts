@@ -161,11 +161,11 @@ describe("ingest", () => {
     expect(dest).toBe("/Downloads");
   });
 
-  it("prompts (save dialog) when askWhereToSave is on; uses chosen folder + name", async () => {
+  it("prompts (save dialog) for a FILE when askWhereToSave is on; uses chosen folder + name", async () => {
     const enqueue = vi.fn();
-    const saveDialog = vi.fn().mockResolvedValue("/Users/me/Movies/picked.mp4");
+    const saveDialog = vi.fn().mockResolvedValue("/Users/me/Movies/picked.zip");
     await ingest(
-      { url: "https://h/clip.mp4", kind: "media", filename: "clip.mp4" },
+      { url: "https://h/clip.zip", kind: "file", filename: "clip.zip" },
       {
         enqueue,
         pushToast: vi.fn(),
@@ -175,10 +175,31 @@ describe("ingest", () => {
       },
     );
     // dialog seeded with <defaultFolder>/<suggested filename>
-    expect(saveDialog).toHaveBeenCalledWith({ defaultPath: "/Downloads/clip.mp4" });
+    expect(saveDialog).toHaveBeenCalledWith({ defaultPath: "/Downloads/clip.zip" });
     const [, items, dest] = enqueue.mock.calls[0];
     expect(dest).toBe("/Users/me/Movies");
-    expect(items[0].name).toBe("picked.mp4");
+    expect(items[0].name).toBe("picked.zip");
+  });
+
+  it("prompts for a FOLDER (not a filename) for MEDIA — yt-dlp names by title", async () => {
+    const enqueue = vi.fn();
+    const folderDialog = vi.fn().mockResolvedValue("/Users/me/Movies");
+    const saveDialog = vi.fn();
+    await ingest(
+      { url: "https://youtube.com/watch?v=abc", kind: "media" },
+      {
+        enqueue,
+        pushToast: vi.fn(),
+        dest: () => Promise.resolve("/Downloads"),
+        askWhereToSave: () => true,
+        saveDialog,
+        folderDialog,
+      },
+    );
+    expect(folderDialog).toHaveBeenCalledTimes(1);
+    expect(saveDialog).not.toHaveBeenCalled();
+    const [, , dest] = enqueue.mock.calls[0];
+    expect(dest).toBe("/Users/me/Movies");
   });
 
   it("prompts when payload.prompt is true even if the setting is off", async () => {

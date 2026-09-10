@@ -16,6 +16,17 @@ const $status = document.getElementById("status");
 const $setup = document.getElementById("setup");
 const $summary = $setup.querySelector("summary");
 const $msg = $status.querySelector(".msg");
+const $update = document.getElementById("update");
+
+// Compare dotted versions; returns >0 if a is newer than b.
+function cmpVersions(a, b) {
+  const pa = String(a || "").split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = String(b || "").split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+  }
+  return 0;
+}
 
 function setStatus(state, text) {
   $status.classList.remove("ok", "fail");
@@ -84,6 +95,9 @@ function test() {
     } else {
       setStatus("ok", `Connected to FDM${v}.`);
     }
+    // Nudge to re-setup when the app bundles a newer extension than the loaded one.
+    const loaded = chrome.runtime.getManifest().version;
+    $update.hidden = !(res.extVersion && cmpVersions(res.extVersion, loaded) > 0);
   });
 }
 
