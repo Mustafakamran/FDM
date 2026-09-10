@@ -184,6 +184,10 @@ export function classifyBlock(msg: string): { kind: BlockKind; autoRetry: boolea
     return { kind: "rate", autoRetry: true, hint: "Rate-limited by the provider — retrying automatically." };
   if (/(error sending request|connection|timed out|timeout|dns|network|reset|temporar|\b50[234]\b|unreachable|broken pipe|eof)/.test(m))
     return { kind: "network", autoRetry: true, hint: "Network problem — retrying automatically." };
+  // Torrent engine still warming up (e.g. the rqbit sidecar is being Gatekeeper-
+  // scanned on the first run after an update) — retry, it comes up shortly.
+  if (/(rqbit|did not come up|spawn rqbit|torrent engine)/.test(m))
+    return { kind: "network", autoRetry: true, hint: "Starting the torrent engine — retrying automatically." };
   return { kind: "unknown", autoRetry: false, hint: "Paused after an error. Retry when ready." };
 }
 

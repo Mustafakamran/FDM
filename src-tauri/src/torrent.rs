@@ -70,10 +70,14 @@ impl TorrentState {
         let (_rx, child) = sidecar.spawn().map_err(|e| format!("spawn rqbit: {e}"))?;
         let base = format!("http://127.0.0.1:{port}");
 
-        // Wait (up to ~5s) until the HTTP API answers before handing back.
+        // Wait (up to ~30s) until the HTTP API answers before handing back. It's
+        // normally up in well under a second, but the FIRST spawn right after an
+        // app update is slow: macOS Gatekeeper re-scans the freshly-written rqbit
+        // binary (and Windows Defender does the same), which can blow past a few
+        // seconds. A short timeout there surfaced a spurious "did not come up".
         let c = http();
         let mut up = false;
-        for _ in 0..50 {
+        for _ in 0..300 {
             if c.get(format!("{base}/torrents")).send().map(|r| r.status().is_success()).unwrap_or(false) {
                 up = true;
                 break;
