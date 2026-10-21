@@ -58,6 +58,40 @@ async function downloadZip(url, zipPath) {
   await pipeline(Readable.fromWeb(res.body), createWriteStream(zipPath));
 }
 
+/** Download `url`, retrying transient failures (e.g. a mirror's 5xx) with backoff. */
+async function downloadWithRetry(url, zipPath, attempts = 5) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await downloadZip(url, zipPath);
+      return;
+    } catch (e) {
+      lastErr = e;
+      const wait = Math.min(30000, 2000 * 2 ** i);
+      console.log(`  retry ${i + 1}/${attempts} in ${wait}ms: ${e.message}`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  throw lastErr;
+}
+
+/** Try each candidate URL (with retries) until one downloads - so one mirror
+ *  being down (martin-riedl has returned 521 for hours at a time) doesn't fail
+ *  the whole release build. */
+async function downloadFirst(urls, zipPath) {
+  let lastErr;
+  for (const url of urls) {
+    try {
+      await downloadWithRetry(url, zipPath, 3);
+      return;
+    } catch (e) {
+      lastErr = e;
+      console.log(`  source unavailable, trying next: ${url}`);
+    }
+  }
+  throw lastErr ?? new Error("no download sources");
+}
+
 function extractZip(zipPath, dir) {
   if (process.platform === "win32") {
     spawnSync("powershell", ["-Command", `Expand-Archive -Path '${zipPath}' -DestinationPath '${dir}' -Force`], { stdio: "inherit" });
@@ -80,7 +114,7 @@ if (target.source === "btbn") {
   // One combined GPL static zip containing bin/ffmpeg.exe + bin/ffprobe.exe.
   const url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
   const zipPath = join(work, "ffmpeg-win64.zip");
-  await downloadZip(url, zipPath);
+  await downloadWithRetry(url, zipPath);
   extractZip(zipPath, work);
   for (const tool of TOOLS) {
     const bin = findBinary(work, tool);
@@ -88,15 +122,22 @@ if (target.source === "btbn") {
     place(bin, tool);
   }
 } else {
-  // martin-riedl: one zip per tool.
+  // macOS: one zip per tool. Primary mirror is martin-riedl; osxexperts is a
+  // fallback for arm64 when the primary is down (seen returning 521 for hours).
+  const osxExperts = {
+    arm64: { ffmpeg: "https://www.osxexperts.net/ffmpeg711arm.zip", ffprobe: "https://www.osxexperts.net/ffprobe711arm.zip" },
+  };
   for (const tool of TOOLS) {
     if (existsSync(finalPath(tool))) {
       console.log(`${tool} sidecar already present`);
       continue;
     }
-    const url = `https://ffmpeg.martin-riedl.de/redirect/latest/${target.platform}/${target.arch}/release/${tool}.zip`;
+    const urls = [
+      `https://ffmpeg.martin-riedl.de/redirect/latest/${target.platform}/${target.arch}/release/${tool}.zip`,
+      osxExperts[target.arch]?.[tool],
+    ].filter(Boolean);
     const zipPath = join(work, `${tool}.zip`);
-    await downloadZip(url, zipPath);
+    await downloadFirst(urls, zipPath);
     extractZip(zipPath, work);
     const bin = findBinary(work, tool);
     if (!bin) throw new Error(`${tool} binary not found in archive`);
