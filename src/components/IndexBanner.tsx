@@ -3,9 +3,20 @@ import { Loader2, FolderSearch, X } from "lucide-react";
 import { useIndex } from "../store/index-store";
 import { useApp } from "../store/app";
 import { formatBytes } from "../lib/format";
+import { isPlainDrive, driveSegmentLabel, DRIVE_ROOT_LABELS } from "../lib/rc/browse";
+import type { Account } from "../lib/tauri/commands";
+
+/** Nice title for an index target: Drive id-chains resolve to folder names. */
+function targetLabel(account: Account | undefined, target: string): string {
+  if (account && isPlainDrive(account)) {
+    const seg = target.split("/").filter(Boolean).pop() ?? target;
+    return DRIVE_ROOT_LABELS[seg] ?? driveSegmentLabel(account.id, seg);
+  }
+  return target;
+}
 
 /**
- * Floating indexing status — the crawl equivalent of the Transfers drawer. Shows
+ * Floating indexing status - the crawl equivalent of the Transfers drawer. Shows
  * every account that's currently indexing / re-indexing (folders scanned, files
  * found, bytes) with a Cancel, wherever you are in the app. Centered along the
  * bottom.
@@ -31,7 +42,7 @@ export function IndexBanner() {
           <div key={id} className="flex flex-col gap-1.5">
             <div className="flex items-center gap-2">
               <FolderSearch size={14} className="shrink-0 text-[var(--acc)]" />
-              <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--ink)]">Indexing {e.target ?? labelOf(id)}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--ink)]">Indexing {e.target ? targetLabel(accounts.find((a) => a.id === id), e.target) : labelOf(id)}</span>
               <Loader2 size={13} className="shrink-0 animate-spin text-[var(--faint)]" />
               <button onClick={() => void cancel(id)} title="Stop" aria-label="Stop indexing" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-[var(--faint)] hover:bg-[var(--soft)] hover:text-[var(--err)]">
                 <X size={14} />

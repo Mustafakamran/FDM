@@ -152,6 +152,143 @@ fn folder_path_walk(client: &reqwest::blocking::Client, access: &str, file_id: &
     names.join("/")
 }
 
+/// One row of an ID-native Drive listing (mirrors the RcItem shape the browser
+/// expects). `id` is always the REAL target id (a shortcut is already resolved to
+/// its target), so navigation/download/stream can address it directly.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveRow {
+    pub id: String,
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+    pub mod_time: String,
+    pub mime_type: String,
+    /// First-parent folder id (used to root a drivelink for file download when the
+    /// listing is "Shared with me", which has no folder id of its own). Empty when
+    /// the parent is the folder we are already listing.
+    pub parent_id: String,
+    /// True when this row is a Drive SHORTCUT (its id is the resolved target).
+    /// Browse shows it (openable), but the size/index crawl must NOT descend it -
+    /// a shortcut is a pointer, not containment, so following it double-counts the
+    /// target tree (e.g. a My-Drive shortcut into a shared folder).
+    pub is_shortcut: bool,
+}
+
+const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
+
+/// Build the Drive `files.list` q for a browse location.
+///   • "root"       → My Drive top (owned)
+///   • "__shared__" → Shared-with-me top
+///   • any id       → that folder's children
+fn list_q(folder_id: &str) -> String {
+    match folder_id {
+        "" | "root" => "'root' in parents and trashed=false".to_string(),
+        "__shared__" => "sharedWithMe=true and trashed=false".to_string(),
+        id => format!("'{}' in parents and trashed=false", id.replace('\'', "\\'")),
+    }
+}
+
+/// List a Google Drive folder by ID via the Drive API. This is the ID-native
+/// browse engine: unlike rclone's name-path listing over `shared_with_me` (which
+/// dangles on duplicate names and shortcuts), `files.list` by parent id returns
+/// owned AND shared children uniformly - exactly like the Drive web browser.
+/// Shortcuts are resolved inline to their targets so a folder-shortcut opens as a
+/// real folder. Handles pagination.
+#[tauri::command]
+pub async fn drive_list(
+    rclone: tauri::State<'_, RcloneState>,
+    account_id: String,
+    folder_id: String,
+) -> Result<Vec<DriveRow>, String> {
+    let conn: RcConnection = rclone
+        .connection
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or_else(|| "rclone not started".to_string())?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let access = drive_access_token(&conn, &account_id)?;
+        let client = reqwest::blocking::Client::new();
+        drive_list_rows(&client, &access, &folder_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// HTTP-only Drive `files.list` for one folder id (no token fetch - caller passes
+/// a fresh access token). Resolves shortcuts inline and follows pagination.
+/// Shared by the browse command and the background index crawler.
+pub(crate) fn drive_list_rows(
+    client: &reqwest::blocking::Client,
+    access: &str,
+    folder_id: &str,
+) -> Result<Vec<DriveRow>, String> {
+    let q = list_q(folder_id);
+    let shared_top = folder_id == "__shared__";
+    let mut rows: Vec<DriveRow> = Vec::new();
+    let mut page_token = String::new();
+    loop {
+        let mut url = format!(
+            "https://www.googleapis.com/drive/v3/files\
+             ?q={}&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true\
+             &orderBy=folder,name_natural\
+             &fields={}",
+            enc(&q),
+            enc("nextPageToken,files(id,name,mimeType,size,modifiedTime,parents,shortcutDetails(targetId,targetMimeType))"),
+        );
+        if !page_token.is_empty() {
+            url.push_str(&format!("&pageToken={}", enc(&page_token)));
+        }
+        let resp = client.get(&url).bearer_auth(access).send().map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(format!("drive files.list {status}: {}", body.chars().take(200).collect::<String>()));
+        }
+        let v: Value = resp.json().map_err(|e| e.to_string())?;
+        if let Some(files) = v.get("files").and_then(|f| f.as_array()) {
+            for f in files {
+                let mut id = f.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let name = f.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let mut mime = f.get("mimeType").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                // Resolve a shortcut to its target id + type inline.
+                let is_shortcut = mime == "application/vnd.google-apps.shortcut";
+                if is_shortcut {
+                    if let Some(sc) = f.get("shortcutDetails") {
+                        if let Some(tid) = sc.get("targetId").and_then(|x| x.as_str()) {
+                            id = tid.to_string();
+                        }
+                        if let Some(tm) = sc.get("targetMimeType").and_then(|x| x.as_str()) {
+                            mime = tm.to_string();
+                        }
+                    }
+                }
+                let is_dir = mime == FOLDER_MIME;
+                let size = f.get("size").and_then(|x| x.as_str()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+                let mod_time = f.get("modifiedTime").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                // Only carry the parent id for the shared-with-me top, where the
+                // listing location has no folder id to root a file download at.
+                let parent_id = if shared_top {
+                    f.get("parents").and_then(|p| p.as_array()).and_then(|a| a.first()).and_then(|x| x.as_str()).unwrap_or("").to_string()
+                } else {
+                    String::new()
+                };
+                if id.is_empty() || name.is_empty() {
+                    continue;
+                }
+                rows.push(DriveRow { id, name, is_dir, size, mod_time, mime_type: mime, parent_id, is_shortcut });
+            }
+        }
+        match v.get("nextPageToken").and_then(|t| t.as_str()) {
+            Some(t) if !t.is_empty() => page_token = t.to_string(),
+            _ => break,
+        }
+    }
+    Ok(rows)
+}
+
 /// A resolved Google Drive shortcut's target.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]

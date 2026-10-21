@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, Check, RefreshCw, Download, Loader2, Layers, Copy, Puzzle, Sun, Moon, Palette, FolderTree, Power, Rocket, ArrowDownUp, Cloud, HardDrive, type LucideIcon } from "lucide-react";
+import { FolderOpen, Check, RefreshCw, Download, Loader2, Layers, Copy, Puzzle, Sun, Moon, Palette, FolderTree, Power, Rocket, ArrowDownUp, Cloud, HardDrive, Bell, type LucideIcon } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
 import { enable as autostartEnable, disable as autostartDisable, isEnabled as autostartIsEnabled } from "@tauri-apps/plugin-autostart";
@@ -15,7 +15,7 @@ import { getAskWhereToSave, setAskWhereToSave } from "../lib/ask-where";
 import { FOLDER_KEY } from "../lib/ingest";
 import { loadRaw, saveRaw } from "../lib/persisted";
 
-/** Swatch color shown for each accent preset (the dark-mode shade — reads fine on either background at swatch size). */
+/** Swatch color shown for each accent preset (the dark-mode shade - reads fine on either background at swatch size). */
 const ACCENT_SWATCH: Record<Accent, string> = {
   mono: "linear-gradient(135deg, #f2f3f5 50%, #1a1c23 50%)",
   blue: "#5b9cf6",
@@ -210,7 +210,7 @@ export function SettingsView() {
   const activeLabel = NAV.flatMap((g) => g.items).find((i) => i.key === tab)?.label ?? "Settings";
   return (
     <div className="flex h-[70vh] max-h-[660px] min-h-[440px]">
-      {/* Left nav — grouped sections (Claude-desktop style). */}
+      {/* Left nav - grouped sections (Claude-desktop style). */}
       <nav className="w-[208px] shrink-0 overflow-y-auto border-r border-[var(--border)] bg-[var(--surface)] px-3 py-4">
         {NAV.map((grp) => (
           <div key={grp.group} className="mb-4">
@@ -231,7 +231,7 @@ export function SettingsView() {
         ))}
       </nav>
 
-      {/* Right pane — the active section's content. */}
+      {/* Right pane - the active section's content. */}
       <div className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
         <h1 className="mb-4 text-[15px] font-semibold text-[var(--text)]">{activeLabel}</h1>
 
@@ -277,7 +277,7 @@ export function SettingsView() {
       )}
 
       {tab === "indexing" && <div className="flex flex-col gap-4"><IndexingCard /></div>}
-      {tab === "transfers" && <div className="flex flex-col gap-4"><TransferDrawerCard /></div>}
+      {tab === "transfers" && <div className="flex flex-col gap-4"><TransferDrawerCard /><CompletionNotifyCard /></div>}
       {tab === "startup" && <div className="flex flex-col gap-4"><StartupCard /></div>}
 
       {tab === "downloads" && (
@@ -588,7 +588,7 @@ function IndexingCard() {
         Show every folder’s total size and number of files by default. This builds a
         background index of each drive the first time you open it (progress is shown and
         it’s cancellable; the result is saved so a drive is only crawled once). Turn it
-        off to size folders individually with the per-folder “Calculate” action instead —
+        off to size folders individually with the per-folder “Calculate” action instead -
         useful if your “Shared with me” drives are very large.
       </p>
       <button
@@ -605,7 +605,7 @@ function IndexingCard() {
           />
         </span>
         <span className="text-sm text-[var(--text-2)]">
-          {autoIndex ? "On — sizes and file counts show automatically" : "Off — size folders on demand"}
+          {autoIndex ? "On - sizes and file counts show automatically" : "Off - size folders on demand"}
         </span>
       </button>
     </Card>
@@ -629,8 +629,38 @@ function TransferDrawerCard() {
         <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${show ? "bg-[var(--acc)]" : "bg-[var(--surface)] border border-[var(--border)]"}`}>
           <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-[var(--shadow-sm)] transition-transform ${show ? "translate-x-[22px]" : "translate-x-0.5"}`} />
         </span>
-        <span className="text-sm text-[var(--text-2)]">{show ? "On — drawer / button shown" : "Off — hidden"}</span>
+        <span className="text-sm text-[var(--text-2)]">{show ? "On - drawer / button shown" : "Off - hidden"}</span>
       </button>
+    </Card>
+  );
+}
+
+/** Notify (desktop notification + chime) when a transfer completes. */
+function CompletionNotifyCard() {
+  const notify = useSettings((s) => s.notifyOnComplete);
+  const setNotify = useSettings((s) => s.setNotifyOnComplete);
+  const sound = useSettings((s) => s.completionSound);
+  const setSound = useSettings((s) => s.setCompletionSound);
+  const Row = ({ on, set, label }: { on: boolean; set: (v: boolean) => void; label: string }) => (
+    <button onClick={() => set(!on)} role="switch" aria-checked={on} className="flex items-center gap-3 text-left">
+      <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${on ? "bg-[var(--acc)]" : "bg-[var(--surface)] border border-[var(--border)]"}`}>
+        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-[var(--shadow-sm)] transition-transform ${on ? "translate-x-[22px]" : "translate-x-0.5"}`} />
+      </span>
+      <span className="text-sm text-[var(--text-2)]">{label}</span>
+    </button>
+  );
+  return (
+    <Card className="p-5">
+      <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
+        <Bell size={16} /> Completion alerts
+      </h2>
+      <p className="mb-4 text-xs text-[var(--text-3)]">
+        Get a heads-up the moment a download or upload finishes - handy for long footage transfers you’re not watching.
+      </p>
+      <div className="flex flex-col gap-3">
+        <Row on={notify} set={setNotify} label={notify ? "Desktop notification on complete" : "No desktop notification"} />
+        <Row on={sound} set={setSound} label={sound ? "Play a chime on complete" : "No sound"} />
+      </div>
     </Card>
   );
 }

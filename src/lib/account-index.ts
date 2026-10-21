@@ -12,7 +12,7 @@ export interface AccountIndex {
   agg: Record<string, Aggregate>; // folder path -> recursive aggregate
 }
 
-/** Pure tree+aggregate builder — kept for tests/seeding (production builds in Rust). */
+/** Pure tree+aggregate builder - kept for tests/seeding (production builds in Rust). */
 export function buildIndex(flat: RcItem[]): AccountIndex {
   const tree: Record<string, RcItem[]> = {};
   const agg: Record<string, Aggregate> = {};
@@ -57,7 +57,7 @@ export function itemAt(index: AccountIndex, path: string): RcItem | undefined {
 
 /**
  * Remove an entry (and, if it's a folder, its whole subtree) from an index,
- * returning a NEW index — used to optimistically reflect a delete in the UI before
+ * returning a NEW index - used to optimistically reflect a delete in the UI before
  * the next re-index. Folder aggregates upstream aren't recomputed (sizes may be
  * slightly stale until a re-index); only the visible tree + the removed subtree's
  * own agg keys are pruned.

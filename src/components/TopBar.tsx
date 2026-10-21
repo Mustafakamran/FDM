@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Search, Settings as SettingsIcon, Bell, Sun, Moon, Minus, Square, X } from "lucide-react";
+import { Search, Settings as SettingsIcon, Bell, Sun, Moon, Minus, Square, X, FlaskConical } from "lucide-react";
+import { showError } from "../store/error-dialog";
 import { useApp } from "../store/app";
 import { useSearch } from "../store/search";
 import { useNotifications, unreadCount } from "../store/notifications";
@@ -38,7 +39,7 @@ export function TopBar() {
     };
   }, []);
 
-  // Cmd/Ctrl+K focuses the one search box — it IS the command palette now
+  // Cmd/Ctrl+K focuses the one search box - it IS the command palette now
   // (files + commands live in the results). Works from anywhere.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -71,7 +72,7 @@ export function TopBar() {
 
   return (
     <header data-tauri-drag-region className={`flex h-14 shrink-0 select-none items-center gap-3 bg-transparent pr-2 ${isMac ? "pl-[104px]" : "pl-4"}`}>
-      {/* Brand — the single logo, home button. */}
+      {/* Brand - the single logo, home button. */}
       <button onClick={showHome} aria-label="Home" data-tip="Dashboard" className="shrink-0">
         <Logo size={30} wordSize={15} />
       </button>
@@ -104,7 +105,7 @@ export function TopBar() {
             </button>
           )}
         </div>
-        {/* Results panel — merged with the search box: no gap, square top
+        {/* Results panel - merged with the search box: no gap, square top
             corners meeting the box's squared bottom, one continuous outline. */}
         {open && (
           <div className="animate-dropdown absolute left-0 right-0 top-full z-50">
@@ -115,6 +116,21 @@ export function TopBar() {
 
       {/* Actions */}
       <div className="flex items-center gap-1">
+        {import.meta.env.DEV && (
+          <button
+            onClick={() => showError(
+              "Could not open this folder",
+              "This folder is not where FDM expected it. It may have been unshared, renamed, or moved on the cloud. Try Retry, or reach it from search or a Drive link.",
+              'rc operations/list failed: 404 Not Found { "error": "error in ListJSON: directory not found", "input": { "fs": "drive_photographybyrafay,shared_with_me=true:", "opt": { "recurse": false }, "remote": "General Production" }, "path": "operations/list", "status": 404 }',
+              () => {},
+            )}
+            aria-label="Dev: sample error dialog"
+            data-tip="Dev: sample error dialog"
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-dashed border-[var(--line2)] text-[var(--faint)] hover:text-[var(--err)]"
+          >
+            <FlaskConical size={15} />
+          </button>
+        )}
         <button
           onClick={() => togglePanel()}
           data-notif-toggle

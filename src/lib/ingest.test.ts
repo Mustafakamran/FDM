@@ -181,7 +181,7 @@ describe("ingest", () => {
     expect(items[0].name).toBe("picked.zip");
   });
 
-  it("prompts for a FOLDER (not a filename) for MEDIA — yt-dlp names by title", async () => {
+  it("prompts for a FOLDER (not a filename) for MEDIA - yt-dlp names by title", async () => {
     const enqueue = vi.fn();
     const folderDialog = vi.fn().mockResolvedValue("/Users/me/Movies");
     const saveDialog = vi.fn();

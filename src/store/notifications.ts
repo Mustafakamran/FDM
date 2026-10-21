@@ -3,11 +3,17 @@ import type { Provider } from "../lib/tauri/commands";
 
 export interface FolderNotification {
   id: string;
+  /** "folder" (a client dropped a new folder) or "transfer" (a download/upload
+   *  finished). Defaults to folder for existing callers. */
+  kind?: "folder" | "transfer";
   accountId: string;
-  provider: Provider;
+  /** Cloud provider for the icon; absent for web/torrent transfers. */
+  provider?: Provider;
   accountLabel: string;
   folderName: string;
   path: string;
+  /** For a transfer: the local destination folder, opened on click. */
+  dest?: string;
   modTime: string;
   size: number | null; // null = computing/unknown
   uploader: string | null; // null = unknown/unavailable

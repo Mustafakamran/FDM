@@ -1,4 +1,4 @@
-// FDM Downloader — popup logic
+// FDM Downloader - popup logic
 //
 // Everyday view is just the connection status + the intercept toggle; the
 // pairing fields live in a collapsible "Connection" section that only opens
@@ -90,7 +90,7 @@ function test() {
     }
     const v = res.version ? ` · v${res.version}` : "";
     if (!$token.value.trim()) {
-      setStatus("ok", `FDM found${v} — paste a token below.`);
+      setStatus("ok", `FDM found${v} - paste a token below.`);
       $setup.open = true;
     } else {
       setStatus("ok", `Connected to FDM${v}.`);
@@ -101,7 +101,7 @@ function test() {
     $update.hidden = !outdated;
     if (outdated) {
       document.getElementById("update-msg").innerHTML =
-        `FDM bundles <b>v${res.extVersion}</b> — you have <b>v${loaded}</b>. In FDM: ` +
+        `FDM bundles <b>v${res.extVersion}</b> - you have <b>v${loaded}</b>. In FDM: ` +
         `<b>Settings → Browser extension → Set up</b>, then reload this extension in chrome://extensions.`;
     }
   });

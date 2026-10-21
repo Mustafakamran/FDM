@@ -11,7 +11,7 @@ export interface MenuItem {
   disabled?: boolean;
   /** Draw a divider above this item. */
   separator?: boolean;
-  /** Nested submenu — expands inline inside the parent menu; the parent's `onClick` is ignored. */
+  /** Nested submenu - expands inline inside the parent menu; the parent's `onClick` is ignored. */
   children?: MenuItem[];
 }
 
@@ -99,7 +99,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
             <div key={i} className="relative" onMouseEnter={() => setSub(hasSub ? i : null)}>
               {it.separator && <div className="my-1 h-px bg-[var(--border)]" />}
               {itemButton(it, hasSub)}
-              {/* Flyout submenu — a clean rounded panel beside the parent, with a
+              {/* Flyout submenu - a clean rounded panel beside the parent, with a
                   small gap. (Earlier "merged fillet" corners poked above the
                   parent when the item sat at the top; a plain flyout is robust.) */}
               {hasSub && sub === i && (

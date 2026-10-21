@@ -21,7 +21,7 @@ import { formatBytes, formatSpeed } from "../lib/format";
 import type { JobStatus } from "../lib/tauri/commands";
 import { SpeedGraph } from "./ui/SpeedGraph";
 
-/** ms → "1h 02m 03s", "3m 20s", "12s", "<1s", or "—". */
+/** ms → "1h 02m 03s", "3m 20s", "12s", "<1s", or "-". */
 export function formatDuration(ms: number | undefined): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return "·";
   const total = Math.round(ms / 1000);

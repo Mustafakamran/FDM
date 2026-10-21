@@ -153,7 +153,7 @@ describe("lane scheduler (store)", () => {
   });
 
   it("does not start a secondary download while a primary is active", async () => {
-    // Enqueue a primary first (it starts), then a URL — the URL must stay queued.
+    // Enqueue a primary first (it starts), then a URL - the URL must stay queued.
     useTransfers.getState().enqueue("drive_x", [item("big.mov")], "/dest");
     await vi.waitFor(() => expect(useTransfers.getState().inflight).toHaveLength(1));
     useTransfers.getState().enqueueUrl("https://example.com/file.zip", "/dest");
@@ -169,7 +169,7 @@ describe("lane scheduler (store)", () => {
     await vi.waitFor(() => expect(useTransfers.getState().inflight).toHaveLength(1));
     expect(useTransfers.getState().inflight[0].lane).toBe("secondary");
 
-    // Now enqueue a primary — it preempts the secondary.
+    // Now enqueue a primary - it preempts the secondary.
     useTransfers.getState().enqueue("drive_x", [item("big.mov")], "/dest");
     await vi.waitFor(() => {
       const s = useTransfers.getState();
@@ -219,7 +219,7 @@ describe("lane scheduler (store)", () => {
     const paused = useTransfers.getState().queue.find((q) => q.lane === "secondary");
     expect(paused?.paused).toBe(true);
 
-    // Drain everything and pump — the user-paused item must stay paused.
+    // Drain everything and pump - the user-paused item must stay paused.
     listReturns = [];
     await useTransfers.getState().refresh();
     await useTransfers.getState().pump();
@@ -233,7 +233,7 @@ describe("lane scheduler (store)", () => {
     useTransfers.setState({ secondaryConcurrency: 2 });
     for (let i = 0; i < 4; i++) useTransfers.getState().enqueueUrl(`https://example.com/f${i}.zip`, "/dest");
     await vi.waitFor(() => expect(useTransfers.getState().inflight.length).toBe(2));
-    // Two running, two still queued — the secondary limit caps it.
+    // Two running, two still queued - the secondary limit caps it.
     expect(useTransfers.getState().inflight).toHaveLength(2);
     expect(useTransfers.getState().queue.filter((q) => q.lane === "secondary")).toHaveLength(2);
   });

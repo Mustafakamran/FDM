@@ -7,7 +7,7 @@ import type { RcItem } from "../lib/rc/browse";
 const W = 320; // flyout width
 
 /**
- * "Copy link" flyout (Dropbox-style): an anchored morph popover — not a modal —
+ * "Copy link" flyout (Dropbox-style): an anchored morph popover - not a modal -
  * that grows from the click point. Fetches/creates an anyone-with-the-link share
  * URL for a Drive/Dropbox item and shows it with a Copy button. Drive shares by
  * file id; Dropbox by path.

@@ -19,7 +19,7 @@ export interface JobStats {
   peakSpeed?: number;
   /** Lowest observed NON-ZERO speed (bytes/s). */
   minSpeed?: number;
-  /** Last poll timestamp (ms) — used to derive duration if no finish time. */
+  /** Last poll timestamp (ms) - used to derive duration if no finish time. */
   lastAt?: number;
 }
 
@@ -27,7 +27,7 @@ export interface HistoryEntry {
   /**
    * Stable, content-derived unique id (see {@link finishKey}). Used as the
    * React key and the dedupe key. Job ids alone are NOT unique across app
-   * restarts — the native backend restarts its counter each launch and rclone
+   * restarts - the native backend restarts its counter each launch and rclone
    * ids reset with the daemon, so a fresh download can reuse an old id. Keying
    * history by jobId then made `record()` skip the new finish as a "duplicate",
    * so recently-completed downloads silently vanished from history. Absent on
@@ -61,7 +61,7 @@ export interface HistoryEntry {
   minSpeed?: number;
   /** File category, from {@link categoryFor}. */
   category?: Category;
-  /** Source URL for web (http) downloads — the item id is the URL. */
+  /** Source URL for web (http) downloads - the item id is the URL. */
   sourceUrl?: string;
 }
 
@@ -143,7 +143,7 @@ export const useHistory = create<HistoryState>((set, get) => {
         at: now,
         error: status === "failed" ? job.error : undefined,
         // Kept for every status, not just failures: a failed entry needs it to
-        // resume from history, and a SUCCESSFUL entry needs it too — it's how
+        // resume from history, and a SUCCESSFUL entry needs it too - it's how
         // the reviewer later recognizes "this exact file was already
         // downloaded to `dest`" and plays it straight from disk instead of
         // re-streaming from the cloud.

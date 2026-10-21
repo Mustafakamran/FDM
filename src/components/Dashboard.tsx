@@ -22,7 +22,7 @@ export function Dashboard() {
   const history = useHistory((s) => s.items);
   const { count: newFolderCount, totalSize: newFolderSize, allSized } = useNewFolders();
 
-  // Real accounts only — shared/linked drives (teamdrive_/drivelink_) piggyback a
+  // Real accounts only - shared/linked drives (teamdrive_/drivelink_) piggyback a
   // parent's login + quota, so counting them double-counts drives and storage.
   const realAccounts = useMemo(() => accounts.filter((a) => !isSharedLink(a.id)), [accounts]);
 
@@ -51,7 +51,7 @@ export function Dashboard() {
       </div>
 
       {/* Stat tiles */}
-      {/* App's own min-width is 980px — well past Tailwind's `md` (768) — so a
+      {/* App's own min-width is 980px - well past Tailwind's `md` (768) - so a
           `lg` (1024) gate left this stuck at 2 columns for the entire usable
           range below 1024px. Step through 3 at the floor, 4 once there's
           genuinely room. */}
@@ -65,11 +65,11 @@ export function Dashboard() {
           accent={activeCount > 0}
           onClick={() => showDownloads("active")}
         />
-        <Stat icon={<Database size={18} />} label="Storage used" value={formatBytes(totalUsed)} sub={totalCap > 0 ? `of ${formatBytes(totalCap)}` : "—"} />
+        <Stat icon={<Database size={18} />} label="Storage used" value={formatBytes(totalUsed)} sub={totalCap > 0 ? `of ${formatBytes(totalCap)}` : "-"} />
         <Stat
           icon={<FolderPlus size={18} />}
           label="Recent Folders"
-          value={newFolderCount > 0 ? <CountUp value={newFolderCount} /> : "—"}
+          value={newFolderCount > 0 ? <CountUp value={newFolderCount} /> : "-"}
           sub={newFolderCount > 0 ? `${formatBytes(newFolderSize)}${allSized ? "" : "+"} to download` : "nothing new"}
           accent={newFolderCount > 0}
           onClick={() => showNewFolders()}

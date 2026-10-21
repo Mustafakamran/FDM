@@ -21,7 +21,7 @@ const HISTORY_LENGTH = 48;
 type Phase = "download" | "upload" | null;
 
 /** Measures the raw internet connection (download + upload + ping) against
- * Cloudflare's edge — like fast.com — independent of any connected drive. */
+ * Cloudflare's edge - like fast.com - independent of any connected drive. */
 export function SpeedTestCard() {
   const [state, setState] = useState<"idle" | "running" | "done" | "error">("idle");
   const [phase, setPhase] = useState<Phase>(null);
@@ -162,7 +162,7 @@ function Metric({ icon, label, value, unit, active, digits = 1 }: { icon: React.
         {icon} {label}
       </div>
       <div className="tnum mt-1 text-[21px] font-bold leading-none tracking-[-0.02em] text-[var(--ink)]">
-        {has ? value!.toFixed(digits) : "—"}
+        {has ? value!.toFixed(digits) : "-"}
         <span className="ml-1 text-[11px] font-medium text-[var(--faint)]">{unit}</span>
       </div>
       {mbytes != null && (

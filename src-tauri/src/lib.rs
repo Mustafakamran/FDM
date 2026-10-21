@@ -284,6 +284,7 @@ pub fn run() {
             drive::drive_uploader,
             drive::drive_folder_path,
             drive::drive_resolve_shortcut,
+            drive::drive_list,
             drive::drive_share_link,
             drive::dropbox_share_link,
             index::index_start,

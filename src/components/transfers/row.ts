@@ -50,7 +50,7 @@ export interface TransferRow {
   at?: number;
   /** Present on failed rows so the panel/actions can re-enqueue. */
   item?: DownloadItem;
-  /** True for upload transfers — routes dismiss to the uploads store. */
+  /** True for upload transfers - routes dismiss to the uploads store. */
   upload?: boolean;
   // --- Final stats, carried on finished (history) rows so the info panel keeps
   //     showing avg/peak/elapsed after the live job (and its in-flight stats)

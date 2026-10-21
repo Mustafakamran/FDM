@@ -7,7 +7,7 @@ const ACCENT_KEY = "accent";
 
 /**
  * "Mono" is the app's original monochrome accent (near-black in light, near-
- * white in dark — every primary action inherits it). The rest are real
+ * white in dark - every primary action inherits it). The rest are real
  * colors, applied via a `data-accent` attribute on <html> with matching CSS
  * overrides in index.css (one block per preset per theme, since a color
  * accent needs different lightness in light vs dark to stay readable).

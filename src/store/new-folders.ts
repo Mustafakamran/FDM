@@ -18,7 +18,7 @@ interface BaselineState {
   seenAt: Record<string, Record<string, number>>;
   /** Seed an account's baseline the first time we see its root listing, so a
    *  freshly-connected drive doesn't dump every existing folder as "new". No-op
-   *  once seeded — later-appearing folders are then genuinely new. */
+   *  once seeded - later-appearing folders are then genuinely new. */
   seed: (accountId: string, rootFolderPaths: string[]) => void;
   /** Stamp first-seen time for newly-identified folders (no-op for known ones). */
   markSeen: (accountId: string, paths: string[]) => void;
@@ -77,8 +77,8 @@ export const useNewFoldersBaseline = create<BaselineState>((set, get) => ({
 
 /**
  * The "newly added" root folders from a drive's top-level listing: a folder that
- * is (a) NOT in the seeded baseline — i.e. appeared since we first saw this drive
- * — AND (b) not already downloaded.
+ * is (a) NOT in the seeded baseline - i.e. appeared since we first saw this drive
+ * - AND (b) not already downloaded.
  *
  * Detection is deliberately NOT gated on the folder's modified-time: a folder a
  * client newly *shares* keeps its original content date (a 3-month-old shoot

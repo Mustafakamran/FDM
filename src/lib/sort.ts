@@ -21,7 +21,7 @@ export const DEFAULT_SORT: SortState = { field: "name", dir: "asc", foldersFirst
  *
  * `sizeKnown` lets the caller mark a folder's size as not-yet-computed so it
  * can be parked at the bottom of a size sort (stable) instead of counted as 0
- * — otherwise folders visibly jump to the top and shuffle down as their sizes
+ * - otherwise folders visibly jump to the top and shuffle down as their sizes
  * stream in. Defaults to "always known" (files always are).
  */
 export interface SortResolvers {
@@ -68,7 +68,7 @@ export function sortItems(
   const mult = state.dir === "asc" ? 1 : -1;
   // Folders-first grouping applies only to the NAME sort (the conventional
   // "folders above files alphabetically"). For Size/Date/Type the user wants a
-  // TRUE value order — a 16 GB video must outrank a 2 GB folder — so folders are
+  // TRUE value order - a 16 GB video must outrank a 2 GB folder - so folders are
   // sorted by their own aggregate value, not pinned to the top.
   const groupFolders = state.foldersFirst && state.field === "name";
   const sizeKnown = resolvers.sizeKnown ?? (() => true);
@@ -104,7 +104,7 @@ export function sortItems(
       case "size":
         // Unknown sizes always sort LAST, independent of direction, so a folder
         // whose size is still being computed sits stably at the bottom and makes
-        // exactly one move (into place) when its value arrives — instead of being
+        // exactly one move (into place) when its value arrives - instead of being
         // treated as 0, pinned to the top, then shuffling down.
         if (a.sizeVal === null && b.sizeVal === null) r = 0;
         else if (a.sizeVal === null) return 1;

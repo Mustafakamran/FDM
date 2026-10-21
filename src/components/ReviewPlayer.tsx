@@ -305,7 +305,7 @@ export function ReviewPlayer({ videoRef, src, hlsSrc, noCors, comments, duration
 
   // The scrub bar's rect doesn't change mid-drag or mid-hover, but naively
   // calling getBoundingClientRect() on every pointermove/mousemove forces a
-  // synchronous layout reflow per pixel of movement — very noticeable jank
+  // synchronous layout reflow per pixel of movement - very noticeable jank
   // while scrubbing. Cache it once per drag/hover session instead, refreshed
   // only at the start of each (pointerdown / mouseenter).
   const barRectRef = useRef<DOMRect | null>(null);

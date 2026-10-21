@@ -1,4 +1,4 @@
-// FDM Downloader — content script
+// FDM Downloader - content script
 //
 // Runs on every page. Two jobs:
 //   (a) Decorate DIRECT download links (anchors whose href ends in a known
@@ -89,7 +89,7 @@
   const shadow = host.attachShadow({ mode: "open" });
 
   const style = document.createElement("style");
-  // FDM dark theme tokens (hardcoded — the extension can't read app CSS vars).
+  // FDM dark theme tokens (hardcoded - the extension can't read app CSS vars).
   // bg #000, surface #0e0e10, card #161618, hover #1f1f22, border #262629,
   // border-strong #38383c, text #f4f4f6, accent #fff / accent-ink #000,
   // ok #3fb950, fail #f85149.
@@ -217,7 +217,7 @@
   }
 
   // --------------------------------------------------------------------------
-  // (a) Hover "⬇ FDM" buttons — for direct-download links AND large images
+  // (a) Hover "⬇ FDM" buttons - for direct-download links AND large images
   //
   // ONE shared button element follows the hovered target. This is far lighter
   // than injecting a button per-element on large pages (Google Images, Drive
@@ -609,7 +609,7 @@
     debounceTimer = setTimeout(() => {
       if (location.href !== lastUrl) {
         lastUrl = location.href;
-        // New "page" in an SPA — drop the old YouTube button so it re-injects
+        // New "page" in an SPA - drop the old YouTube button so it re-injects
         // into the fresh player chrome.
         const stale = document.getElementById(YT_BTN_ID);
         if (stale && stale.parentNode) stale.parentNode.removeChild(stale);

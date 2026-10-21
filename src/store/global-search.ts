@@ -12,7 +12,7 @@ interface GlobalSearchState {
   error?: string;
   /** Debounced, cached, cancellable search across ALL connected drives. */
   run: (query: string) => void;
-  /** Drop the per-query cache — call when the set of accounts changes so a
+  /** Drop the per-query cache - call when the set of accounts changes so a
    *  removed drive's hits can't linger and navigate to a dead account. */
   invalidateCache: () => void;
 }
@@ -58,7 +58,7 @@ export const useGlobalSearch = create<GlobalSearchState>((set) => ({
     const myToken = ++token;
     timer = setTimeout(() => {
       void invoke<GlobalHit[]>("search_all_accounts", { query: q })
-        // Drive shortcuts come back as un-openable "FILE" hits — resolve each
+        // Drive shortcuts come back as un-openable "FILE" hits - resolve each
         // (against the drive it came from) to its target folder/file so it opens
         // and downloads correctly, exactly like the browse view does.
         .then((items) => resolveDriveShortcuts(items, (h) => h.AccountId))

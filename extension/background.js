@@ -1,4 +1,4 @@
-// FDM Downloader — background service worker (MV3)
+// FDM Downloader - background service worker (MV3)
 //
 // Responsibilities:
 //   - Hold the shared config (pairing token + loopback port).
@@ -7,7 +7,7 @@
 //   - Provide the right-click "Download with FDM" context menu.
 //   - INTERCEPT browser-initiated downloads (IDM-style): when interception is
 //     enabled and FDM is reachable, cancel + erase the Chrome download and hand
-//     it to FDM instead — with the URL's cookies, referrer and User-Agent so
+//     it to FDM instead - with the URL's cookies, referrer and User-Agent so
 //     cookie/referer-gated direct downloads still succeed.
 //   - Surface success / failure / not-paired state via the toolbar badge
 //     and (where available) desktop notifications.
@@ -97,7 +97,7 @@ async function pingFdm(portOverride) {
 // ---- Reachability cache (used by download interception) ---------------------
 //
 // We can't afford to await a network round-trip inside onCreated for every
-// download — and if FDM is down we must let the browser download normally
+// download - and if FDM is down we must let the browser download normally
 // without delay. So we keep a short-lived cached ping result and refresh it
 // opportunistically in the background.
 
@@ -117,7 +117,7 @@ async function refreshReachable() {
 }
 
 // Returns the cached reachability synchronously, and kicks off a refresh if the
-// cache is stale (fire-and-forget — the next download benefits from it).
+// cache is stale (fire-and-forget - the next download benefits from it).
 function reachableCached() {
   if (Date.now() - lastPingAt > PING_TTL_MS) {
     refreshReachable();
@@ -173,7 +173,7 @@ async function sendToFdm(payload) {
     }
 
     badgeOk();
-    // A successful POST is also proof of reachability — keep the cache warm.
+    // A successful POST is also proof of reachability - keep the cache warm.
     reachable = true;
     lastPingAt = Date.now();
     return { ok: true, status: res.status };
@@ -210,7 +210,7 @@ async function cookieHeaderForUrl(url) {
 function isInterceptableUrl(url) {
   if (!url) return false;
   const lower = url.toLowerCase();
-  // Never touch in-memory / inline URLs — those aren't real network downloads
+  // Never touch in-memory / inline URLs - those aren't real network downloads
   // and FDM can't fetch them.
   if (lower.startsWith("blob:") || lower.startsWith("data:")) return false;
   if (lower.startsWith("filesystem:")) return false;
@@ -232,7 +232,7 @@ function filenameFromItem(item) {
 
 // Returns true if the download was handed to FDM (so the caller must NOT let
 // Chrome continue). `item` here comes from onDeterminingFilename, so item.filename
-// is the REAL suggested name Chrome derived (Content-Disposition, else the URL) —
+// is the REAL suggested name Chrome derived (Content-Disposition, else the URL) -
 // exactly what we want FDM to save as, instead of a bare UUID from the URL path.
 async function handleInterception(item) {
   // Choose the URL FDM should fetch: the post-redirect final URL if known.
@@ -243,7 +243,7 @@ async function handleInterception(item) {
   if (!intercept) return false;
 
   // Only intercept if FDM is currently reachable. If it's NOT, do nothing and
-  // let the browser download normally — we must never break downloads.
+  // let the browser download normally - we must never break downloads.
   if (!reachableCached()) {
     // Cache may be cold on first run; do one synchronous-ish refresh attempt,
     // but bounded so we don't stall the download if FDM is down.
@@ -258,7 +258,7 @@ async function handleInterception(item) {
 
   // Cancel + erase the Chrome download. Doing this from onDeterminingFilename
   // (which fires BEFORE Chrome's own Save dialog) means the browser never shows
-  // a second prompt — FDM is the only one that asks where to save.
+  // a second prompt - FDM is the only one that asks where to save.
   try {
     await chrome.downloads.cancel(item.id);
   } catch (_) {
@@ -408,7 +408,7 @@ chrome.contextMenus &&
       // A direct file link.
       sendUrlWithCookies({ url: info.linkUrl, kind: "file", referrer: pageUrl });
     } else if (info.menuItemId === "fdm-image") {
-      // "Save image as…" — cookie/referer-gated images succeed via headers.
+      // "Save image as…" - cookie/referer-gated images succeed via headers.
       sendUrlWithCookies({ url: info.srcUrl, kind: "file", referrer: pageUrl });
     } else if (info.menuItemId === "fdm-media") {
       // A <video>/<audio> element: prefer its src, fall back to the page URL.

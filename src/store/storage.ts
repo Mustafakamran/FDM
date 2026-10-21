@@ -27,7 +27,7 @@ export const useStorage = create<StorageState>((set, get) => ({
         }));
       }
     } catch {
-      /* some backends don't support about — leave it unset */
+      /* some backends don't support about - leave it unset */
     }
   },
 }));

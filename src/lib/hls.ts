@@ -9,7 +9,7 @@ export type PlaybackMode = "hls" | "native" | "direct";
 
 /** The browser/webview capabilities the playback decision depends on. */
 export interface PlayerCapabilities {
-  /** `Hls.isSupported()` — MSE-based playback (gives ABR + a quality menu). */
+  /** `Hls.isSupported()` - MSE-based playback (gives ABR + a quality menu). */
   hlsSupported: boolean;
   /** `video.canPlayType("application/vnd.apple.mpegurl")` is non-empty (native HLS). */
   nativeHls: boolean;
@@ -17,9 +17,9 @@ export interface PlayerCapabilities {
 
 /**
  * Decide how to attach playback for a video:
- * - `"hls"`    — hls.js drives MSE; gives ABR + the quality menu (preferred).
- * - `"native"` — the webview plays HLS natively (Safari/WKWebView); ABR is automatic.
- * - `"direct"` — no HLS support; fall back to the direct `/media` proxy URL.
+ * - `"hls"`    - hls.js drives MSE; gives ABR + the quality menu (preferred).
+ * - `"native"` - the webview plays HLS natively (Safari/WKWebView); ABR is automatic.
+ * - `"direct"` - no HLS support; fall back to the direct `/media` proxy URL.
  *
  * hls.js is preferred over native when both are available because only it exposes
  * the manual level menu this UI needs.
@@ -46,7 +46,7 @@ const CHEAP_START_MAX_HEIGHT = 720;
 /**
  * Pick a CONSERVATIVE start level (hls.js level index) for first paint behind a
  * just-in-time transcode backend: the HIGHEST rendition at/below 720p, so
- * playback begins from a cheap segment the transcoder can produce fast — never
+ * playback begins from a cheap segment the transcoder can produce fast - never
  * the top (e.g. 1080p) rendition. Falls back to the overall lowest rendition
  * when every level is above the cheap cap, and to `0` when heights are unknown.
  * ABR is re-enabled immediately after, so quality still ramps up.

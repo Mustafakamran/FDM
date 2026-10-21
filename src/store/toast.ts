@@ -24,7 +24,7 @@ const EXIT_MS = 200; // must match the .animate-toast-out duration
 
 export const useToasts = create<ToastState>((set, get) => {
   // Two-phase removal: flag `leaving` (drives the exit animation), then drop the
-  // toast after the animation finishes. Idempotent — a double dismiss is harmless.
+  // toast after the animation finishes. Idempotent - a double dismiss is harmless.
   const beginDismiss = (id: number) => {
     set((s) => ({ toasts: s.toasts.map((t) => (t.id === id ? { ...t, leaving: true } : t)) }));
     setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), EXIT_MS);
@@ -33,7 +33,7 @@ export const useToasts = create<ToastState>((set, get) => {
     toasts: [],
     push: (message, type = "success", ttl = DEFAULT_TTL) => {
       // Dedup identical string toasts still on screen (e.g. a background event
-      // that fires more than once) — return the existing id instead of stacking.
+      // that fires more than once) - return the existing id instead of stacking.
       if (typeof message === "string") {
         const dup = get().toasts.find((t) => !t.leaving && t.type === type && t.message === message);
         if (dup) return dup.id;

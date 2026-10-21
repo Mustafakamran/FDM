@@ -17,7 +17,9 @@ import { buildIndex } from "../lib/account-index";
 import type { Account } from "../lib/tauri/commands";
 import type { RcItem } from "../lib/rc/browse";
 
-const account: Account = { id: "drive_x", provider: "drive", label: "x" };
+// Generic browse behaviour (render/navigate/download) is tested on a name-path
+// provider; the ID-native Drive browser has its own unit tests in lib/rc.
+const account: Account = { id: "dropbox_y", provider: "dropbox", label: "y" };
 function f(path: string, size: number): RcItem {
   return { Name: path.split("/").pop()!, Path: path, Size: size, IsDir: false, ModTime: "2026-01-02T00:00:00Z", MimeType: "" };
 }
@@ -29,8 +31,8 @@ const flat = [d("FolderA"), f("FolderA/child.mxf", 5000), f("a.mxf", 1000), f("b
 beforeEach(() => {
   invokeMock.mockReset();
   localStorage.clear();
-  useApp.setState({ accounts: [account], view: { kind: "browse", accountId: "drive_x", section: "all", path: "" } });
-  useIndex.setState({ byAccount: { drive_x: { status: "ready", progress: { done: 0, total: 0, files: 0 }, index: buildIndex(flat) } } });
+  useApp.setState({ accounts: [account], view: { kind: "browse", accountId: "dropbox_y", section: "all", path: "" } });
+  useIndex.setState({ byAccount: { dropbox_y: { status: "ready", progress: { done: 0, total: 0, files: 0 }, index: buildIndex(flat) } } });
   useBrowse.setState({ listings: {}, loading: {}, errors: {}, sizes: {} });
   useTransfers.setState({ jobs: [], queue: [], concurrency: 1, dockOpen: true });
   useStarred.setState({ byAccount: {} });
@@ -87,7 +89,7 @@ describe("BrowsePane", () => {
       expect(invokeMock).toHaveBeenCalledWith(
         "start_download",
         expect.objectContaining({
-          accountId: "drive_x",
+          accountId: "dropbox_y",
           dest: "/Volumes/EXT",
           items: [{ path: "a.mxf", name: "a.mxf", isDir: false, size: 1000, id: "" }],
         }),

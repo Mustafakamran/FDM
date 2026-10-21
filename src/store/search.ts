@@ -8,7 +8,7 @@ interface SearchState {
   /** User-chosen scope override; null means "use the context-aware default"
    *  (folder when browsing a folder, drive at a drive root, all on Home). */
   scopeOverride: SearchScope | null;
-  /** Bumped when Cmd/Ctrl+K is pressed so the top-bar search input focuses —
+  /** Bumped when Cmd/Ctrl+K is pressed so the top-bar search input focuses -
    *  the command palette and the search box are one and the same now. */
   focusSeq: number;
   set: (q: string) => void;

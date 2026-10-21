@@ -8,7 +8,7 @@ import { FOLDER_KEY, pickDownloadDest } from "../lib/ingest";
 import { saveRaw } from "../lib/persisted";
 
 /**
- * "Add web download" — a compact button that opens a dropdown with the URL input,
+ * "Add web download" - a compact button that opens a dropdown with the URL input,
  * a destination-folder picker, and Download. (Replaces the always-open box so the
  * Web Downloads screen leads with the list, not a form.) Exercises the SECONDARY
  * scheduling lane (account id "http") so it never disturbs primary Drive/Dropbox.
@@ -93,7 +93,7 @@ export function UrlDownload() {
                 <X size={15} />
               </button>
             </div>
-            <p className="mb-3 text-xs text-[var(--faint)]">Paste a direct file URL, a <span className="text-[var(--ink)]">WeTransfer</span> / <span className="text-[var(--ink)]">Filemail</span> / <span className="text-[var(--ink)]">Frame.io</span> link, or a <span className="text-[var(--ink)]">magnet</span> link — it downloads alongside your Drive/Dropbox transfers.</p>
+            <p className="mb-3 text-xs text-[var(--faint)]">Paste a direct file URL, a <span className="text-[var(--ink)]">WeTransfer</span> / <span className="text-[var(--ink)]">Filemail</span> / <span className="text-[var(--ink)]">Frame.io</span> link, or a <span className="text-[var(--ink)]">magnet</span> link - it downloads alongside your Drive/Dropbox transfers.</p>
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <Globe size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--faint)]" />

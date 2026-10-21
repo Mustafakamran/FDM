@@ -57,7 +57,7 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
 
 /**
  * A shimmering placeholder block shown while real content loads. Prefer this
- * over a bare spinner for list/row loading — it hints at the shape of what's
+ * over a bare spinner for list/row loading - it hints at the shape of what's
  * coming, which reads as faster. Pass width/height via className (e.g. `h-4 w-32`).
  */
 export function Skeleton({ className = "", style }: { className?: string; style?: CSSProperties }) {
@@ -65,7 +65,7 @@ export function Skeleton({ className = "", style }: { className?: string; style?
 }
 
 /**
- * The "nothing here yet" state — was hand-rolled near-identically in three
+ * The "nothing here yet" state - was hand-rolled near-identically in three
  * different views (drifting token names + font weights each time). One shape
  * for every list/section that can be empty.
  */

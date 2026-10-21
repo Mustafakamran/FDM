@@ -10,10 +10,10 @@ const joinDock = (dir: string, name: string) =>
 /** Short fix hint per block kind, shown on a "needs attention" transfer. */
 const BLOCK_HINT: Record<BlockKind, string> = {
   disk: "Free up disk space, then Retry",
-  network: "Network problem — will retry",
-  auth: "Account access issue — reconnect, then Retry",
-  rate: "Rate-limited — will retry",
-  unknown: "Paused after an error — Retry when ready",
+  network: "Network problem - will retry",
+  auth: "Account access issue - reconnect, then Retry",
+  rate: "Rate-limited - will retry",
+  unknown: "Paused after an error - Retry when ready",
 };
 import { useHistory, type HistoryEntry } from "../store/history";
 import { useApp } from "../store/app";
@@ -72,7 +72,7 @@ const QueueRow = memo(function QueueRow({ q, position, labelOf }: { q: QueueItem
           <span className="truncate" title={q.blockedError}>
             {blocked
               ? q.nextRetryAt
-                ? `Retrying soon — ${BLOCK_HINT[q.blockedKind ?? "unknown"]}`
+                ? `Retrying soon - ${BLOCK_HINT[q.blockedKind ?? "unknown"]}`
                 : BLOCK_HINT[q.blockedKind ?? "unknown"]
               : gated
                 ? "Waiting for Drive/Dropbox…"
@@ -206,7 +206,7 @@ const Row = memo(function Row({ job, labelOf }: { job: JobStatus; labelOf: Label
   );
 }, jobRowPropsEqual);
 
-/** Finished transfer from persisted history (completed/failed/cancelled) —
+/** Finished transfer from persisted history (completed/failed/cancelled) -
  *  mirrors what the full Transfers screen shows so the drawer isn't empty after
  *  jobs settle out of memory. */
 const HistoryRow = memo(function HistoryRow({ h, labelOf }: { h: HistoryEntry; labelOf: LabelOf }) {
@@ -242,7 +242,7 @@ const HistoryRow = memo(function HistoryRow({ h, labelOf }: { h: HistoryEntry; l
 
 /**
  * Floating Transfers drawer (Dropbox-style): a collapsible bottom-right panel
- * showing every background transfer — downloads (active + queued) AND uploads —
+ * showing every background transfer - downloads (active + queued) AND uploads -
  * with progress, ETA, cancel/pause, and All/Active/Completed/Failed tabs. Hidden
  * on the Transfers screen (which has the full table); mounted in AppShell.
  */
@@ -320,7 +320,7 @@ export function DownloadsDock() {
   }
 
   // Finished transfers come from persisted HISTORY (like the Transfers screen),
-  // not the in-memory jobs array (which drops jobs once they settle) — plus any
+  // not the in-memory jobs array (which drops jobs once they settle) - plus any
   // finished uploads (uploads aren't persisted to history).
   const histCompleted = history.filter((h) => h.status === "success");
   const histFailed = history.filter((h) => h.status === "failed");
@@ -356,7 +356,7 @@ export function DownloadsDock() {
           <ArrowDown size={15} /> Drop here to download
         </div>
       )}
-      {/* Header — collapse to the circular button (no close/clear: it's a
+      {/* Header - collapse to the circular button (no close/clear: it's a
           persistent feature, toggled in Settings). */}
       <div className="animate-drawer-content flex items-center gap-2 px-3.5 py-2.5">
         <button onClick={collapse} aria-label="Collapse transfers" className="flex min-w-0 flex-1 items-center gap-2 text-[13px] font-semibold text-[var(--ink)]">
@@ -367,7 +367,7 @@ export function DownloadsDock() {
         </button>
       </div>
 
-      {/* Needs-attention banner — recoverable failures held for a fix + retry. */}
+      {/* Needs-attention banner - recoverable failures held for a fix + retry. */}
       {blockedCount > 0 && (
         <div className="flex items-center gap-2 border-y border-[var(--warn)]/25 bg-[var(--warn)]/10 px-3.5 py-2 text-[12px] font-medium text-[var(--warn)]">
           <AlertTriangle size={14} className="shrink-0" />
@@ -415,7 +415,7 @@ export function DownloadsDock() {
       )}
 
       {/* Footer: compact summary only (per-row fill shows each transfer's
-          progress now — no separate bar). */}
+          progress now - no separate bar). */}
       {activeCount > 0 && (
         <div className="flex items-center justify-between border-t border-[var(--line)] px-4 py-2 text-[11px] font-medium text-[var(--mut)]">
           <span>{activeAll.length > 0 ? `${activeAll.length} transferring` : `${activeCount} queued`}</span>

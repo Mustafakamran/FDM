@@ -17,7 +17,7 @@ const NO_COMMENTS: never[] = [];
 const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform || navigator.userAgent);
 
 /**
- * File preview — opens like a document window inside the app (theme surface, not a
+ * File preview - opens like a document window inside the app (theme surface, not a
  * dark cinematic overlay): images, video, audio, and PDF render in-app; archives
  * list their contents with one-click extract; other types get an info card. Its
  * title bar clears the macOS traffic lights and is draggable. Esc or the backdrop
@@ -73,7 +73,7 @@ function PreviewBody() {
 
   return (
     <div className="animate-rise fixed inset-0 z-[120] flex flex-col bg-[var(--surface)]" onClick={close}>
-      {/* Title bar — draggable, and inset past the macOS traffic lights. */}
+      {/* Title bar - draggable, and inset past the macOS traffic lights. */}
       <div
         data-tauri-drag-region
         className={`flex h-14 shrink-0 select-none items-center gap-3 border-b border-[var(--line)] bg-[var(--card)] pr-3 ${isMac ? "pl-[104px]" : "pl-4"}`}
@@ -122,7 +122,7 @@ function PreviewBody() {
         </button>
       </div>
 
-      {/* Body — a neutral document canvas. */}
+      {/* Body - a neutral document canvas. */}
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-[var(--bg)] p-6" onClick={(e) => e.stopPropagation()}>
         {isImg ? (
           err ? <Fallback icon={ft.Icon} title="Couldn’t load the image" body={err} onDownload={download} />
@@ -203,7 +203,7 @@ function ArchiveView({ name, localFile, onDownload }: { name: string; localFile:
   }, [localFile]);
 
   if (!localFile) {
-    return <Fallback icon={FileArchive} title="Archive" body="Download it first — then FDM can list and extract it here." onDownload={onDownload} />;
+    return <Fallback icon={FileArchive} title="Archive" body="Download it first - then FDM can list and extract it here." onDownload={onDownload} />;
   }
 
   const extract = async () => {

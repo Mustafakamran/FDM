@@ -11,18 +11,20 @@ const key = (accountId: string, path: string) => `${accountId} ${path}`;
 
 // Persisted folder-listing cache (LRU). The in-memory `listings` map already
 // makes re-opening a folder instant WITHIN a session; hydrating it from disk
-// on launch extends that to "instant across restarts" — the cached rows paint
+// on launch extends that to "instant across restarts" - the cached rows paint
 // immediately and ensure() silently refreshes them (stale-while-revalidate).
 // Bounded hard: skip enormous folders and cap how many are kept, so a footage
 // library can never blow the localStorage quota.
-const LISTING_CACHE_KEY = "browse_listings_v1";
+// v2: Drive is now ID-native (paths are id chains, not name-paths), so old v1
+// name-path listings are incompatible and must not be served from cache.
+const LISTING_CACHE_KEY = "browse_listings_v2";
 const LISTING_CACHE_CAP = 30; // folders
 const LISTING_ITEM_MAX = 400; // don't persist folders bigger than this
 const LISTING_SAVE_DEBOUNCE_MS = 1000;
 type ListingEntry = { k: string; items: RcItem[] };
 
 // The cache lives in memory (parsed ONCE at startup) and is written back on a
-// trailing debounce — so navigating folders never re-parses or re-serializes
+// trailing debounce - so navigating folders never re-parses or re-serializes
 // the whole multi-MB cache on the main thread per navigation (that write
 // amplification would defeat the "instant navigation" goal). MRU: newest last.
 let cacheArr: ListingEntry[] = loadJson<ListingEntry[]>(LISTING_CACHE_KEY, []);
@@ -35,7 +37,7 @@ function scheduleCacheSave(): void {
     try {
       saveJson(LISTING_CACHE_KEY, cacheArr);
     } catch {
-      /* quota exceeded or serialization error — the cache is best-effort */
+      /* quota exceeded or serialization error - the cache is best-effort */
     }
   }, LISTING_SAVE_DEBOUNCE_MS);
 }
@@ -65,7 +67,7 @@ const inflightSize = new Set<string>();
 // does by combining three things: (1) a short debounce so fast typing doesn't
 // fire a request per keystroke, (2) a result cache so re-typing a query
 // already seen this session resolves with zero network round-trip, and (3) a
-// stale-while-revalidate render — the previous result list stays on screen
+// stale-while-revalidate render - the previous result list stays on screen
 // while a fresher one loads, instead of flashing to empty every keystroke.
 const SEARCH_DEBOUNCE_MS = 180;
 const searchKey = (accountId: string, query: string) => `${accountId}::q::${query.toLowerCase()}`;
@@ -105,14 +107,14 @@ export const useBrowse = create<BrowseState>((set, get) => ({
   searchLoading: {},
   searchErrors: {},
 
-  // `force` doesn't gate any fetch logic below — every call already refreshes
+  // `force` doesn't gate any fetch logic below - every call already refreshes
   // in the background regardless (this returns cached data instantly for
   // display while a fresh fetch runs; there's nothing left to "force"). It's
   // kept in the signature purely so a "Retry" button reads as intentional at
   // the call site.
   ensure: async (account, path) => {
     const k = key(account.id, path);
-    // Dropbox links have no rclone remote — the Rust index is their only source.
+    // Dropbox links have no rclone remote - the Rust index is their only source.
     // Don't fall through to a live rclone list (it would hit a missing remote).
     if (account.id.startsWith("dropboxlink_")) {
       set((s) => ({ loading: { ...s.loading, [k]: false } }));
@@ -123,7 +125,7 @@ export const useBrowse = create<BrowseState>((set, get) => ({
     if (cached === undefined) set((s) => ({ loading: { ...s.loading, [k]: true } }));
     if (inflightList.has(k)) return;
     inflightList.add(k);
-    // Retry once after a short delay — the most common failure is the rclone
+    // Retry once after a short delay - the most common failure is the rclone
     // daemon not being ready yet right after launch.
     let lastErr: unknown;
     try {

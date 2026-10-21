@@ -1,7 +1,7 @@
 /**
  * One place for localStorage access. Every store used to hand-roll its own
  * try/catch read + write (or, in theme.ts's case, forgot the try/catch on the
- * read — a single throw from a restricted storage context broke theme load
+ * read - a single throw from a restricted storage context broke theme load
  * entirely). Centralized here so that mistake can't happen again per-store.
  */
 

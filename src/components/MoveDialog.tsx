@@ -10,7 +10,7 @@ import type { RcItem } from "../lib/rc/browse";
 import { Button } from "./ui";
 
 /**
- * "Move to…" — a Google-Drive-style folder picker. Shows the account's folder
+ * "Move to…" - a Google-Drive-style folder picker. Shows the account's folder
  * tree (folders only, lazily listed on expand); pick a destination and move
  * every selected item there. Moves are server-side (no re-download). Items whose
  * destination would be a no-op or invalid (a folder into itself/its descendant)
@@ -30,7 +30,7 @@ export function MoveDialog({ account, items, onClose, onMoved }: {
 
   useEffect(() => { void useBrowse.getState().ensure(account, ""); }, [account]);
 
-  // Paths being moved — a folder can't be dropped into itself or a descendant.
+  // Paths being moved - a folder can't be dropped into itself or a descendant.
   const moving = useMemo(() => items.map((i) => i.Path), [items]);
   const isInsideMoved = (p: string) => moving.some((m) => p === m || p.startsWith(`${m}/`));
 
@@ -50,7 +50,7 @@ export function MoveDialog({ account, items, onClose, onMoved }: {
     const fails: string[] = [];
     for (const it of items) {
       const parent = it.Path.includes("/") ? it.Path.slice(0, it.Path.lastIndexOf("/")) : "";
-      if (parent === target) continue; // already there — silent skip
+      if (parent === target) continue; // already there - silent skip
       if (it.IsDir && (target === it.Path || target.startsWith(`${it.Path}/`))) { fails.push(`${it.Name}: can't move into itself`); continue; }
       try {
         await moveItem(account.id, it.Path, target, it.IsDir, false);

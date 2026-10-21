@@ -43,11 +43,11 @@ export interface IndexEntry {
 interface IndexState {
   byAccount: Record<string, IndexEntry>;
   ensure: (account: Account) => Promise<void>;
-  /** Restore a saved index from disk into memory (no crawl) — call on open so
+  /** Restore a saved index from disk into memory (no crawl) - call on open so
    *  persisted folder sizes/counts come back instantly, even with auto-index off. */
   ensureLoaded: (account: Account) => Promise<void>;
   /** Like ensure(), but a no-op once the user has cancelled this account's
-   *  auto-crawl — so navigating away and back never silently restarts it. */
+   *  auto-crawl - so navigating away and back never silently restarts it. */
   ensureAuto: (account: Account) => Promise<void>;
   recrawl: (account: Account) => Promise<void>;
   indexFolder: (account: Account, folderPath: string) => Promise<void>;
@@ -59,7 +59,7 @@ interface IndexState {
 
 // Accounts whose background auto-index the user explicitly cancelled this
 // session. cancel() settles status back to "idle", which the auto-index effect
-// would otherwise treat as "never crawled" and restart on the next mount — so
+// would otherwise treat as "never crawled" and restart on the next mount - so
 // ensureAuto() honors this set. An explicit user action (ensure/recrawl/
 // indexFolder) clears it, and remove() drops it with the account.
 const autoIndexCancelled = new Set<string>();
@@ -101,7 +101,7 @@ export const useIndex = create<IndexState>((set, get) => {
           });
         });
         await listen<{ accountId: string }>("index-ready", async (ev) => {
-          // Only toast when a crawl was actually in progress — not on the silent
+          // Only toast when a crawl was actually in progress - not on the silent
           // cached-index load that happens on every account open.
           const prev = get().byAccount[ev.payload.accountId];
           const wasCrawling = prev?.status === "crawling";
@@ -161,7 +161,7 @@ export const useIndex = create<IndexState>((set, get) => {
     indexFolder: async (account, folderPath) => {
       autoIndexCancelled.delete(account.id);
       await ensureListeners();
-      // Keep the current index visible — the backend merges this subtree in.
+      // Keep the current index visible - the backend merges this subtree in.
       patch(account.id, {
         status: "crawling",
         progress: blankProgress(),

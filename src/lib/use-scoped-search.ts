@@ -75,7 +75,7 @@ export function useScopedSearch(): ScopedSearch {
     if (!q) return;
     if (scope === "all") globalRun(q);
     else if (scope === "drive" && account) useBrowse.getState().search(account, q);
-    // "folder" needs no request — it filters cached data below.
+    // "folder" needs no request - it filters cached data below.
   }, [q, scope, account, globalRun]);
 
   // --- Read results for the active scope ---

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { pickNewFolders } from "./new-folders";
 import type { RcItem } from "../lib/rc/browse";
 
-// A months-old content date — a newly *shared* folder keeps its original date,
+// A months-old content date - a newly *shared* folder keeps its original date,
 // so detection must NOT gate on it.
 const old = "2026-01-01T00:00:00Z";
 
@@ -36,7 +36,7 @@ describe("pickNewFolders", () => {
     expect(pickNewFolders([dir("Client A")], new Set(), downloaded)).toEqual([]);
   });
 
-  it("ignores files — only root FOLDERS count", () => {
+  it("ignores files - only root FOLDERS count", () => {
     const out = pickNewFolders([file("render.mp4"), dir("Client A")], new Set(), none);
     expect(out.map((i) => i.Path)).toEqual(["Client A"]);
   });

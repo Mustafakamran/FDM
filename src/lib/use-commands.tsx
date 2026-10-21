@@ -17,7 +17,7 @@ export interface Command {
 }
 
 /**
- * The command/nav actions the old Cmd+K palette exposed — now surfaced inside
+ * The command/nav actions the old Cmd+K palette exposed - now surfaced inside
  * the unified search results (files + commands together). Jump to any view or
  * connected drive, toggle theme, open Settings.
  */

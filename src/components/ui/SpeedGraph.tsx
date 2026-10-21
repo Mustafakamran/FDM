@@ -16,11 +16,11 @@ function smoothPath(p: readonly (readonly [number, number])[]): string {
 }
 
 /**
- * Live speed graph — halftone. The area under a smooth speed curve is filled
+ * Live speed graph - halftone. The area under a smooth speed curve is filled
  * with a round-dot pattern that fades upward (dense/solid at the base, sparse at
  * the curve), the "Claude effect" from v2.5.4, with a faint line tracing the
  * curve. To read as real-time rather than stepping once per poll, the whole graph
- * is drifted left continuously (requestAnimationFrame, transform only — no React
+ * is drifted left continuously (requestAnimationFrame, transform only - no React
  * re-render per frame) between samples: each new sample shifts the rolling buffer
  * left by one step, and the drift is re-anchored so it lands exactly as the next
  * sample arrives, adapting to the observed poll cadence (EMA) so 1 s or 2 s polls
@@ -98,7 +98,7 @@ export function SpeedGraph({
   // per-tick rescale is invisible under a solid fill but reads as jitter once the
   // halftone dots sit on it. While the buffer is filling we left-pad with the
   // first sample (a flat baseline the real data scrolls into), so the step stays
-  // constant and every tick just marches the curve left by exactly one step —
+  // constant and every tick just marches the curve left by exactly one step -
   // which the drift animation slides smoothly.
   const CAP = 40;
   const buf = n >= CAP ? samples.slice(-CAP) : [...Array(CAP - n).fill(samples[0]), ...samples];
@@ -141,7 +141,7 @@ export function SpeedGraph({
         {/* Fixed leading dot at the right edge = the live head of the curve. */}
         <circle cx={w - 1.5} cy={y(last)} r={2.4} fill={color} />
       </svg>
-      {/* Overlay: current speed (left) and peak (right) — only when the caller
+      {/* Overlay: current speed (left) and peak (right) - only when the caller
           opts in by passing a live speed (keeps the speed-test graph clean). */}
       {speed !== undefined && (
         <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between px-1.5 pt-0.5 font-mono text-[10px]">

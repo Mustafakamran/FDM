@@ -1,6 +1,6 @@
 // Provider marks render in the app's accent color (var(--accent)) rather than
 // their native brand colors, so every accent-worthy element stays unified with
-// the selected theme — pick Red and the Drive/Dropbox marks turn red too.
+// the selected theme - pick Red and the Drive/Dropbox marks turn red too.
 export function GoogleDriveLogo({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 87.3 78" aria-hidden="true" fill="var(--accent)">

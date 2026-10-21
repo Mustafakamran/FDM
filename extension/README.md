@@ -1,14 +1,14 @@
-# FDM Downloader — Browser Extension
+# FDM Downloader - Browser Extension
 
 A dependency-free Manifest V3 extension (Chrome / Edge / any Chromium browser)
 that sends download links straight to the **FDM** desktop app.
 
 - **Intercept browser downloads (IDM-style)**: when a download starts and FDM is
   running, the extension cancels the browser download and hands it to FDM
-  instead — together with the page's cookies, referrer and User-Agent so
+  instead - together with the page's cookies, referrer and User-Agent so
   cookie/referer-gated direct links still work. Toggle this in the popup
   ("Intercept browser downloads", on by default). If FDM isn't reachable, the
-  browser download proceeds normally — downloads never break.
+  browser download proceeds normally - downloads never break.
 - **Direct files** (`.zip`, `.mp4`, `.pdf`, `.dmg`, …): hover any download link and
   click the small **⬇ FDM** button, or right-click → **Download with FDM** /
   **Save image with FDM**.
@@ -24,7 +24,7 @@ that sends download links straight to the **FDM** desktop app.
   **Download this page's video with FDM**. These run through FDM's bundled
   yt-dlp engine.
 
-The extension never downloads anything itself — it just hands the URL to the
+The extension never downloads anything itself - it just hands the URL to the
 FDM app over a loopback connection. FDM does the actual downloading into your
 default download folder.
 
@@ -95,16 +95,16 @@ so the extension's background service worker can call the loopback server.
 
 ## Troubleshooting
 
-- **Toolbar badge shows `!` / "FDM isn't running"** — start the FDM desktop app,
+- **Toolbar badge shows `!` / "FDM isn't running"** - start the FDM desktop app,
   then retry. Confirm with **Test connection** in the popup.
-- **"FDM rejected the token" / 401** — re-copy the token from
+- **"FDM rejected the token" / 401** - re-copy the token from
   **FDM → Settings → Browser extension** and paste it again (no extra spaces).
-- **Wrong port** — if FDM logged that port 53713 was taken, set the port in the
+- **Wrong port** - if FDM logged that port 53713 was taken, set the port in the
   popup to whatever FDM reported, then Save + Test.
-- **No ⬇ button on a link** — the button only appears for links whose URL ends in
+- **No ⬇ button on a link** - the button only appears for links whose URL ends in
   a known downloadable extension. For anything else, use **right-click →
   Download with FDM**.
-- **Pill won't reappear after I dismissed it (✕)** — reload the page; the pill is
+- **Pill won't reappear after I dismissed it (✕)** - reload the page; the pill is
   dismissed only for the current page view.
 
 ## Privacy

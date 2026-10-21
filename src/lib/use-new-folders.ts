@@ -100,7 +100,7 @@ export function useNewFolders(): NewFoldersResult {
       if (!roots || baseline[a.id] === undefined) continue; // not loaded / not yet seeded
       const statuses = statusByAccount[a.id] ?? {};
       // Once you HANDLE a folder (Downloaded / Copied / Downloading) it's no longer
-      // "new" and drops off the screen — EXCEPT "On hold", which you deliberately
+      // "new" and drops off the screen - EXCEPT "On hold", which you deliberately
       // keep visible. Unstatused folders stay until handled.
       const news = pickNewFolders(roots, new Set(baseline[a.id]), (p) => isDownloadedUnder(a.id, p)).filter(
         (f) => {
@@ -156,7 +156,7 @@ export function useNewFolders(): NewFoldersResult {
     for (const g of groups) ack(g.account.id, g.folders.map((f) => f.Path));
   };
 
-  // The badge counts only folders you HAVEN'T opened yet — opening one clears it
+  // The badge counts only folders you HAVEN'T opened yet - opening one clears it
   // from the badge (it stays listed, dimmed, so you can still act on it).
   const count = groups.reduce((n, g) => {
     const seen = new Set(visitedByAccount[g.account.id] ?? []);

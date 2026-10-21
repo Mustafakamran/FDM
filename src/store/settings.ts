@@ -13,15 +13,19 @@ export interface AppSettings {
    *
    * Defaults OFF: a Drive account's crawl root includes "Shared with me"
    * (see account_fs), which for this app's core use case is a multi-TB corpus
-   * of client footage — auto-walking it on first open would burn Drive API
+   * of client footage - auto-walking it on first open would burn Drive API
    * quota and hammer the same daemon that serves live browsing. Opt-in.
    */
   autoIndex: boolean;
   /** Show the floating Transfers drawer (collapses to a circular button). */
   showTransferDrawer: boolean;
+  /** Desktop notification when a transfer completes. */
+  notifyOnComplete: boolean;
+  /** Play a short chime when a transfer completes. */
+  completionSound: boolean;
 }
 
-const DEFAULTS: AppSettings = { autoIndex: false, showTransferDrawer: true };
+const DEFAULTS: AppSettings = { autoIndex: false, showTransferDrawer: true, notifyOnComplete: true, completionSound: true };
 
 function load(): AppSettings {
   return { ...DEFAULTS, ...loadJson<Partial<AppSettings>>(KEY, {}) };
@@ -30,10 +34,17 @@ function load(): AppSettings {
 interface SettingsState extends AppSettings {
   setAutoIndex: (v: boolean) => void;
   setShowTransferDrawer: (v: boolean) => void;
+  setNotifyOnComplete: (v: boolean) => void;
+  setCompletionSound: (v: boolean) => void;
 }
 
 export const useSettings = create<SettingsState>((set, get) => {
-  const pick = (s: AppSettings): AppSettings => ({ autoIndex: s.autoIndex, showTransferDrawer: s.showTransferDrawer });
+  const pick = (s: AppSettings): AppSettings => ({
+    autoIndex: s.autoIndex,
+    showTransferDrawer: s.showTransferDrawer,
+    notifyOnComplete: s.notifyOnComplete,
+    completionSound: s.completionSound,
+  });
   // Persist the WHOLE settings object on any change (so one setter never drops
   // the others' values).
   const persist = (patch: Partial<AppSettings>) => {
@@ -44,5 +55,7 @@ export const useSettings = create<SettingsState>((set, get) => {
     ...load(),
     setAutoIndex: (autoIndex) => persist({ autoIndex }),
     setShowTransferDrawer: (showTransferDrawer) => persist({ showTransferDrawer }),
+    setNotifyOnComplete: (notifyOnComplete) => persist({ notifyOnComplete }),
+    setCompletionSound: (completionSound) => persist({ completionSound }),
   };
 });

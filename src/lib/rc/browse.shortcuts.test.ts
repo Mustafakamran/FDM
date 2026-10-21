@@ -26,7 +26,7 @@ describe("resolveDriveShortcuts", () => {
     expect(out.IsDir).toBe(true); // renders as an openable folder
     expect(out.MimeType).toBe("application/vnd.google-apps.folder");
     // Reached by id (id-rooted linked folder), NOT a name-path that wouldn't
-    // resolve over shared_with_me — so the target id is tagged, name/path kept.
+    // resolve over shared_with_me - so the target id is tagged, name/path kept.
     expect(out.LinkFolderId).toBe("folder99");
     expect(out.Name).toBe("Kolo");
   });

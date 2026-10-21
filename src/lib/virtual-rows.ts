@@ -10,7 +10,7 @@ export interface VirtualRange {
  * `overscan` rows on each side so a fast scroll doesn't show a blank flash
  * before new rows mount. Degenerates to "render everything" whenever the
  * measurements aren't ready yet (rowHeight/viewportHeight of 0) or the list
- * already fits — callers never need a separate small-list code path.
+ * already fits - callers never need a separate small-list code path.
  */
 export function computeVirtualRange(
   scrollTop: number,

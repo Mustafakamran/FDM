@@ -93,7 +93,7 @@ describe("transfers queue", () => {
   it("persists queue + in-flight to localStorage so a restart can resume", async () => {
     useTransfers.getState().enqueue("drive_x", [item("a"), item("b")], "/dest");
     await vi.waitFor(() => expect(useTransfers.getState().jobs).toHaveLength(1));
-    // "a" is running (in-flight), "b" still queued — both on disk.
+    // "a" is running (in-flight), "b" still queued - both on disk.
     expect(JSON.parse(localStorage.getItem("download_inflight_v1")!)).toHaveLength(1);
     expect(JSON.parse(localStorage.getItem("download_queue_v1")!)).toHaveLength(1);
   });
@@ -210,14 +210,14 @@ describe("refresh no-op short-circuit", () => {
     const jobId = useTransfers.getState().inflight[0].jobId;
     // Steady-state: list_jobs returns the same in-flight job every tick.
     listReturns = [job({ jobId, bytes: 250, totalBytes: 1000 })];
-    await useTransfers.getState().refresh(); // first observation — state updates
+    await useTransfers.getState().refresh(); // first observation - state updates
 
     const jobsBefore = useTransfers.getState().jobs;
     const inflightBefore = useTransfers.getState().inflight;
     const inflightLs = localStorage.getItem("download_inflight_v1");
     const setSpy = vi.spyOn(localStorage, "setItem");
 
-    await useTransfers.getState().refresh(); // identical data — must short-circuit
+    await useTransfers.getState().refresh(); // identical data - must short-circuit
 
     // No new object identities: the set() was skipped, so references are stable.
     expect(useTransfers.getState().jobs).toBe(jobsBefore);
@@ -239,7 +239,7 @@ describe("refresh no-op short-circuit", () => {
     listReturns = [job({ jobId, bytes: 750, totalBytes: 1000 })]; // progress moved
     await useTransfers.getState().refresh();
 
-    // The UI-facing state always reflects the latest bytes, tick to tick —
+    // The UI-facing state always reflects the latest bytes, tick to tick -
     // only the localStorage persistence is throttled (see below).
     expect(useTransfers.getState().jobs).not.toBe(jobsBefore);
     expect(useTransfers.getState().inflight[0].bytes).toBe(750);
@@ -270,7 +270,7 @@ describe("refresh no-op short-circuit", () => {
     await useTransfers.getState().refresh(); // tick 1: throttled, doesn't flush
 
     listReturns = [job({ jobId, bytes: 1000, totalBytes: 1000, finished: true, success: true })];
-    await useTransfers.getState().refresh(); // job finishes — membership change, persists now
+    await useTransfers.getState().refresh(); // job finishes - membership change, persists now
 
     expect(useTransfers.getState().inflight).toHaveLength(0);
     expect(JSON.parse(localStorage.getItem("download_inflight_v1")!)).toHaveLength(0);

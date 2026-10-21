@@ -11,7 +11,7 @@ const VIDEO = new Set([
 ]);
 /**
  * Formats every webview reliably decodes via a plain <img> tag. RAW formats
- * (ARW/CR2/NEF/DNG…) are deliberately excluded — no browser/webview decodes
+ * (ARW/CR2/NEF/DNG…) are deliberately excluded - no browser/webview decodes
  * them natively, and there's no bundled decoder for them in this app, so
  * they fall through to the same "download to view" message pro video codecs
  * already get, rather than a silently broken image.
@@ -19,7 +19,7 @@ const VIDEO = new Set([
 const IMAGE = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]);
 /**
  * HEIC/HEIF decode natively on macOS (WKWebView/Safari engine) but generally
- * NOT on Windows (WebView2/Chromium doesn't support it as of writing) — kept
+ * NOT on Windows (WebView2/Chromium doesn't support it as of writing) - kept
  * separate from IMAGE so the UI can attempt it but degrade gracefully
  * (onError) rather than assume it always works.
  */
@@ -29,7 +29,7 @@ const IMAGE_BEST_EFFORT = new Set(["heic", "heif"]);
 const AUDIO = new Set(["mp3", "wav", "aac", "m4a", "flac", "oga", "opus", "aiff", "aif", "wma"]);
 /** Documents the webview renders inline (WKWebView/WebView2 have a PDF viewer). */
 const PDF = new Set(["pdf"]);
-/** Archives — no inline render, but the extractor lists/extracts them. */
+/** Archives - no inline render, but the extractor lists/extracts them. */
 const ARCHIVE = new Set(["zip", "rar", "7z", "tar", "gz", "tgz", "bz2"]);
 
 export function extOf(name: string): string {
@@ -60,7 +60,7 @@ export function isPreviewable(name: string): boolean {
   return isVideo(name) || isImage(name) || isAudio(name) || isPdf(name);
 }
 
-/** UTF-8-safe base64url (no padding) — matches the Rust URL_SAFE_NO_PAD decoder. */
+/** UTF-8-safe base64url (no padding) - matches the Rust URL_SAFE_NO_PAD decoder. */
 function b64url(s: string): string {
   const bytes = new TextEncoder().encode(s);
   let bin = "";
@@ -73,7 +73,7 @@ function b64url(s: string): string {
  * `master.m3u8` URL. Both endpoints parse this exact string by raw split, so all
  * values must already be URL-safe (path is base64url; ids/ext/acct alphanumeric).
  * `localDest` is optional: the destination folder this exact item was already
- * downloaded to (a completed job matched in history), if any — lets the
+ * downloaded to (a completed job matched in history), if any - lets the
  * backend serve straight from disk instead of the cloud (instant, offline).
  */
 export function sourceParams(accountId: string, t: ReviewTarget, localDest?: string): string {
@@ -82,7 +82,7 @@ export function sourceParams(accountId: string, t: ReviewTarget, localDest?: str
 }
 
 /**
- * Loopback streaming-proxy URL for a video/image — the direct, non-transcoded
+ * Loopback streaming-proxy URL for a video/image - the direct, non-transcoded
  * path. Also the input ffmpeg pulls bytes through when transcoding HLS
  * segments. Serves from local disk when `localDest` resolves to an
  * already-downloaded copy; falls back to the cloud otherwise.
@@ -93,7 +93,7 @@ export async function streamUrl(accountId: string, t: ReviewTarget, localDest?: 
 }
 
 /**
- * HLS master-playlist URL for a video — the adaptive-bitrate path. Same source
+ * HLS master-playlist URL for a video - the adaptive-bitrate path. Same source
  * params as {@link streamUrl}; only the route differs (`/hls/master.m3u8`). The
  * backend serves the per-rendition media playlists and JIT-transcoded segments.
  */

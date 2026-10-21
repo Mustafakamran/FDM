@@ -9,7 +9,7 @@ interface PreviewState {
 }
 
 /**
- * Lightweight preview overlay — single-click on a video/image opens it here
+ * Lightweight preview overlay - single-click on a video/image opens it here
  * (image shown large / video played inline, no review chrome). Distinct from the
  * full reviewer (right-click → Review), which lives in its own view. See
  * PreviewOverlay.tsx.

@@ -18,7 +18,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
-const INDEX_VERSION: u32 = 3;
+// v4: Drive is ID-native (id-chain paths, shortcut-safe sizes). Older on-disk
+// indexes used name-paths and double-counted shortcut trees, so they're dropped.
+const INDEX_VERSION: u32 = 4;
 
 /// Auto-index worker pool size. Kept small (BFS, non-recursive) so a crawl never
 /// saturates the shared rclone daemon and freezes the rest of the app.
@@ -341,6 +343,75 @@ struct Crawl {
     last_emit: Mutex<Instant>,
 }
 
+/// True for a plain Google Drive account (not a drive-link / team-drive remote),
+/// which crawls ID-native via the Drive API. ("drive_" uniquely prefixes these;
+/// "drivelink_"/"teamdrive_" don't match.)
+fn is_plain_drive(account_id: &str) -> bool {
+    account_id.starts_with("drive_")
+}
+
+/// Per-crawl Drive context: which account, and a shared access token refreshed on
+/// 401 (a big crawl can outlive a token's ~1h life).
+struct DriveCtx {
+    account_id: String,
+    access: Mutex<String>,
+}
+
+/// The two virtual roots an ID-native Drive crawl seeds from (My Drive + Shared
+/// with me) - matches the browser's root entries so folder ids/paths line up.
+fn drive_seed_entries() -> Vec<Entry> {
+    let mk = |id: &str, name: &str| Entry {
+        name: name.to_string(),
+        path: id.to_string(),
+        size: 0,
+        is_dir: true,
+        mod_time: String::new(),
+        mime_type: "application/vnd.google-apps.folder".to_string(),
+        id: id.to_string(),
+    };
+    vec![mk("root", "My Drive"), mk("__shared__", "Shared with me")]
+}
+
+/// List one Drive folder's children for the crawl, via the Drive API by id. The
+/// folder to list is `dir.id` (seeds are "root"/"__shared__"); each child's path
+/// is the parent's id chain + the child id, so the crawl's paths match the
+/// browser's exactly. Refreshes the access token once on an auth failure.
+fn drive_list_children(
+    conn: &RcConnection,
+    dctx: &DriveCtx,
+    client: &reqwest::blocking::Client,
+    dir: &Entry,
+) -> Result<Vec<Entry>, String> {
+    let folder_id = if dir.id.is_empty() { dir.path.clone() } else { dir.id.clone() };
+    let access = { lock(&dctx.access).clone() };
+    let rows = match crate::drive::drive_list_rows(client, &access, &folder_id) {
+        Ok(r) => r,
+        Err(e) if e.contains("401") || e.contains("403") => {
+            // Token likely stale - refresh once and retry.
+            let fresh = crate::drive::drive_access_token(conn, &dctx.account_id)?;
+            *lock(&dctx.access) = fresh.clone();
+            crate::drive::drive_list_rows(client, &fresh, &folder_id)?
+        }
+        Err(e) => return Err(e),
+    };
+    Ok(rows
+        .into_iter()
+        // Skip shortcuts: a shortcut is a pointer, not containment, so counting /
+        // recursing its target double-counts a tree already indexed where it lives
+        // (this is what inflated My Drive to ~18TB). Browse still shows shortcuts.
+        .filter(|r| !r.is_shortcut)
+        .map(|r| Entry {
+            name: r.name,
+            path: format!("{}/{}", dir.path, r.id),
+            size: r.size as i64,
+            is_dir: r.is_dir,
+            mod_time: r.mod_time,
+            mime_type: r.mime_type,
+            id: r.id,
+        })
+        .collect())
+}
+
 /// Breadth-first, NON-recursive crawl of `seeds` (folders) with a small worker
 /// pool. Each worker pops a folder, lists only its direct children, normalizes
 /// paths, collects file entries (folding stats), and enqueues subfolders. Returns
@@ -352,6 +423,7 @@ fn bfs_crawl(
     account_id: &str,
     conn: &RcConnection,
     fs: &str,
+    drive: Option<Arc<DriveCtx>>,
     seeds: Vec<Entry>,
     base_stats: CrawlStats,
     cancel: &Arc<AtomicBool>,
@@ -383,7 +455,11 @@ fn bfs_crawl(
         let account_id = account_id.to_string();
         let crawl = crawl.clone();
         let cancel = cancel.clone();
-        handles.push(std::thread::spawn(move || loop {
+        let drive = drive.clone();
+        handles.push(std::thread::spawn(move || {
+          // One HTTP client per worker (connection pooling) for the Drive path.
+          let client = reqwest::blocking::Client::new();
+          loop {
             if cancel.load(Ordering::SeqCst) {
                 break;
             }
@@ -394,12 +470,19 @@ fn bfs_crawl(
             };
 
             // List only the direct children (no recurse). Retry a flaky list once.
+            // Drive accounts list ID-native via the Drive API (children already
+            // carry final id-chain paths); everything else lists via rclone.
             let mut children: Vec<Entry> = Vec::new();
             for attempt in 0..2 {
                 if cancel.load(Ordering::SeqCst) {
                     return;
                 }
-                match list_op(&conn, &fs, &dir.path, false) {
+                let listed = match &drive {
+                    Some(dctx) => drive_list_children(&conn, dctx, &client, &dir),
+                    None => list_op(&conn, &fs, &dir.path, false)
+                        .map(|c| c.into_iter().map(|mut it| { it.path = normalize_path(&dir.path, &it.path); it }).collect()),
+                };
+                match listed {
                     Ok(c) => {
                         children = c;
                         break;
@@ -421,8 +504,7 @@ fn bfs_crawl(
                 // so a repeat is harmless). ID-less entries (no-ID providers, e.g.
                 // Dropbox) are always kept — their paths are already unique.
                 let mut seen = lock(&crawl.seen);
-                for mut it in children {
-                    it.path = normalize_path(&dir.path, &it.path);
+                for it in children {
                     if it.is_dir {
                         subdirs.push(it.clone());
                         keep.push(it);
@@ -467,6 +549,7 @@ fn bfs_crawl(
             if should_emit {
                 emit_progress(&app, &account_id, d, t, &snapshot);
             }
+          }
         }));
     }
     for h in handles {
@@ -527,13 +610,33 @@ fn do_crawl(app: &AppHandle, account_id: &str, cancel: &Arc<AtomicBool>) -> Resu
         return Ok(CrawlOutcome::Done(crawl_dropbox_link(app, account_id)?));
     }
     let conn = lock(&app.state::<RcloneState>().connection).clone().ok_or_else(|| "rclone not started".to_string())?;
-    // Auto-crawl the OWNED account only (Drive: My Drive, shortcuts skipped) so a
-    // few shared shortcuts can't drag clients' whole drives into the index.
+
+    // Plain Drive: ID-native crawl via the Drive API, seeded from My Drive +
+    // Shared with me (both indexed), so size/file counts cover everything the
+    // browser shows - and no rclone name-path over shared_with_me to dangle.
+    if is_plain_drive(account_id) {
+        let access = crate::drive::drive_access_token(&conn, account_id)?;
+        let dctx = Arc::new(DriveCtx { account_id: account_id.to_string(), access: Mutex::new(access) });
+        let seeds = drive_seed_entries();
+        // Keep the two virtual roots in the index so their aggregates exist.
+        let roots = seeds.clone();
+        return match bfs_crawl(app, account_id, &conn, "", Some(dctx), seeds, CrawlStats::default(), cancel) {
+            Ok(sub) => {
+                let mut merged = roots;
+                merged.extend(sub);
+                Ok(CrawlOutcome::Done(merged))
+            }
+            Err(Cancelled) => Ok(CrawlOutcome::Cancelled),
+        };
+    }
+
+    // Auto-crawl the OWNED account only (shortcuts skipped) so a few shared
+    // shortcuts can't drag clients' whole drives into the index.
     let fs = index_fs(account_id)?;
     let root = list_op(&conn, &fs, "", false)?;
     let root_dirs: Vec<Entry> = root.iter().filter(|e| e.is_dir).cloned().collect();
     let base_stats = stats_of(&root);
-    match bfs_crawl(app, account_id, &conn, &fs, root_dirs, base_stats, cancel) {
+    match bfs_crawl(app, account_id, &conn, &fs, None, root_dirs, base_stats, cancel) {
         Ok(sub) => {
             let mut merged = root;
             merged.extend(sub);
@@ -665,6 +768,28 @@ pub fn index_folder(app: AppHandle, account_id: String, folder_path: String) {
                 return Ok(CrawlOutcome::Done(crawl_dropbox_link(&app, &account_id)?));
             }
             let conn = lock(&app.state::<RcloneState>().connection).clone().ok_or_else(|| "rclone not started".to_string())?;
+
+            // Plain Drive: ID-native. folder_path is an id chain; list that folder
+            // by id, then BFS its subdirs via the Drive API.
+            if is_plain_drive(&account_id) {
+                let access = crate::drive::drive_access_token(&conn, &account_id)?;
+                let dctx = Arc::new(DriveCtx { account_id: account_id.clone(), access: Mutex::new(access) });
+                let folder_id = folder_path.rsplit('/').next().unwrap_or(&folder_path).to_string();
+                let client = reqwest::blocking::Client::new();
+                let self_entry = Entry { name: String::new(), path: folder_path.clone(), size: 0, is_dir: true, mod_time: String::new(), mime_type: "application/vnd.google-apps.folder".into(), id: folder_id };
+                let direct = drive_list_children(&conn, &dctx, &client, &self_entry)?;
+                let subdirs: Vec<Entry> = direct.iter().filter(|e| e.is_dir).cloned().collect();
+                let base_stats = stats_of(&direct);
+                return match bfs_crawl(&app, &account_id, &conn, "", Some(dctx), subdirs, base_stats, &cancel) {
+                    Ok(sub) => {
+                        let mut fresh = direct;
+                        fresh.extend(sub);
+                        Ok(CrawlOutcome::Done(fresh))
+                    }
+                    Err(Cancelled) => Ok(CrawlOutcome::Cancelled),
+                };
+            }
+
             let fs = account_fs(&account_id)?;
             // List the folder itself to get its direct children, then BFS its subdirs.
             let direct = list_op(&conn, &fs, &folder_path, false)?;
@@ -674,7 +799,7 @@ pub fn index_folder(app: AppHandle, account_id: String, folder_path: String) {
             }).collect();
             let subdirs: Vec<Entry> = direct.iter().filter(|e| e.is_dir).cloned().collect();
             let base_stats = stats_of(&direct);
-            match bfs_crawl(&app, &account_id, &conn, &fs, subdirs, base_stats, &cancel) {
+            match bfs_crawl(&app, &account_id, &conn, &fs, None, subdirs, base_stats, &cancel) {
                 Ok(sub) => {
                     let mut fresh = direct;
                     fresh.extend(sub);

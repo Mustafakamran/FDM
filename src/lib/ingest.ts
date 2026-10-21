@@ -38,10 +38,10 @@ export type IngestKind = "file" | "media";
  * Shape of the Rust `ingest-url` event payload (also the JSON body the extension
  * POSTs to /fdm/ingest). `url` + `kind` are required; the rest are additive
  * refinements from the IDM-style grab:
- *  - `filename`  — the suggested name (overrides the URL-derived guess).
- *  - `referrer` / `cookie` / `ua` — request headers threaded into the download so
+ *  - `filename`  - the suggested name (overrides the URL-derived guess).
+ *  - `referrer` / `cookie` / `ua` - request headers threaded into the download so
  *    cookie/referer-gated direct links (mediafire/filecr/"save image as") work.
- *  - `prompt`    — force the native save dialog for this capture regardless of the
+ *  - `prompt`    - force the native save dialog for this capture regardless of the
  *    `askWhereToSave` setting.
  */
 export interface IngestPayload {
@@ -89,7 +89,7 @@ export function splitSavePath(chosen: string): { dir: string; name: string } {
  * Map an ingest kind to the engine account id:
  *  - "media" -> yt-dlp sidecar (social/video)
  *  - "file"  -> generic streaming HTTP download
- * Pure; no dependencies — unit-tested.
+ * Pure; no dependencies - unit-tested.
  */
 export function accountIdForKind(kind: IngestKind): string {
   return kind === "media" ? YTDLP_ACCOUNT_ID : HTTP_ACCOUNT_ID;
@@ -173,7 +173,7 @@ export async function ingest(
   if (askWhere || payload.prompt) {
     if (payload.kind === "media") {
       // yt-dlp resolves the real title itself and names the file with it, so a
-      // Save-As with a URL-derived name (e.g. "watch") is wrong and confusing —
+      // Save-As with a URL-derived name (e.g. "watch") is wrong and confusing -
       // only the folder matters. Prompt for a folder instead.
       const dir = await folderDialog();
       if (!dir) return;
@@ -181,7 +181,7 @@ export async function ingest(
     } else {
       const defaultPath = defaultFolder ? joinPath(defaultFolder, suggested) : suggested;
       const chosen = await saveDialog({ defaultPath });
-      if (!chosen) return; // user cancelled — no download
+      if (!chosen) return; // user cancelled - no download
       const split = splitSavePath(chosen);
       dest = split.dir;
       name = split.name;
@@ -202,7 +202,7 @@ function joinPath(dir: string, name: string): string {
 /**
  * Subscribe to the Rust `ingest-url` event and enqueue each capture. Call once
  * on app launch; returns a cleanup that unlistens. Safe when there's no Tauri
- * event runtime (e.g. tests) — it resolves to a no-op cleanup.
+ * event runtime (e.g. tests) - it resolves to a no-op cleanup.
  */
 export function startIngestListener(): () => void {
   let unlisten: UnlistenFn | null = null;

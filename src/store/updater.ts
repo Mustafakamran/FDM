@@ -11,7 +11,7 @@ export type UpdatePhase =
   | "uptodate"
   | "error";
 
-// The pending Update handle is a class instance from the plugin — kept outside
+// The pending Update handle is a class instance from the plugin - kept outside
 // zustand state (not serializable / not for rendering).
 let pending: Update | null = null;
 

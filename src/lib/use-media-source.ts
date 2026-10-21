@@ -13,7 +13,7 @@ import { hlsMasterUrl, isAudio, isImage, isPdf, isPlayable, isVideo, sourceParam
 const LARGE_VIDEO_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
 
 export interface MediaSource {
-  /** Direct loopback `/media` URL — the <img src> / direct-play <video src>. */
+  /** Direct loopback `/media` URL - the <img src> / direct-play <video src>. */
   url: string | null;
   /** HLS master-playlist URL when the clip needs JIT transcoding, else null. */
   hlsUrl: string | null;
@@ -42,7 +42,7 @@ export interface MediaSource {
  *
  * Matches how Drive/Dropbox web preview a clip:
  *   • already-playable (H.264/AAC → the PLAYABLE ext set) streams DIRECT over
- *     HTTP range requests — instant, no transcode.
+ *     HTTP range requests - instant, no transcode.
  *   • anything else recognized as video (ProRes/MXF/R3D/HEVC…) goes through the
  *     JIT HLS transcoder (`stream_mode` probes the real codec server-side and
  *     returns "hls"; ffmpeg transcodes ~6s segments on demand).
@@ -50,7 +50,7 @@ export interface MediaSource {
  *
  * When the exact file is already downloaded (a completed history job for this
  * account+path), its destination folder is passed through so the backend serves
- * straight from local disk — instant and offline.
+ * straight from local disk - instant and offline.
  */
 export function useMediaSource(accountId: string, target: ReviewTarget): MediaSource {
   const isImg = isImage(target.name);
@@ -95,7 +95,7 @@ export function useMediaSource(accountId: string, target: ReviewTarget): MediaSo
         //  • a pro codec (not directly playable) → transcode so it plays at all;
         //  • a HUGE clip, even in a playable codec → transcode too, because
         //    streaming the full-bitrate original (raw footage runs 100+ Mbps)
-        //    can't sustain real-time playback over the cloud — the low-bitrate
+        //    can't sustain real-time playback over the cloud - the low-bitrate
         //    HLS proxy is what makes it watchable. Small playable clips stay on
         //    the instant direct path.
         const localCopy = !!localDest; // already on disk → direct is instant, skip transcode

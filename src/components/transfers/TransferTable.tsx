@@ -104,7 +104,7 @@ function retryRow(r: TransferRow, a: RowActions) {
   else if (r.queueId) a.onResumeQueued?.(r.queueId);
 }
 
-/** Right-click menu when multiple rows are selected — batch actions across all. */
+/** Right-click menu when multiple rows are selected - batch actions across all. */
 function buildBatchMenu(sel: TransferRow[], a: RowActions, onRequestBulkDelete: () => void): MenuItem[] {
   const items: MenuItem[] = [];
   const retry = sel.filter(isRetryable);
@@ -293,7 +293,7 @@ function CollectedBar({ pct, color }: { pct: number; color: string }) {
   );
 }
 
-/** Bottom "Info" panel for the selected transfer — the torrent-client detail. */
+/** Bottom "Info" panel for the selected transfer - the torrent-client detail. */
 function InfoPanel({ row, samples, stats }: { row: TransferRow; samples: number[]; stats?: RowStats }) {
   const ft = fileType(row.name, false);
   const color = STATE_COLOR[row.state];
@@ -501,7 +501,7 @@ export function TransferTable({ rows, speedHistory, statsFor, ...actions }: Tran
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[13px] border border-[var(--line)] bg-[var(--card)]">
-      {/* Batch action bar — shown while more than one row is selected. */}
+      {/* Batch action bar - shown while more than one row is selected. */}
       {sel.size > 1 && (
         <BatchBar
           rows={selectedRows}
@@ -542,7 +542,7 @@ export function TransferTable({ rows, speedHistory, statsFor, ...actions }: Tran
         ))}
       </div>
 
-      {/* Bottom info panel — only for a single selected row. */}
+      {/* Bottom info panel - only for a single selected row. */}
       {single && (
         <div className="max-h-[46%] min-h-0 shrink-0">
           <InfoPanel

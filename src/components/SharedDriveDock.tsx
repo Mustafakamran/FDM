@@ -12,7 +12,7 @@ import { BrowsePane } from "./BrowsePane";
  * Rendered inside the content shell (below the top bar, right of the sidebar) so
  * it never covers the search / window controls. A vertical, Chrome-style tab rail
  * on the right holds every open drive; the active one shows in a slide-over that
- * embeds the FULL file browser. Clicking outside minimizes (keeps the tab) — the
+ * embeds the FULL file browser. Clicking outside minimizes (keeps the tab) - the
  * rail persists across every screen until a tab is explicitly closed.
  */
 export function SharedDriveDock() {
@@ -50,7 +50,7 @@ export function SharedDriveDock() {
 
   return (
     <div className="pointer-events-none absolute inset-0 z-40">
-      {/* Invisible click-catcher — clicking outside minimizes (no dim overlay). */}
+      {/* Invisible click-catcher - clicking outside minimizes (no dim overlay). */}
       {active && <div className="pointer-events-auto absolute inset-0" onClick={minimize} />}
 
       {/* Drawer + bookmark rail, anchored to the right edge. */}
@@ -103,7 +103,7 @@ export function SharedDriveDock() {
 
         {active && (
             <>
-              {/* Slim control bar — the drive name/icon already show in the tab and
+              {/* Slim control bar - the drive name/icon already show in the tab and
                   the browser's breadcrumb below, so don't repeat them here. */}
               <div className="flex items-center justify-end gap-1.5 border-b border-[var(--line)] px-3 py-1.5">
                 <button onClick={() => void downloadDrive()} disabled={!linked} className="flex items-center gap-1.5 rounded-[9px] border border-[var(--line)] px-2.5 py-1.5 text-[12px] font-semibold text-[var(--mut)] hover:border-[var(--line2)] hover:text-[var(--ink)] disabled:opacity-40" data-tip="Download the whole drive">

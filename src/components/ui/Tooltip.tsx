@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
  * Global custom-tooltip layer. Mount ONCE near the app root.
  *
  * Instead of forcing every call site to adopt a <Tooltip> wrapper, this watches
- * the document for hover/focus on any element carrying `data-tip` — OR a native
+ * the document for hover/focus on any element carrying `data-tip` - OR a native
  * `title`. When it sees a `title`, it moves the text to `data-tip` and strips the
  * attribute, which both suppresses the browser's native (ugly, un-themed, slow)
  * tooltip and lets every existing `title="…"` in the app render as our styled
@@ -24,7 +24,7 @@ interface TipAnchor {
 
 export function TooltipLayer() {
   const [tip, setTip] = useState<TipAnchor | null>(null);
-  // Final, edge-clamped position — computed from the tooltip's OWN measured
+  // Final, edge-clamped position - computed from the tooltip's OWN measured
   // size (see the layout effect below), not a guessed width. Null until that
   // measurement lands, which a layout effect guarantees happens before paint.
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
@@ -65,7 +65,7 @@ export function TooltipLayer() {
       if (!found) return;
       clear();
       timer.current = setTimeout(() => {
-        // The anchor may have unmounted (or be mid-morph) during the delay —
+        // The anchor may have unmounted (or be mid-morph) during the delay -
         // don't show a stale tooltip at a bogus position.
         if (!found.el.isConnected) return;
         const rect = found.el.getBoundingClientRect();
@@ -87,7 +87,7 @@ export function TooltipLayer() {
     document.addEventListener("mouseout", onOut);
     document.addEventListener("focusin", onFocus);
     document.addEventListener("focusout", onOut);
-    // Any scroll/wheel/resize invalidates the anchor position — just dismiss.
+    // Any scroll/wheel/resize invalidates the anchor position - just dismiss.
     document.addEventListener("scroll", hide, true);
     window.addEventListener("wheel", hide, { passive: true });
     window.addEventListener("resize", hide);
@@ -105,7 +105,7 @@ export function TooltipLayer() {
     };
   }, []);
 
-  // Clamp against the tooltip's ACTUAL rendered box, not a guessed half-width —
+  // Clamp against the tooltip's ACTUAL rendered box, not a guessed half-width -
   // a fixed margin let long tooltips run off-screen at the left/right/top edges.
   // Runs before paint, so there's no visible jump from the unclamped position.
   useLayoutEffect(() => {

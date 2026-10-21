@@ -11,14 +11,13 @@ import { ContextMenu, type MenuItem } from "./ui/ContextMenu";
 import { ProviderIcon, providerName } from "./icons";
 import { Skeleton } from "./ui";
 import { AddAccountDialog } from "./AddAccountDialog";
-import { AddLinkDialog } from "./AddLinkDialog";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { useNewFolders } from "../lib/use-new-folders";
 import { laneOf, isSharedLink } from "../lib/lane";
 import type { Account, Provider } from "../lib/tauri/commands";
 
 export function Sidebar() {
-  const { view, accounts, accountsLoaded, selectAccount, removeAccount, showTransfers, showNewFolders, showShared, setView } = useApp(
+  const { view, accounts, accountsLoaded, selectAccount, removeAccount, showTransfers, showNewFolders, showShared, showLinks, setView } = useApp(
     useShallow((s) => ({
       view: s.view,
       accounts: s.accounts,
@@ -28,12 +27,15 @@ export function Sidebar() {
       showTransfers: s.showTransfers,
       showNewFolders: s.showNewFolders,
       showShared: s.showShared,
+      showLinks: s.showLinks,
       setView: s.setView,
     })),
   );
   const onTransfers = view.kind === "transfers";
   const onFiles = view.kind === "browse";
   const onHome = view.kind === "home";
+  const onLinks = view.kind === "links";
+  const linkCount = accounts.filter((a) => a.id.startsWith("drivelink_") || a.id.startsWith("dropboxlink_")).length;
   const onNewFolders = view.kind === "new-folders";
   const onShared = view.kind === "shared";
   const newFolderCount = useNewFolders().count;
@@ -48,7 +50,6 @@ export function Sidebar() {
   const emailErrors = useAccountMeta((s) => s.errors);
   const fetchEmail = useAccountMeta((s) => s.fetchEmail);
   const [addProvider, setAddProvider] = useState<Provider | null>(null);
-  const [addLink, setAddLink] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
@@ -62,7 +63,7 @@ export function Sidebar() {
 
   const activeAccount = view.kind === "browse" ? view.accountId : null;
 
-  // Recomputed every 1s tick while a download runs (jobs/queue change) — memoize
+  // Recomputed every 1s tick while a download runs (jobs/queue change) - memoize
   // so it doesn't do fresh filter/reduce passes on every keystroke elsewhere in
   // the tree that happens to also touch this component's props.
   const { counts, totalSpeed } = useMemo(() => {
@@ -96,8 +97,8 @@ export function Sidebar() {
   );
 
   // User-arranged account order (drag-free: move up/down from the tile menu).
-  // Shared/linked drives — Shared Drives (teamdrive_*) and opened Drive folder
-  // shortcuts / shared folders (drivelink_*) — are reached from the Shared Drives
+  // Shared/linked drives - Shared Drives (teamdrive_*) and opened Drive folder
+  // shortcuts / shared folders (drivelink_*) - are reached from the Shared Drives
   // screen or the shortcut in a normal listing, so they must NOT clutter the
   // account list. They stay in `accounts` so their browse view still resolves.
   const accountOrder = useAccountOrder((s) => s.order);
@@ -118,6 +119,7 @@ export function Sidebar() {
         <NavItem icon={<FolderOpen size={16} />} label="Files" active={onFiles} onClick={goFiles} />
         <NavItem icon={<FolderPlus size={16} />} label="Recent Folders" active={onNewFolders} onClick={showNewFolders} badge={newFolderCount || undefined} />
         <NavItem icon={<HardDrive size={16} />} label="Shared Drives" active={onShared} onClick={showShared} />
+        <NavItem icon={<LinkIcon size={16} />} label="Shared Links" active={onLinks} onClick={showLinks} badge={linkCount || undefined} />
         <NavItem icon={<ArrowDownUp size={16} />} label="Transfers" active={onTransfers} onClick={() => showTransfers()} badge={(counts.downloading + activeUploads) || undefined} />
       </div>
 
@@ -167,7 +169,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Connect account — OUTSIDE the scrolling list so its upward-opening menu
+      {/* Connect account - OUTSIDE the scrolling list so its upward-opening menu
           isn't clipped by the list's overflow (that was hiding the Drive item). */}
       <div className="relative shrink-0 px-3 pb-2">
         <button
@@ -189,12 +191,6 @@ export function Sidebar() {
                   <ProviderIcon provider={p} size={15} /> {providerName(p)}
                 </button>
               ))}
-              <button
-                onClick={() => { setAddLink(true); setMenuOpen(false); }}
-                className="flex w-full items-center gap-2 border-t border-[var(--line)] px-3 py-2 text-left text-[13px] text-[var(--mut)] hover:bg-[var(--soft)] hover:text-[var(--ink)]"
-              >
-                <LinkIcon size={15} /> Shared link
-              </button>
             </div>
           </>
         )}
@@ -212,7 +208,6 @@ export function Sidebar() {
       </div>
 
       {addProvider && <AddAccountDialog provider={addProvider} onClose={() => setAddProvider(null)} />}
-      {addLink && <AddLinkDialog onClose={() => setAddLink(false)} />}
     </aside>
   );
 }
@@ -235,7 +230,7 @@ function NavItem({ icon, label, active, onClick, badge }: { icon: ReactNode; lab
 /**
  * One account row. Memoized: Sidebar re-renders every 1s while a download is
  * active (jobs/queue drive the nav badges + footer speed), but a tile's own
- * data — storage/meta/index progress — usually hasn't changed on that tick,
+ * data - storage/meta/index progress - usually hasn't changed on that tick,
  * so without this every tile would re-render anyway.
  */
 const AccountTile = memo(function AccountTile({

@@ -55,7 +55,7 @@ function HitRow({
 
   const isVid = !hit.IsDir && isVideo(hit.Name);
   // Clicking a hit's name takes you to WHERE it lives (open the folder, or jump
-  // to a file's containing folder) — preview/review are the explicit icon actions.
+  // to a file's containing folder) - preview/review are the explicit icon actions.
   const openName = () => onOpenLocation(hit);
 
   return (
@@ -183,6 +183,18 @@ export function GlobalSearchResults({ onClose, attached }: { onClose: () => void
       onClose();
       return;
     }
+    // Any Drive FOLDER hit opens by its id as an id-rooted link. This works whether
+    // the folder is in "Shared with me" OR the user's own My Drive - a name-path in
+    // the shared_with_me namespace 404s for owned folders, the recurring Drive bug.
+    {
+      const provider = acctById.get(h.AccountId)?.provider ?? h.Provider;
+      if (provider === "drive" && h.IsDir && h.ID) {
+        await openShortcutFolder(h.AccountId, h.Name, h.ID);
+        useSearch.getState().set("");
+        onClose();
+        return;
+      }
+    }
     let full = h.Path;
     try {
       const provider = acctById.get(h.AccountId)?.provider ?? h.Provider;
@@ -203,7 +215,7 @@ export function GlobalSearchResults({ onClose, attached }: { onClose: () => void
     onClose();
   };
   // Preview is a modal overlay that sits ON TOP of the search results, so unlike
-  // review/openFolder it must NOT clear the query — closing the preview returns
+  // review/openFolder it must NOT clear the query - closing the preview returns
   // the user to their results. Files are id-addressed, so the bare Path is fine.
   const preview = (h: GlobalHit) => {
     if (!h.AccountId) return;
@@ -212,7 +224,7 @@ export function GlobalSearchResults({ onClose, attached }: { onClose: () => void
   };
   const review = (h: GlobalHit) => {
     if (!h.AccountId) return;
-    // Clear the query FIRST — AppShell renders this overlay whenever the search
+    // Clear the query FIRST - AppShell renders this overlay whenever the search
     // query is non-empty, so without this the review view opens invisibly
     // beneath it and Review appears to do nothing (openFolder does the same).
     // Then navigate to the player. Files are id-addressed, so the bare Path is fine.
@@ -283,7 +295,7 @@ export function GlobalSearchResults({ onClose, attached }: { onClose: () => void
       )}
 
       <div className="min-h-0 flex-1 overflow-auto p-2">
-        {/* Commands / quick nav — all of them on focus, filtered as you type. */}
+        {/* Commands / quick nav - all of them on focus, filtered as you type. */}
         {commands.length > 0 && (
           <div className="mb-1">
             <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--faint)]">{hasQuery ? "Commands" : "Jump to"}</div>
@@ -301,7 +313,7 @@ export function GlobalSearchResults({ onClose, attached }: { onClose: () => void
           </div>
         )}
 
-        {/* Everything below is file search — only relevant once there's a query. */}
+        {/* Everything below is file search - only relevant once there's a query. */}
         {hasQuery && (
           <>
             {scope === "folder" && !folderRecursive && scopeAccount && folderPath && (
@@ -309,7 +321,7 @@ export function GlobalSearchResults({ onClose, attached }: { onClose: () => void
                 onClick={() => void useIndex.getState().indexFolder(scopeAccount, folderPath)}
                 className="mb-2 flex w-full items-center gap-2 rounded-[9px] border border-dashed border-[var(--line2)] px-3 py-2 text-left text-[12.5px] text-[var(--faint)] hover:text-[var(--text-2)]"
               >
-                <FolderSearch size={14} /> Searching this folder’s contents only — index it to search every subfolder too.
+                <FolderSearch size={14} /> Searching this folder’s contents only - index it to search every subfolder too.
               </button>
             )}
 

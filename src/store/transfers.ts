@@ -12,6 +12,27 @@ import { loadDlSettings, toDownloadConfig } from "../lib/dl-settings";
 import { laneOf, type Lane } from "../lib/lane";
 import { useHistory, type JobStats } from "./history";
 import { useToasts } from "./toast";
+import { notifyTransferComplete } from "../lib/notify-complete";
+import { useNotifications } from "./notifications";
+
+/** Record a finished transfer in the Activity bell. */
+function logActivity(jobId: number, name: string, accountId: string, dest: string, bytes: number, kind: "download" | "upload") {
+  useNotifications.getState().add({
+    id: `${kind === "upload" ? "ul" : "dl"}${jobId}`,
+    kind: "transfer",
+    accountId,
+    provider: useApp.getState().accounts.find((a) => a.id === accountId)?.provider,
+    accountLabel: kind === "upload" ? "Upload complete" : "Download complete",
+    folderName: name,
+    path: "",
+    dest,
+    modTime: "",
+    size: bytes,
+    uploader: null,
+    at: Date.now(),
+    read: false,
+  });
+}
 import { useApp } from "./app";
 import { useBrowse } from "./browse";
 import { loadJson, loadRaw, saveJson, saveRaw } from "../lib/persisted";
@@ -35,7 +56,7 @@ export const TORRENT_ACCOUNT_ID = "torrent";
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let pumping = false;
 // The 1s poll writes fresh byte counts to localStorage every tick while a
-// download is active — a synchronous disk write (WebView2's store on Windows
+// download is active - a synchronous disk write (WebView2's store on Windows
 // is LevelDB-backed) that can stall the main thread if it lands mid-scan by
 // an AV product. Bytes-only updates are cosmetic resume precision, so they're
 // throttled to every Nth tick; a real membership change (job started/finished)
@@ -46,15 +67,18 @@ const INFLIGHT_PERSIST_EVERY_N_TICKS = 3;
 const SPEED_HISTORY_LENGTH = 40;
 let seq = 0;
 const nextId = () => `q${Date.now()}_${++seq}`;
-// Job ids paused by the user OR auto-paused by the lane gate — so refresh
+// Job ids paused by the user OR auto-paused by the lane gate - so refresh
 // doesn't log them to history as "cancelled" (their partial file is kept and
 // they resume from it).
 const pausedJobIds = new Set<number>();
-// Job ids the user deleted — hidden from the list and never recorded to history,
+// Job ids the user deleted - hidden from the list and never recorded to history,
 // even while the backend keeps returning them until it drops them.
 const deletedJobIds = new Set<number>();
 // Job ids we've already surfaced a failure toast for (avoid repeats while polling).
 const failedToasted = new Set<number>();
+// Job ids we've already fired a "transfer complete" notification/chime for, so a
+// finished job that lingers in the live list doesn't re-announce every tick.
+const completeNotified = new Set<number>();
 // Upload job ids already toasted on finish, and ones dismissed from the strip
 // (successful uploads auto-dismiss once toasted; failed ones dismiss manually).
 const uploadToasted = new Set<number>();
@@ -78,7 +102,7 @@ export function filenameFromUrl(url: string): string {
     const last = segments[segments.length - 1];
     if (last) return decodeURIComponent(last);
   } catch {
-    // Not a parseable URL — fall through to a manual split.
+    // Not a parseable URL - fall through to a manual split.
     const cleaned = url.split(/[?#]/)[0];
     const segments = cleaned.split("/").filter(Boolean);
     const last = segments[segments.length - 1];
@@ -95,12 +119,12 @@ export function filenameFromUrl(url: string): string {
 
 /**
  * Route a pasted link to the right secondary-lane downloader. WeTransfer and
- * Filemail share pages aren't direct file URLs — plain HTTP would just fetch the
- * HTML — so they get a synthetic account whose Rust worker resolves the whole
+ * Filemail share pages aren't direct file URLs - plain HTTP would just fetch the
+ * HTML - so they get a synthetic account whose Rust worker resolves the whole
  * transfer. Anything else is a generic direct-file HTTP download.
  */
 export function classifyTransferUrl(url: string): { accountId: string; name: string } {
-  // Magnet links have no host — route them to the torrent engine, naming the
+  // Magnet links have no host - route them to the torrent engine, naming the
   // job from the &dn= display-name when present.
   if (url.toLowerCase().startsWith("magnet:")) {
     let name = "Torrent";
@@ -164,7 +188,7 @@ export interface QueueItem {
   nextRetryAt?: number;
 }
 
-/** Recoverable failure class — drives the fix hint + whether we auto-retry. */
+/** Recoverable failure class - drives the fix hint + whether we auto-retry. */
 export type BlockKind = "disk" | "network" | "auth" | "rate" | "unknown";
 
 const MAX_AUTO_RETRIES = 6;
@@ -181,13 +205,13 @@ export function classifyBlock(msg: string): { kind: BlockKind; autoRetry: boolea
   if (/(oauth2\/token|unauthorized|invalid_grant|token|forbidden|\b401\b|\b403\b|access_denied|insufficientpermission|scope)/.test(m))
     return { kind: "auth", autoRetry: false, hint: "Account/API access issue. Reconnect the account, then Retry." };
   if (/(\b429\b|rate limit|too many requests|\b413\b|payload too large|userratelimit|quota)/.test(m))
-    return { kind: "rate", autoRetry: true, hint: "Rate-limited by the provider — retrying automatically." };
+    return { kind: "rate", autoRetry: true, hint: "Rate-limited by the provider - retrying automatically." };
   if (/(error sending request|connection|timed out|timeout|dns|network|reset|temporar|\b50[234]\b|unreachable|broken pipe|eof)/.test(m))
-    return { kind: "network", autoRetry: true, hint: "Network problem — retrying automatically." };
+    return { kind: "network", autoRetry: true, hint: "Network problem - retrying automatically." };
   // Torrent engine still warming up (e.g. the rqbit sidecar is being Gatekeeper-
-  // scanned on the first run after an update) — retry, it comes up shortly.
+  // scanned on the first run after an update) - retry, it comes up shortly.
   if (/(rqbit|did not come up|spawn rqbit|torrent engine)/.test(m))
-    return { kind: "network", autoRetry: true, hint: "Starting the torrent engine — retrying automatically." };
+    return { kind: "network", autoRetry: true, hint: "Starting the torrent engine - retrying automatically." };
   return { kind: "unknown", autoRetry: false, hint: "Paused after an error. Retry when ready." };
 }
 
@@ -234,7 +258,7 @@ function withLane<T extends { accountId: string; lane?: Lane }>(q: T): T & { lan
 /**
  * Restore persisted work. Anything that was *in flight* when the app died is
  * brought back to the front of the queue (its rclone/native job is gone, but the
- * partially-downloaded files are on disk — re-running skips/continues them).
+ * partially-downloaded files are on disk - re-running skips/continues them).
  *
  * `autoPaused` is preserved so a relaunch mid-gate restores the gated state and
  * doesn't auto-start a secondary download while primary still has work.
@@ -263,7 +287,7 @@ function restoreQueue(): QueueItem[] {
  * Whether two job lists are UI-equivalent: same length and, pairwise, identical
  * in the fields that actually drive the downloads UI. Used by refresh() to skip
  * a redundant set()/localStorage write on idle ticks where listJobs() returns
- * byte-for-byte the same data — the common case once everything has finished.
+ * byte-for-byte the same data - the common case once everything has finished.
  */
 export function jobsEqual(a: JobStatus[], b: JobStatus[]): boolean {
   if (a === b) return true;
@@ -302,7 +326,7 @@ export function inflightEqual(a: InflightItem[], b: InflightItem[]): boolean {
   return true;
 }
 
-/** Whether the tracked job set itself changed (ignoring bytes) — a start/finish. */
+/** Whether the tracked job set itself changed (ignoring bytes) - a start/finish. */
 function inflightMembershipEqual(a: InflightItem[], b: InflightItem[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
@@ -326,7 +350,7 @@ function startableQueued(queue: QueueItem[], lane: Lane): QueueItem[] {
  * An item counts as "needs polling" only if it is ACTIVE (in flight) or
  * STARTABLE-AND-NOT-AUTO-PAUSED. A persisted *auto-paused* secondary on its own
  * is NOT real work: it resumes automatically only once the primary lane drains,
- * and pump() handles that resume — so leaving it out lets a truly-idle app stop
+ * and pump() handles that resume - so leaving it out lets a truly-idle app stop
  * polling instead of pinning the timer forever (autoPaused items have `paused`
  * falsy, so the old `!q.paused` test treated them as live work).
  */
@@ -342,10 +366,10 @@ export function needsPolling(queue: QueueItem[], inflight: InflightItem[]): bool
  * Pure lane-scheduling decision. Given the current queue + in-flight set and
  * the per-lane concurrency limits, decide what should happen on this pump tick:
  *
- *  - `startPrimary`    — primary queue items to start now (front of queue first).
- *  - `autoPauseSecondary` — job ids of ACTIVE secondary downloads to preempt
+ *  - `startPrimary`    - primary queue items to start now (front of queue first).
+ *  - `autoPauseSecondary` - job ids of ACTIVE secondary downloads to preempt
  *                           (primary lane is busy).
- *  - `startSecondary`  — secondary queue items to start now (auto-paused first,
+ *  - `startSecondary`  - secondary queue items to start now (auto-paused first,
  *                        then plain queued), only when primary has drained.
  *
  * Rules (see docs/.../download-lane-isolation-design.md):
@@ -387,7 +411,7 @@ export function decideLanes(
     };
   }
 
-  // (d) Primary lane drained — resume auto-paused secondary first, then plain
+  // (d) Primary lane drained - resume auto-paused secondary first, then plain
   //     queued, up to the secondary limit.
   const secondarySlots = Math.max(0, secondaryConcurrency - activeSecondary.length);
   const startableSecondary = startableQueued(queue, "secondary");
@@ -411,14 +435,14 @@ interface TransfersState {
   inflight: InflightItem[];
   /**
    * Rolling window of recent speed samples per jobId, for the live per-download
-   * graph. Purely in-memory (not persisted) — it's a "right now" visualization,
+   * graph. Purely in-memory (not persisted) - it's a "right now" visualization,
    * not state that needs to survive a restart.
    */
   speedHistory: Record<number, number[]>;
   concurrency: number;
   secondaryConcurrency: number;
   dockOpen: boolean;
-  /** True while an in-app file/folder drag is in flight — reveals the Transfers
+  /** True while an in-app file/folder drag is in flight - reveals the Transfers
    *  drawer as a drop-to-download target even when it's otherwise empty. */
   dragActive: boolean;
 
@@ -445,7 +469,7 @@ interface TransfersState {
   resumePaused: (id: string) => void;
   /** Retry every blocked ("needs attention") transfer at once. */
   retryAllBlocked: () => void;
-  /** Start a queued item immediately, in parallel — bypasses the concurrency gate. */
+  /** Start a queued item immediately, in parallel - bypasses the concurrency gate. */
   forceStart: (id: string) => Promise<void>;
   /** Fully remove a job (active or finished): stop it and drop it from the list
    *  and history entirely (unlike cancel, which keeps a cancelled record). */
@@ -564,7 +588,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
         get().ensurePolling();
       }
     } catch {
-      // Launch failed — put it back at the front of the queue.
+      // Launch failed - put it back at the front of the queue.
       set((s) => ({ queue: [q, ...s.queue] }));
     }
   },
@@ -575,7 +599,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     try {
       await cancelJob(jobId);
     } catch {
-      /* already finished/gone — nothing to stop */
+      /* already finished/gone - nothing to stop */
     }
     const inflight = get().inflight.filter((i) => i.jobId !== jobId);
     writeJson(INFLIGHT_KEY, inflight);
@@ -599,7 +623,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
         const { queue, inflight, concurrency, secondaryConcurrency } = get();
         const decision = decideLanes(queue, inflight, concurrency, secondaryConcurrency);
 
-        // (c) Preempt active secondary — mirror the user pause() path so the
+        // (c) Preempt active secondary - mirror the user pause() path so the
         // partial is kept and refresh() doesn't log a cancellation.
         if (decision.autoPauseSecondary.length > 0) {
           for (const jobId of decision.autoPauseSecondary) {
@@ -658,6 +682,8 @@ export const useTransfers = create<TransfersState>((set, get) => ({
         uploadToasted.add(u.jobId);
         if (u.success) {
           useToasts.getState().push(`Upload complete · ${u.name}`, "success");
+          logActivity(u.jobId, u.name, u.accountId, u.dest, u.totalBytes || u.bytes, "upload");
+          notifyTransferComplete(u.name, "upload");
           // Refresh the destination folder's listing so the new file shows up
           // without a manual re-navigate (ensure() is cached + background).
           const acct = useApp.getState().accounts.find((a) => a.id === u.accountId);
@@ -677,7 +703,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     const jobs = polled.filter((j) => j.kind !== "upload" && !deletedJobIds.has(j.jobId));
 
     // GRACEFUL FAILURE: a download that errored out is HELD as "needs attention"
-    // (partial kept, reason tagged) instead of hard-failing — so nothing is lost
+    // (partial kept, reason tagged) instead of hard-failing - so nothing is lost
     // and the user can fix + retry. Transient kinds auto-retry with backoff. Do
     // this BEFORE the history loop and add the jobId to pausedJobIds so the same
     // job is never also logged as a failure.
@@ -687,7 +713,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
       if (!(j.finished && !j.success && !j.cancelled)) continue;
       if (pausedJobIds.has(j.jobId) || deletedJobIds.has(j.jobId)) continue;
       const inf = get().inflight.find((i) => i.jobId === j.jobId);
-      if (!inf) continue; // no resume info — fall through to a normal failure below
+      if (!inf) continue; // no resume info - fall through to a normal failure below
       const { kind, autoRetry, hint } = classifyBlock(j.error || "");
       const retries = inf.retries ?? 0;
       const willAutoRetry = autoRetry && retries < MAX_AUTO_RETRIES;
@@ -707,7 +733,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
         retries: willAutoRetry ? retries + 1 : retries,
         nextRetryAt: willAutoRetry ? nowB + RETRY_BACKOFF[Math.min(retries, RETRY_BACKOFF.length - 1)] : undefined,
       });
-      useToasts.getState().push(willAutoRetry ? `Retrying · ${j.name} — ${hint}` : `Paused · ${j.name} — ${hint}`, "info", 5000);
+      useToasts.getState().push(willAutoRetry ? `Retrying · ${j.name} - ${hint}` : `Paused · ${j.name} - ${hint}`, "info", 5000);
     }
     if (newlyBlocked.length > 0) {
       const q = [...get().queue, ...newlyBlocked.map(withLane)];
@@ -715,7 +741,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
       set({ queue: q });
     }
 
-    // Record finished/cancelled jobs to history — except ones the user paused,
+    // Record finished/cancelled jobs to history - except ones the user paused,
     // we auto-paused, OR we just blocked (kept for resume, not logged as failed).
     for (const j of jobs) {
       if ((j.finished || j.cancelled) && !pausedJobIds.has(j.jobId)) {
@@ -724,6 +750,15 @@ export const useTransfers = create<TransfersState>((set, get) => ({
         // still has a startedAt/lastAt even if it was never seen mid-flight.
         const stats = accrueStats(inf?.stats, j.speed, Date.now());
         useHistory.getState().record(j, inf?.item, stats);
+      }
+      // Announce a successful download once: in-app toast + desktop notification
+      // (release builds; macOS doesn't surface notifications from the unsigned dev
+      // binary) + chime.
+      if (j.finished && j.success && !j.cancelled && !completeNotified.has(j.jobId)) {
+        completeNotified.add(j.jobId);
+        useToasts.getState().push(`Download complete · ${j.name}`, "success");
+        logActivity(j.jobId, j.name, j.accountId, j.dest, j.totalBytes || j.bytes, "download");
+        notifyTransferComplete(j.name, "download");
       }
       if (j.finished && !j.success && !j.cancelled && !failedToasted.has(j.jobId)) {
         failedToasted.add(j.jobId);
@@ -755,12 +790,12 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     for (const inf of get().inflight) {
       const job = jobs.find((j) => j.jobId === inf.jobId);
       if (!job) continue; // cleared from tracking
-      if (job.finished || job.cancelled) continue; // done — leaves the in-flight set
+      if (job.finished || job.cancelled) continue; // done - leaves the in-flight set
       stillInflight.push({ ...inf, bytes: job.bytes, stats: accrueStats(inf.stats, job.speed, now) });
     }
 
     // Live per-download speed graph: a fixed-size rolling sample buffer per
-    // jobId, refreshed every tick regardless of the throttling below — it's
+    // jobId, refreshed every tick regardless of the throttling below - it's
     // pure in-memory state (never persisted), so there's no disk-write cost,
     // only a render cost, and only a component that actually reads
     // speedHistory[jobId] (the open detail panel) re-renders on it.
@@ -778,7 +813,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
     // write and the in-memory set() (per inflightEqual, which compares jobId +
     // bytes). The stats we accrue here only ever change peak/min when bytes
     // advance (a non-zero speed sample), so an idle tick has nothing new to
-    // commit — and committing would needlessly re-render every subscriber and
+    // commit - and committing would needlessly re-render every subscriber and
     // break the no-op invariant. The finish-time record() folds in one final
     // fresh sample, so the last-committed stats are all it needs.
     if (!inflightEqual(stillInflight, get().inflight)) {
@@ -887,7 +922,7 @@ export const useTransfers = create<TransfersState>((set, get) => ({
 
 /**
  * Auto-pause a single ACTIVE secondary job. Mirrors the user `pause()` path so
- * the engine keeps the `.fdmpart` and `refresh()` won't log a cancellation —
+ * the engine keeps the `.fdmpart` and `refresh()` won't log a cancellation -
  * but tags the requeued item `autoPaused: true` (not `paused`) so it resumes
  * automatically once the primary lane drains.
  */

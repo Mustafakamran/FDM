@@ -12,12 +12,14 @@ import { ConnectView } from "./ConnectView";
 import { DownloadsDock } from "./DownloadsDock";
 import { IndexBanner } from "./IndexBanner";
 import { ToastHost } from "./ToastHost";
+import { ErrorDialog } from "./ErrorDialog";
 import { NotificationsPanel } from "./NotificationsPanel";
 import { SettingsDialog } from "./SettingsDialog";
 import { PreviewOverlay } from "./PreviewOverlay";
 import { NewFoldersView } from "./NewFoldersView";
 import { SharedDrivesView } from "./SharedDrivesView";
 import { SharedDriveDock } from "./SharedDriveDock";
+import { LinksView } from "./LinksView";
 import { UpdateBanner } from "./UpdateBanner";
 import { TooltipLayer } from "./ui/Tooltip";
 
@@ -28,7 +30,7 @@ export function AppShell() {
   const goForward = useApp((s) => s.goForward);
 
   // Global Back/Forward: Alt+←/→ and the mouse back/forward buttons (button 3/4),
-  // so navigation history works everywhere — matching a native file browser.
+  // so navigation history works everywhere - matching a native file browser.
   useEffect(() => {
     const isEditable = (el: EventTarget | null) =>
       el instanceof HTMLElement && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
@@ -89,6 +91,7 @@ export function AppShell() {
       <TopBar />
       <UpdateBanner />
       <ToastHost />
+      <ErrorDialog />
       <NotificationsPanel />
       <SettingsDialog />
       <PreviewOverlay />
@@ -103,6 +106,7 @@ export function AppShell() {
             {view.kind === "home" && <Dashboard />}
             {view.kind === "new-folders" && <NewFoldersView />}
             {view.kind === "shared" && <SharedDrivesView />}
+            {view.kind === "links" && <LinksView />}
             {view.kind === "accounts" && <ConnectView />}
             {view.kind === "transfers" && <TransfersView filter={view.filter} />}
             {view.kind === "review" && <ReviewView accountId={view.accountId} target={view.target} />}
@@ -112,12 +116,12 @@ export function AppShell() {
               ) : (
                 <ConnectView />
               ))}
-            {/* App-wide Shared Drive dock (tab rail + slide-over) — lives in the
+            {/* App-wide Shared Drive dock (tab rail + slide-over) - lives in the
                 content shell so it never covers the top bar / search. */}
             <SharedDriveDock />
           </div>
           {/* The Transfers screen shows its own progress table, so the dock would
-              duplicate it there — only float it over other screens. */}
+              duplicate it there - only float it over other screens. */}
           {view.kind !== "transfers" && <DownloadsDock />}
           {/* Indexing status floats bottom-left, everywhere. */}
           <IndexBanner />

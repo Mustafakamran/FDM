@@ -1,5 +1,5 @@
 @import "tailwindcss";
-/* JetBrains Mono — the design's mono voice (sizes, counts, code-like labels). */
+/* JetBrains Mono - the design's mono voice (sizes, counts, code-like labels). */
 @import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap");
 @config "../tailwind.config.js";
 
@@ -7,7 +7,7 @@
    FetchDM Studio design tokens.
 
    Two ideas drive the palette:
-   1. A MONOCHROME accent that flips with the theme — near-black ink in light,
+   1. A MONOCHROME accent that flips with the theme - near-black ink in light,
       near-white in dark. (`--acc`/`--accent` are the same token; every primary
       action inherits it, so the UI reads black-on-white or white-on-black.)
    2. Color is reserved for meaning only: GREEN (`--dl`/`--success`) for
@@ -60,7 +60,7 @@
   --success: #22c55e;
   --okw: rgba(34, 197, 94, 0.15);
   /* Download UI (speed, progress, badges, Add-download button) follows the
-     selected accent — no fixed green. */
+     selected accent - no fixed green. */
   --dl: var(--acc);
   --dlw: var(--accw);
   --dl-glow: var(--accent-glow);
@@ -72,7 +72,7 @@
 
   --window-radius: 18px;
   --radius: 11px;
-  /* Canonical radius scale — new components should reach for these instead of
+  /* Canonical radius scale - new components should reach for these instead of
      one-off rounded-[Npx] values (the app has accumulated ~9 distinct ones). */
   --radius-sm: 8px;
   --radius-md: 11px;
@@ -84,7 +84,7 @@
   --shadow: 0 10px 30px rgba(8, 9, 14, 0.4);
   --shadow-lg: 0 30px 80px rgba(8, 9, 14, 0.55);
 
-  /* Animation vocabulary — duration + easing tokens so new transitions reach
+  /* Animation vocabulary - duration + easing tokens so new transitions reach
      for a shared vocabulary instead of hand-rolled durations per component. */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --dur-fast: 0.12s;
@@ -92,7 +92,7 @@
   --dur-slow: 0.32s;
 }
 
-/* Light theme — accent flips to near-black ink, surfaces go bright. */
+/* Light theme - accent flips to near-black ink, surfaces go bright. */
 html.light {
   color-scheme: light;
 
@@ -143,12 +143,12 @@ html.light {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Accent color presets. "Mono" (the default — no override needed, it's just
+   Accent color presets. "Mono" (the default - no override needed, it's just
    the :root/html.light values above) is the app's original monochrome
    accent. These give the user a real color instead, applied via
    `data-accent` on <html> (see store/theme.ts). Each needs distinct light
    and dark values to stay readable against each background, so every preset
-   below is defined twice. --onacc/--accent-ink stay white for all of these —
+   below is defined twice. --onacc/--accent-ink stay white for all of these -
    they're vivid enough that white text reads fine in both themes, unlike
    Mono which must flip black/white with the theme itself.
    ───────────────────────────────────────────────────────────────────────── */
@@ -307,7 +307,7 @@ input[type="checkbox"] {
 }
 
 /* Desktop-app selection policy: dragging across the UI chrome (cards, labels,
-   buttons, nav) must NOT paint a text-selection highlight — that looks like a
+   buttons, nav) must NOT paint a text-selection highlight - that looks like a
    web page, not a native app. So selection is off by default and re-enabled
    only on genuine, copyable text: form fields, paragraphs, and anything a
    component opts in with `select-text` (Tailwind) / `.selectable`. */
@@ -377,7 +377,7 @@ input[type="checkbox"]:active {
   animation: rise var(--dur-slow) var(--ease-out) both;
 }
 
-/* Menu / popover entrance — quick scale-fade from the anchor. */
+/* Menu / popover entrance - quick scale-fade from the anchor. */
 @keyframes pop {
   from {
     opacity: 0;
@@ -460,7 +460,7 @@ input[type="checkbox"]:active {
   animation: flashrow 0.6s ease-in-out 2;
 }
 
-/* Staggered list-item entrance — fade + small rise. Each item sets its own
+/* Staggered list-item entrance - fade + small rise. Each item sets its own
    animation-delay inline (capped) so a list cascades in instead of snapping. */
 @keyframes item-in {
   from {
@@ -476,7 +476,7 @@ input[type="checkbox"]:active {
   animation: item-in var(--dur-base) var(--ease-out) both;
 }
 
-/* Count / notification badge pop — a quick scale bump to draw the eye. */
+/* Count / notification badge pop - a quick scale bump to draw the eye. */
 @keyframes badge-pop {
   0% {
     transform: scale(0.5);
@@ -517,7 +517,7 @@ input[type="checkbox"]:active {
   animation: spin-once 0.5s var(--ease-out);
 }
 
-/* Toast dismissal — slide + fade out to the right before unmounting. */
+/* Toast dismissal - slide + fade out to the right before unmounting. */
 @keyframes toast-out {
   from {
     opacity: 1;
@@ -545,7 +545,7 @@ input[type="checkbox"]:active {
   animation: tip var(--dur-fast) ease-out both;
 }
 
-/* Attached panel entrance — slides out from under its anchor (e.g. the search
+/* Attached panel entrance - slides out from under its anchor (e.g. the search
    dropdown growing out of the search box) with a soft ease-out curve. */
 @keyframes dropdown-in {
   from {
@@ -597,7 +597,7 @@ input[type="checkbox"]:active {
   }
 }
 
-/* Skeleton shimmer — a moving highlight sweeps a muted placeholder block while
+/* Skeleton shimmer - a moving highlight sweeps a muted placeholder block while
    real content loads. Honors prefers-reduced-motion (just a static fill). */
 @keyframes skeleton-shimmer {
   100% {

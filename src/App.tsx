@@ -30,7 +30,7 @@ export default function App() {
     const boot = () =>
       loadAccounts()
         .then(() => {
-          // Daemon is up and accounts are loaded — resume any downloads that were
+          // Daemon is up and accounts are loaded - resume any downloads that were
           // queued or in flight when the app last closed (torrent-style).
           useTransfers.getState().resume();
         })
@@ -40,7 +40,7 @@ export default function App() {
     // Try immediately (covers the warm path where rcd is already up), then again
     // when the Rust side finishes starting the daemon in the background. Startup
     // I/O is now off the main thread (no launch freeze), so the daemon can come
-    // up a few seconds after first paint — this re-load fills in the accounts.
+    // up a few seconds after first paint - this re-load fills in the accounts.
     void boot();
     const readyUnlisten = listen("rclone-ready", () => void boot());
     startWatching();
@@ -48,7 +48,7 @@ export default function App() {
     // POST /fdm/ingest) and enqueue them into the default download folder.
     const stopIngest = startIngestListener();
     // When the window is closed to the tray (Rust emits "app-hidden"), pause any
-    // playing media — otherwise a review video keeps its audio going (and HLS
+    // playing media - otherwise a review video keeps its audio going (and HLS
     // keeps transcoding) with no visible UI to stop it.
     const hiddenUnlisten = listen("app-hidden", () => {
       document.querySelectorAll<HTMLMediaElement>("video, audio").forEach((el) => el.pause());

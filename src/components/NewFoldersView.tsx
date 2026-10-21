@@ -14,8 +14,11 @@ import { useVisited } from "../store/visited";
 import { useNewFoldersBaseline } from "../store/new-folders";
 import { isSharedLink } from "../lib/lane";
 import { makeMockNewFolders, type MockNewFolders } from "../lib/dev-mock-folders";
+import { useTransfers } from "../store/transfers";
+import { useToasts } from "../store/toast";
+import { pickDownloadDest } from "../lib/ingest";
 import type { SizeValue } from "../store/browse";
-import type { Account } from "../lib/tauri/commands";
+import type { Account, DownloadItem } from "../lib/tauri/commands";
 import type { RcItem } from "../lib/rc/browse";
 import type { NewFolderGroup } from "../lib/use-new-folders";
 
@@ -29,7 +32,7 @@ const SORTS: { key: SortMode; label: string; icon: typeof Clock }[] = [
 ];
 
 /**
- * "New folders" — top-level folders a client has added to any connected drive
+ * "New folders" - top-level folders a client has added to any connected drive
  * since it was last seen, that you haven't downloaded yet. Click jumps to the
  * folder in the browser; right-click sets a workflow status (Downloading / On
  * hold / Downloaded / Copied).
@@ -57,7 +60,7 @@ export function NewFoldersView() {
   const loadMock = () => { const m = makeMockNewFolders(); setMock(m); setMockGroups(m.groups); setMockOpened(m.openedPaths); };
   const unloadMock = () => { setMock(null); setMockGroups([]); setMockOpened({}); };
 
-  // Effective data source — real pipeline, or the mock when it's loaded.
+  // Effective data source - real pipeline, or the mock when it's loaded.
   const eGroups = mockOn ? mockGroups : groups;
   const eSizeOf = mockOn ? mock!.sizeOf : sizeOf;
   const eSeenAtOf = mockOn ? mock!.seenAtOf : seenAtOf;
@@ -109,6 +112,16 @@ export function NewFoldersView() {
     if (mockOn) setMockGroups((prev) => prev.map((g) => (g.account.id === accountId ? { ...g, folders: g.folders.filter((f) => f.Path !== path) } : g)).filter((g) => g.folders.length > 0));
     else useNewFoldersBaseline.getState().acknowledge(accountId, [path]);
   };
+  // Queue a new folder for download straight from here (pick a destination once).
+  const downloadFolder = async (accountId: string, f: RcItem) => {
+    if (mockOn) { useToasts.getState().push("Sample data - nothing to download", "info"); return; }
+    const dest = await pickDownloadDest();
+    if (!dest) return;
+    const sz = eSizeOf(accountId, f.Path);
+    const item: DownloadItem = { path: f.Path, name: f.Name, isDir: true, size: typeof sz === "number" ? sz : 0, id: f.ID ?? "" };
+    useTransfers.getState().enqueue(accountId, [item], dest);
+    useToasts.getState().push(`Queued ${f.Name}`, "success");
+  };
   const doMarkAllRead = () => {
     if (mockOn) setMockOpened(() => Object.fromEntries(mockGroups.map((g) => [g.account.id, g.folders.map((f) => f.Path)])));
     else markAllRead();
@@ -138,7 +151,7 @@ export function NewFoldersView() {
     const { sum, exact } = driveSize(g);
     return (
       <div key={g.account.id} className="overflow-hidden rounded-[13px] border border-[var(--line)]">
-        {/* Drive header — click to collapse; hover reveals per-drive actions. */}
+        {/* Drive header - click to collapse; hover reveals per-drive actions. */}
         <div className="group/head flex items-center gap-2 bg-[var(--soft)] px-3 py-2">
           <button onClick={() => toggleCollapse(g.account.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left" data-tip={isCollapsed ? "Expand" : "Collapse"}>
             {isCollapsed ? <ChevronRight size={15} className="shrink-0 text-[var(--faint)]" /> : <ChevronDown size={15} className="shrink-0 text-[var(--faint)]" />}
@@ -181,6 +194,7 @@ export function NewFoldersView() {
                     </span>
                   </span>
                   <SizeLabel size={eSizeOf(g.account.id, f.Path)} />
+                  <MiniBtn icon={Download} title="Download this folder" className="opacity-0 group-hover:opacity-100" onClick={(e) => { e?.stopPropagation(); void downloadFolder(g.account.id, f); }} />
                   <MiniBtn icon={X} title="Remove from recents" className="opacity-0 group-hover:opacity-100" onClick={(e) => { e?.stopPropagation(); removeFolder(g.account.id, f.Path); }} />
                   <ChevronRight size={16} className="shrink-0 text-[var(--faint)] opacity-0 transition-opacity group-hover:opacity-100" />
                 </div>

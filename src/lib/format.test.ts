@@ -25,7 +25,7 @@ describe("formatSpeed", () => {
 });
 
 describe("formatDate", () => {
-  it("shows '—' for empty, invalid, or placeholder dates", () => {
+  it("shows '-' for empty, invalid, or placeholder dates", () => {
     expect(formatDate("")).toBe("·");
     expect(formatDate("not-a-date")).toBe("·");
     expect(formatDate("2000-01-01T00:00:00Z")).toBe("·"); // rclone placeholder

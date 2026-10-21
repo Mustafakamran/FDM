@@ -61,7 +61,7 @@ export interface DownloadItem {
   name: string;
   isDir: boolean;
   size: number;
-  /** Backend file id — needed to stream/resume a single Drive file. */
+  /** Backend file id - needed to stream/resume a single Drive file. */
   id?: string;
   /**
    * Extra request headers for the streaming HTTP downloader (e.g. Referer,
@@ -85,7 +85,7 @@ export interface JobStatus {
   success: boolean;
   cancelled: boolean;
   error: string;
-  /** "download" | "upload" — both flow through the same poll; the UI splits them. */
+  /** "download" | "upload" - both flow through the same poll; the UI splits them. */
   kind: "download" | "upload";
   /** Live connected-peer count for torrents (-1 = not a torrent / not yet peering). */
   peers?: number;
@@ -149,6 +149,22 @@ export function resolveShortcut(accountId: string, shortcutId: string): Promise<
   return invoke<ShortcutTarget>("drive_resolve_shortcut", { accountId, shortcutId });
 }
 
+/** One row of an ID-native Drive listing (folder id "root" = My Drive, "__shared__" = Shared with me). */
+export interface DriveRow {
+  id: string;
+  name: string;
+  isDir: boolean;
+  size: number;
+  modTime: string;
+  mimeType: string;
+  parentId: string;
+  isShortcut: boolean;
+}
+/** List a Google Drive folder by ID via the Drive API (owned + shared, like Drive web). */
+export function driveList(accountId: string, folderId: string): Promise<DriveRow[]> {
+  return invoke<DriveRow[]>("drive_list", { accountId, folderId });
+}
+
 /** Create/fetch an "anyone with the link" Google Drive share URL for a folder/file id. */
 export function driveShareLink(accountId: string, fileId: string): Promise<string> {
   return invoke<string>("drive_share_link", { accountId, fileId });
@@ -195,7 +211,7 @@ export function getOrCreateTeamDriveLink(baseAccountId: string, label: string, t
 }
 
 /**
- * Add a Dropbox shared-folder link as a browseable account. No rclone remote —
+ * Add a Dropbox shared-folder link as a browseable account. No rclone remote -
  * it lists/downloads via the native Dropbox API, borrowing a connected Dropbox
  * account's token. Nothing is copied into your own Dropbox.
  */
@@ -210,14 +226,14 @@ export function streamBase(): Promise<string> {
 
 /**
  * Delete a file or folder from its cloud account. Goes to the provider's Trash
- * (Drive Trash / Dropbox 30-day history) — recoverable, not a hard erase.
+ * (Drive Trash / Dropbox 30-day history) - recoverable, not a hard erase.
  */
 export function deleteItem(accountId: string, path: string, isDir: boolean): Promise<void> {
   return invoke("delete_item", { accountId, path, isDir });
 }
 
 /**
- * Move (or copy) a file/folder into another folder within the SAME account —
+ * Move (or copy) a file/folder into another folder within the SAME account -
  * in-app drag-and-drop reorg. Server-side on Drive/Dropbox (no re-download).
  * Returns the item's new path.
  */
@@ -258,7 +274,7 @@ export function revealPath(path: string): Promise<void> {
   return invoke("reveal_path", { path });
 }
 
-/** Really quit the app (runs cleanup then exits) — the close button only hides. */
+/** Really quit the app (runs cleanup then exits) - the close button only hides. */
 export function quitApp(): Promise<void> {
   return invoke("quit_app");
 }

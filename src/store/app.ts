@@ -19,21 +19,22 @@ export type View =
   // (keyed by its job id as `j<jobId>`, or a queue id). It is exposed as a
   // distinct top-level destination ("web-downloads") via showWebDownloads(),
   // but shares the `downloads` view kind so the shared app router (AppShell)
-  // mounts <DownloadsView/> for it without needing a per-kind branch edit —
+  // mounts <DownloadsView/> for it without needing a per-kind branch edit -
   // DownloadsView itself switches to <GeneralDownloads/> when `web` is set.
   | { kind: "downloads"; filter: DownloadFilter; web?: boolean; detail?: string; category?: WebCategoryFilter }
-  // The Uploads area — a mirror of Downloads for local → cloud transfers.
+  // The Uploads area - a mirror of Downloads for local → cloud transfers.
   | { kind: "uploads"; filter: DownloadFilter }
   // Unified Transfers screen: every download (Drive/Dropbox/web/torrent) AND
   // uploads in one torrent-style table, filtered by direction/state. This is the
   // single destination the sidebar navigates to; the older `downloads`/`uploads`
   // kinds above are retained only for type-compat and are no longer routed.
   | { kind: "transfers"; filter: TransferFilter }
-  // "New folders" — root folders recently added to any drive (see NewFoldersView).
+  // "New folders" - root folders recently added to any drive (see NewFoldersView).
   | { kind: "new-folders" }
-  // "Shared Drives" — the client Shared Drives (Team Drives) each connected Google
+  // "Shared Drives" - the client Shared Drives (Team Drives) each connected Google
   // Drive can access, grouped per drive (see SharedDrivesView).
   | { kind: "shared" }
+  | { kind: "links" }
   | { kind: "review"; accountId: string; target: ReviewTarget }
   // Dashboard / landing: at-a-glance stats (accounts, storage, downloads, files).
   | { kind: "home" }
@@ -61,7 +62,7 @@ export function viewValidForAccounts(v: View, accountIds: Set<string>): boolean 
 export interface ReviewTarget {
   path: string;
   name: string;
-  /** Backend file id — required for Drive/Drive-link streaming (empty otherwise). */
+  /** Backend file id - required for Drive/Drive-link streaming (empty otherwise). */
   fileId: string;
   size: number;
   ext: string;
@@ -101,6 +102,7 @@ interface AppState {
   showTransfers: (filter?: TransferFilter) => void;
   showNewFolders: () => void;
   showShared: () => void;
+  showLinks: () => void;
   /** Open the GENERAL / WEB DOWNLOADS view (secondary-lane http/ytdlp jobs). */
   showWebDownloads: () => void;
   /** Pin (or, with undefined, clear) one web download in the detail panel. */
@@ -170,10 +172,11 @@ export const useApp = create<AppState>((set, get) => {
 
   showNewFolders: () => set((s) => navTo(s, { kind: "new-folders" })),
   showShared: () => set((s) => navTo(s, { kind: "shared" })),
+  showLinks: () => set((s) => navTo(s, { kind: "links" })),
 
   showWebDownloads: () => set((s) => navTo(s, { kind: "transfers", filter: "all" })),
 
-  // Sub-view state (detail panel / category filter) — not recorded in history,
+  // Sub-view state (detail panel / category filter) - not recorded in history,
   // so Back doesn't get cluttered with panel toggles.
   openWebDownloadDetail: (id) =>
     set((s) =>

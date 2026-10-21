@@ -11,7 +11,7 @@ import { ProviderIcon } from "./icons";
 import { EmptyState } from "./ui";
 
 /**
- * "Shared Drives" — the client Google Shared Drives (Team Drives) each connected
+ * "Shared Drives" - the client Google Shared Drives (Team Drives) each connected
  * Google Drive can reach, which live outside "Shared with me" and so never appear
  * in a normal listing. Grouped under their parent drive; open one to browse and
  * download its files/folders in the full file browser, or download the whole
@@ -20,7 +20,7 @@ import { EmptyState } from "./ui";
 export function SharedDrivesView() {
   const accounts = useApp((s) => s.accounts);
   const meta = useAccountMeta((s) => s.byId);
-  // Real Google Drive accounts only — the parents (not drivelink_/teamdrive_ links).
+  // Real Google Drive accounts only - the parents (not drivelink_/teamdrive_ links).
   const drives = accounts.filter((a) => a.provider === "drive" && a.id.startsWith("drive_"));
   // Opening a drive is handled app-wide by the Shared Drive dock (a persistent
   // tab rail + slide-over rendered in the shell), so it survives screen changes.
@@ -33,7 +33,7 @@ export function SharedDrivesView() {
           <HardDrive size={22} className="text-[var(--acc)]" /> Shared Drives
         </h1>
         <p className="mt-1 text-[13.5px] text-[var(--mut)]">
-          Client Shared Drives (Team Drives) each connected Google Drive can access. Open one to browse it in place — no leaving this screen.
+          Client Shared Drives (Team Drives) each connected Google Drive can access. Open one to browse it in place - no leaving this screen.
         </p>
       </div>
 
@@ -100,7 +100,7 @@ function DriveGroup({ account, label, onOpen }: { account: Account; label: strin
   );
 }
 
-/** A Shared Drive row — click to browse it in the slide-over; download the whole drive. */
+/** A Shared Drive row - click to browse it in the slide-over; download the whole drive. */
 function TeamDriveRow({ account, drive, first, onOpen }: { account: Account; drive: SharedDrive; first: boolean; onOpen: () => void }) {
   const download = async (e: React.MouseEvent) => {
     e.stopPropagation();

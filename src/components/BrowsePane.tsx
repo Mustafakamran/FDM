@@ -31,12 +31,13 @@ import { formatBytes, formatDate } from "../lib/format";
 import { sortItems, groupItems, DEFAULT_SORT, type SortField, type SortState, type GroupBy } from "../lib/sort";
 import { computeVirtualRange } from "../lib/virtual-rows";
 import type { RcItem } from "../lib/rc/browse";
-import { createFolder } from "../lib/rc/browse";
+import { createFolder, isPlainDrive, driveSegmentLabel, DRIVE_MY, DRIVE_SHARED } from "../lib/rc/browse";
 import { deleteItem, moveItem } from "../lib/tauri/commands";
 import type { Account, DownloadItem } from "../lib/tauri/commands";
 import { pickDownloadDest } from "../lib/ingest";
-import { openShortcutFolder, downloadShortcutFolder } from "../lib/drive-link";
+import { openShortcutFolder, downloadShortcutFolder, downloadDriveFile } from "../lib/drive-link";
 import { loadJson, saveJson } from "../lib/persisted";
+import { showError } from "../store/error-dialog";
 
 const SORT_KEY = "browse_sort";
 const GROUP_KEY = "browse_group";
@@ -60,7 +61,7 @@ function setDragGhost(e: React.DragEvent, name: string) {
 
 /** Base clipping for a single-line name (no ellipsis). */
 const NAME_CLIP = "min-w-0 overflow-hidden whitespace-nowrap";
-/** Right-edge fade mask — applied ONLY when the name is actually clipped (see
+/** Right-edge fade mask - applied ONLY when the name is actually clipped (see
  *  useOverflowFade), so short names never fade. Both props for WKWebView. */
 const FADE_MASK =
   "[mask-image:linear-gradient(to_right,#000_calc(100%-1.5rem),transparent)] [-webkit-mask-image:linear-gradient(to_right,#000_calc(100%-1.5rem),transparent)]";
@@ -88,11 +89,11 @@ function useOverflowFade<T extends HTMLElement>() {
 
 /**
  * Where to place a row's hover actions, in three states (measured per row):
- *  - "fixed"  — the name clears the reserved zone, so anchor the cluster at a
+ *  - "fixed"  - the name clears the reserved zone, so anchor the cluster at a
  *               fixed ~64% centre (no shift row-to-row).
- *  - "inline" — the name passes the fixed centre but there's still room on the
+ *  - "inline" - the name passes the fixed centre but there's still room on the
  *               row after it: slide the cluster right, just past the name.
- *  - "flyout" — no room left on the row (very long name / narrow list): lift the
+ *  - "flyout" - no room left on the row (very long name / narrow list): lift the
  *               cluster into a tab above the row.
  * Returns the computed `left` (px, cell-relative) for inline/flyout.
  */
@@ -125,7 +126,7 @@ function useActionMode(nameRef: React.RefObject<HTMLElement | null>, cellRef: Re
   return state;
 }
 
-/** Explorer view mode — Finder-style columns, a flat list, or a grid of cards. */
+/** Explorer view mode - Finder-style columns, a flat list, or a grid of cards. */
 type ViewMode = "columns" | "list" | "grid";
 function loadView(): ViewMode {
   const v = loadJson<ViewMode>(VIEW_KEY, "list");
@@ -212,7 +213,20 @@ function GroupHeader({ label, count }: { label: string; count: number }) {
   );
 }
 
-/** Stable-callback props every row/grid-item shares — identical shape so both
+/**
+ * Parent-folder id for a plain-Drive FILE row, to root a drivelink for its
+ * download. The id chain ends in the file's own id, so its parent is the segment
+ * before it; a loose "Shared with me" file (no folder id in the chain) carries
+ * its real parent in ParentId. Falls back to My Drive.
+ */
+function driveFileParent(item: RcItem): string {
+  const segs = item.Path.split("/").filter(Boolean);
+  const parent = segs[segs.length - 2];
+  if (parent && parent !== DRIVE_SHARED) return parent;
+  return item.ParentId || DRIVE_MY;
+}
+
+/** Stable-callback props every row/grid-item shares - identical shape so both
  * FileRow and FileGridItem can take the same object. */
 interface RowActions {
   toggle: (p: string, shiftKey?: boolean, list?: RcItem[]) => void;
@@ -269,7 +283,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
   );
   const entry = useIndex((s) => s.byAccount[account.id]);
   const enqueue = useTransfers((s) => s.enqueue);
-  // Active downloads for THIS account — powers the status-footer "N DOWNLOADING".
+  // Active downloads for THIS account - powers the status-footer "N DOWNLOADING".
   const activeDownloads = useTransfers((s) => s.jobs).filter((j) => j.accountId === account.id && !j.finished && !j.cancelled).length;
   const toast = useToasts((s) => s.push);
   const q = useSearch((s) => s.q);
@@ -305,7 +319,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
   const displayLabel = accountLabel(useAccountMeta((s) => s.byId[account.id]?.label), account);
 
   // Selection lives in a global store keyed by drive, so it PERSISTS across
-  // folder and drive navigation — you can build up a selection across drives
+  // folder and drive navigation - you can build up a selection across drives
   // and download it all at once.
   const selectionForAccount = useSelection((s) => s.byAccount[account.id]);
   const selected = useMemo(() => new Set(Object.keys(selectionForAccount ?? {})), [selectionForAccount]);
@@ -337,9 +351,9 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
   // List-view virtualization: a folder full of raw footage can hold thousands
   // of files, and rendering every row as a real DOM node is exactly what was
   // freezing the app on large folders. Only the rows in (or near) the
-  // viewport are ever mounted — see the `computeVirtualRange` call below.
+  // viewport are ever mounted - see the `computeVirtualRange` call below.
   const bodyRef = useRef<HTMLDivElement>(null);
-  // Outer view container (list/grid/columns) — the drag-drop hit-test zone, so a
+  // Outer view container (list/grid/columns) - the drag-drop hit-test zone, so a
   // drop works in every view, not just the virtualized list body.
   const viewRef = useRef<HTMLDivElement>(null);
   const scrollRaf = useRef<number | null>(null);
@@ -373,7 +387,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
     saveJson(SORT_KEY, sort);
   }, [sort]);
 
-  // Live, server-side Search + Recent — the "like the web" path. We NEVER crawl an
+  // Live, server-side Search + Recent - the "like the web" path. We NEVER crawl an
   // account into a local index automatically (Drive's "Shared with me" alone is
   // tens of TB). Search asks the provider directly (Drive files.list / Dropbox
   // search_v2); Recent uses Drive's modifiedTime sort. The store debounces the
@@ -412,8 +426,8 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
 
   // Folder-size resolution. Owned accounts are crawled once at link time, so the
   // index aggregate gives an instant size. Shared ("Shared with me") folders are
-  // NOT in the index and intentionally NOT auto-walked — they can be enormous or
-  // not owned — so they read "unknown" until the user calculates one on demand.
+  // NOT in the index and intentionally NOT auto-walked - they can be enormous or
+  // not owned - so they read "unknown" until the user calculates one on demand.
   const folderSizeState = (p: string): FolderSizeState => {
     if (folderIndexed(p)) return { kind: "known", bytes: aggOf(p)?.size ?? 0 };
     const v = browseSizes[browseKey(account.id, p)];
@@ -429,7 +443,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
     const st = folderSizeState(i.Path);
     return st.kind === "known" ? st.bytes : 0;
   };
-  // A folder's size counts for sorting only once it's actually known — so
+  // A folder's size counts for sorting only once it's actually known - so
   // still-computing folders park stably at the bottom instead of jumping.
   const sizeKnownOf = (i: RcItem): boolean => (i.IsDir ? folderSizeState(i.Path).kind === "known" : true);
   // Folder date: index "latest file" if crawled, else the folder's own mod time
@@ -456,7 +470,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
   const [pendingDelete, setPendingDelete] = useState<RcItem[] | null>(null);
   // Right-click context menu (cursor-anchored, one item at a time).
   const [menu, setMenu] = useState<{ x: number; y: number; item: RcItem } | null>(null);
-  // Background menu — right-clicking the empty space of a folder view.
+  // Background menu - right-clicking the empty space of a folder view.
   const [bgMenu, setBgMenu] = useState<{ x: number; y: number } | null>(null);
   // Marquee (click-drag rubber-band) selection rectangle, in viewport coords.
   // `leaving` drives the macOS-style fade-out on release.
@@ -523,7 +537,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
     const prefix = `${account.id} `;
     for (const k in allListings) if (k.startsWith(prefix)) for (const it of allListings[k] ?? []) byPath.set(it.Path, it);
     for (const it of items) byPath.set(it.Path, it);
-    // Keep the rectangle (and hit-test) inside the file section — never spill
+    // Keep the rectangle (and hit-test) inside the file section - never spill
     // over the sidebar or the preview panel.
     const cr = container.getBoundingClientRect();
     const clampX = (v: number) => Math.max(cr.left, Math.min(v, cr.right));
@@ -575,7 +589,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
   // True while an IN-APP drag (move/copy) is in flight. On macOS WKWebView an
   // element drag is a native drag session that comes through the OS drag handler
   // (HTML5 dragover/drop don't fire), so the OS handler routes to MOVE while this
-  // is set — highlight the hovered folder, suppress the upload overlay, and move
+  // is set - highlight the hovered folder, suppress the upload overlay, and move
   // on drop. `moveTargetRef` holds the valid folder path currently under cursor.
   const inAppDragRef = useRef(false);
   const moveTargetRef = useRef<string | null>(null);
@@ -641,7 +655,40 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
   const liveLoading = useBrowse((s) => (folderView ? s.loading[browseKey(account.id, path)] : false)) ?? false;
   const liveError = useBrowse((s) => (folderView ? s.errors[browseKey(account.id, path)] : undefined));
 
-  // List the current folder live whenever it changes — never wait for the crawl.
+  // A failed folder listing pops the global error dialog ONCE (Retry / Close) -
+  // no inline banner. Keyed on path+error so it fires once per distinct failure.
+  const shownErrRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${path}|${liveError ?? ""}`;
+    if (!folderView || !liveError || key === shownErrRef.current) return;
+    shownErrRef.current = key;
+    const notFound = /not found/i.test(liveError);
+    showError(
+      "Could not open this folder",
+      notFound
+        ? "This folder is not where FDM expected it. It may have been unshared, renamed, or moved on the cloud. Try Retry, or reach it from search or a Drive link."
+        : "FDM could not list this folder. Check your connection, then Retry.",
+      liveError,
+      () => void useBrowse.getState().ensure(account, path),
+    );
+  }, [folderView, liveError, path, account]);
+
+  // A failed account index/crawl also pops the dialog once (Retry = re-index),
+  // instead of a raw-dump inline card.
+  const indexError = status === "error" ? entry?.error : undefined;
+  const shownIdxErrRef = useRef<string>("");
+  useEffect(() => {
+    if (!indexError || indexError === shownIdxErrRef.current) return;
+    shownIdxErrRef.current = indexError;
+    showError(
+      "Could not index this account",
+      "FDM could not read this account's folders. Check the connection, then Retry.",
+      indexError,
+      () => useIndex.getState().recrawl(account),
+    );
+  }, [indexError, account]);
+
+  // List the current folder live whenever it changes, never wait for the crawl.
   useEffect(() => {
     if (folderView) {
       void useBrowse.getState().ensure(account, path);
@@ -649,7 +696,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
     }
   }, [folderView, path, account]);
 
-  // Restore the saved index from disk on every account open (no crawl) — so
+  // Restore the saved index from disk on every account open (no crawl) - so
   // folder sizes/counts persist across restarts and updates without re-indexing,
   // regardless of the auto-index setting. Only an explicit Re-index (or a new
   // upload's targeted per-folder index) re-crawls.
@@ -660,21 +707,21 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
   // Auto-index the drive in the background (when enabled) so every folder's
   // total SIZE + FILE COUNT is available by default. ensure() is idempotent
   // (serves from memory/disk, only crawls once) and runs on background threads,
-  // so the main thread stays smooth — the crawl only shows a progress bar.
+  // so the main thread stays smooth - the crawl only shows a progress bar.
   const autoIndex = useSettings((s) => s.autoIndex);
   useEffect(() => {
     if (!autoIndex) return;
-    // Don't auto-retry a crawl that ended in error — that would re-hammer the
+    // Don't auto-retry a crawl that ended in error - that would re-hammer the
     // provider on every visit to the account. The manual Re-index button still
     // lets the user retry. (ensure() itself skips loading/crawling/ready.)
     if (useIndex.getState().byAccount[account.id]?.status === "error") return;
-    // ensureAuto() (not ensure()) so a crawl the user cancelled — which settles
-    // status back to "idle" — is NOT silently restarted every time this pane
+    // ensureAuto() (not ensure()) so a crawl the user cancelled - which settles
+    // status back to "idle" - is NOT silently restarted every time this pane
     // remounts (e.g. after a search or account switch).
     void useIndex.getState().ensureAuto(account);
   }, [account, autoIndex]);
 
-  // Reset scroll position on navigation (selection now persists — it lives in
+  // Reset scroll position on navigation (selection now persists - it lives in
   // the global store, not here). Otherwise the virtualization window below would
   // briefly compute from the PREVIOUS folder's scroll offset.
   useEffect(() => {
@@ -701,7 +748,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
       return liveItems ?? EMPTY;
     };
     // Drop exact double-listings of the SAME object (same provider id). Genuinely
-    // distinct files that share a name (Drive allows this) are kept — they're
+    // distinct files that share a name (Drive allows this) are kept - they're
     // real duplicates in the drive, not a listing artifact.
     const seen = new Set<string>();
     return pick().filter((it) => {
@@ -717,7 +764,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, sort, index, browseSizes]);
 
-  // Optional grouping (Type / Date / Size) over the sorted list — opt-in; "none"
+  // Optional grouping (Type / Date / Size) over the sorted list - opt-in; "none"
   // yields a single unlabeled group so the render path is uniform.
   const grouped = groupBy !== "none";
   const groups = useMemo(
@@ -802,7 +849,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
   useEffect(() => {
     if (hlAccount !== account.id || !hlPath) return;
     const idx = items.findIndex((i) => i.Path === hlPath);
-    if (idx === -1) return; // not loaded yet — wait for items to fill in
+    if (idx === -1) return; // not loaded yet - wait for items to fill in
     const it = items[idx];
     useSelection.getState().add(account.id, [{ item: it, size: sizeOf(it) }]);
     // Center the row in the viewport (list view is virtualized by scrollTop).
@@ -826,7 +873,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
   const globalDrives = selectedDriveCount(selectionAll);
 
   // Shift+Click selects everything between the last-toggled row and this one
-  // (inclusive) — the conventional Finder/Explorer/Gmail range-select. Only a
+  // (inclusive) - the conventional Finder/Explorer/Gmail range-select. Only a
   // ref, not state: it doesn't need to trigger a render on its own. `list`
   // scopes the lookup + range to a specific listing (the columns view passes
   // the clicked column's items; list/grid default to the current folder).
@@ -855,7 +902,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
 
   // Upload local renders into the CURRENT folder. Editors connect their own
   // account and upload into a folder the owner shared with them (Editor
-  // permission) — no credentials change hands. Dropbox links are read-only.
+  // permission) - no credentials change hands. Dropbox links are read-only.
   const canUpload =
     folderView &&
     !searching &&
@@ -893,7 +940,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
             // Tauri reports the pointer in PHYSICAL px on some platforms and
             // already-logical px on others. elementFromPoint wants CSS (logical)
             // px, so only scale an axis down when it exceeds the CSS viewport
-            // (i.e. it's physical) — dividing an already-logical coord would
+            // (i.e. it's physical) - dividing an already-logical coord would
             // land the hit-test on the wrong (higher/left) row.
             const dpr = window.devicePixelRatio || 1;
             const x = pl.position.x > window.innerWidth ? pl.position.x / dpr : pl.position.x;
@@ -903,7 +950,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
             const folderEl = el && body && body.contains(el) ? (el.closest("[data-folder-path]") as HTMLElement | null) : null;
             const folderPath = folderEl?.getAttribute("data-folder-path") ?? null;
             if (inApp) {
-              // Move: highlight ONLY a valid destination folder — never the
+              // Move: highlight ONLY a valid destination folder - never the
               // background (dropping a folder into its own folder is a no-op).
               const tgt = folderPath !== null && canDropOnPath(folderPath) ? folderPath : null;
               if (tgt !== moveTargetRef.current) { moveTargetRef.current = tgt; setMoveOver(tgt); }
@@ -947,18 +994,28 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
     return () => { disposed = true; un?.(); dropTargetRef.current = null; setDropTarget(null); };
   }, [canUpload, account.id, path]);
 
-  // Queue a set of items, always prompting for a destination folder.
+  // Queue a set of items from THIS account, always prompting for a destination.
   async function enqueueItems(its: RcItem[]) {
     if (its.length === 0) return;
     const dest = await pickDownloadDest();
     if (!dest) return;
-    // Drive folder-shortcuts download via their id-rooted linked folder (their
-    // Path can't be reached over shared_with_me); everything else queues directly.
+    // Drive folders download via their id-rooted linked folder (their Path is an
+    // id chain / shared_with_me can't be name-pathed); everything else directly.
     for (const l of its.filter((i) => i.LinkFolderId)) {
       await downloadShortcutFolder(account.id, l.Name, l.LinkFolderId!, dest);
     }
     const normal = its.filter((i) => !i.LinkFolderId);
     if (normal.length === 0) return;
+    // Plain-Drive files are id-addressed: root a drivelink at each file's parent
+    // folder id and copy it by name (no usable rclone name-path).
+    if (isPlainDrive(account)) {
+      for (const f of normal) {
+        const parent = driveFileParent(f);
+        await downloadDriveFile(account.id, parent, driveSegmentLabel(account.id, parent), f.Name, sizeOf(f), dest);
+      }
+      toast(`Queued ${normal.length} download${normal.length === 1 ? "" : "s"}`, "success");
+      return;
+    }
     const chosen: DownloadItem[] = normal.map((i) => ({ path: i.Path, name: i.Name, isDir: i.IsDir, size: sizeOf(i), id: i.ID ?? "" }));
     enqueue(account.id, chosen, dest);
     toast(`Queued ${chosen.length} download${chosen.length === 1 ? "" : "s"}`, "success");
@@ -971,17 +1028,27 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
     if (totalSelectedCount(byAccount) === 0) return;
     const dest = await pickDownloadDest();
     if (!dest) return;
+    const allAccounts = useApp.getState().accounts;
     let queued = 0;
     for (const [accId, map] of Object.entries(byAccount)) {
       const entries = Object.values(map);
       if (entries.length === 0) continue;
-      // Drive folder-shortcuts route through their id-rooted linked folder.
+      // Drive folders route through their id-rooted linked folder.
       for (const e of entries.filter((e) => e.item.LinkFolderId)) {
         await downloadShortcutFolder(accId, e.item.Name, e.item.LinkFolderId!, dest);
         queued += 1;
       }
       const normal = entries.filter((e) => !e.item.LinkFolderId);
       if (normal.length === 0) continue;
+      const acct = allAccounts.find((a) => a.id === accId);
+      if (acct && isPlainDrive(acct)) {
+        for (const e of normal) {
+          const parent = driveFileParent(e.item);
+          await downloadDriveFile(accId, parent, driveSegmentLabel(accId, parent), e.item.Name, e.size, dest);
+          queued += 1;
+        }
+        continue;
+      }
       const chosen: DownloadItem[] = normal.map((e) => ({ path: e.item.Path, name: e.item.Name, isDir: e.item.IsDir, size: e.size, id: e.item.ID ?? "" }));
       enqueue(accId, chosen, dest);
       queued += chosen.length;
@@ -999,10 +1066,18 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
   actionsRef.current = {
     toggle,
     openFolder: (p) => navigate("all", p),
-    openDir: (item) =>
-      item.LinkFolderId
-        ? void openShortcutFolder(account.id, item.Name, item.LinkFolderId)
-        : navigate("all", item.Path),
+    openDir: (item) => {
+      // Plain Drive browses ID-native: Path is an id chain, so just navigate it
+      // (stays in the Drive-API browser - owned + shared both resolve by id).
+      if (isPlainDrive(account)) {
+        navigate("all", item.Path);
+        return;
+      }
+      // Inside a drivelink/team-drive account, a folder-shortcut still can't be
+      // reached by name-path - open its target id as a linked folder.
+      if (item.LinkFolderId) void openShortcutFolder(account.id, item.Name, item.LinkFolderId);
+      else navigate("all", item.Path);
+    },
     focus: (item) => setFocused(item),
     openPreview: (item) => usePreview.getState().open(account.id, reviewTarget(item)),
     openReview: (item) => openReview(account.id, reviewTarget(item)),
@@ -1042,7 +1117,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
     drop: (folder, copy) => actionsRef.current.drop(folder, copy),
   }).current;
 
-  // Build the right-click menu for one item — reuses every existing row action.
+  // Build the right-click menu for one item - reuses every existing row action.
   const menuItems = (item: RcItem): MenuItem[] => {
     const isStar = starred.includes(item.Path);
     const out: MenuItem[] = [];
@@ -1050,7 +1125,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
       out.push({ label: "Open", icon: FolderOpen, onClick: () => actionsRef.current.openDir(item) });
       out.push({ label: "Calculate size", icon: Calculator, onClick: () => calcSize(item.Path) });
       out.push({ label: folderIndexed(item.Path) ? "Re-index folder" : "Index folder", icon: FolderSearch, disabled: showCrawl, onClick: () => indexFolder(item.Path) });
-      // Manual workflow status — nested submenu keeps the parent menu tidy.
+      // Manual workflow status - nested submenu keeps the parent menu tidy.
       // Clicking the active status clears it.
       const cur = folderStatusMap?.[item.Path];
       const STATUS_ICON = { downloading: Download, on_hold: Pause, downloaded: Check, copied: HardDrive } as const;
@@ -1080,7 +1155,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
   // Menu for right-clicking the empty space of a folder view (no item under it).
   const bgMenuItems = (): MenuItem[] => {
     const out: MenuItem[] = [];
-    // Sort + Group submenus — the only way to sort in Columns view (no headers).
+    // Sort + Group submenus - the only way to sort in Columns view (no headers).
     const SORT_FIELDS: { f: SortField; label: string }[] = [
       { f: "name", label: "Name" }, { f: "modified", label: "Date modified" },
       { f: "size", label: "Size" }, { f: "type", label: "Type" },
@@ -1119,6 +1194,11 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
   };
 
   const segments = path ? path.split("/") : [];
+  // Drive paths are id chains, so a crumb's text comes from the id -> name cache,
+  // not the path segment itself. Other providers use the segment verbatim.
+  const drivePaths = isPlainDrive(account);
+  const crumbLabel = (seg: string) => (drivePaths ? driveSegmentLabel(account.id, seg) : seg);
+  const currentFolder = segments.length ? crumbLabel(segments[segments.length - 1]) : "";
   const showCrawl = status === "crawling" || status === "loading";
   // Folder views spin only while the LIVE listing is loading; Recent/Starred/Search
   // spin while their background index is still building.
@@ -1135,24 +1215,12 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
     <div className="flex h-full min-h-0 flex-col">
       {/* Indexing/crawl progress is shown by the floating IndexBanner, not here. */}
 
-      {/* Live-listing error (so a failed folder list isn't a silent empty screen). */}
-      {folderView && liveError && (
-        <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-5 py-2.5 text-sm text-[var(--error)]">
-          <AlertCircle size={15} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate" title={liveError}>
-            {/not found/i.test(liveError)
-              ? "This folder isn’t available anymore — it may have been unshared, renamed, or moved on the cloud. Go back and Refresh."
-              : `Couldn’t list this folder: ${liveError}`}
-          </span>
-          <button className="shrink-0 underline hover:text-[var(--text)]" onClick={() => void useBrowse.getState().ensure(account, path)}>Retry</button>
-        </div>
-      )}
 
       {/* Toolbar */}
       <div className="flex items-center gap-3 px-6 py-4">
-        {/* Back / Forward / Up — history-based navigation (also Alt+←/→ and the
+        {/* Back / Forward / Up - history-based navigation (also Alt+←/→ and the
             mouse back/forward buttons, wired globally in AppShell). Hidden when
-            embedded — global history would fight the host panel's own navigation. */}
+            embedded - global history would fight the host panel's own navigation. */}
         {!embedded && (
           <div className="flex shrink-0 items-center gap-0.5">
             <button
@@ -1196,7 +1264,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
                   <span className="text-[var(--faint)]">/</span>
                   <button
                     className="text-[var(--mut)] hover:text-[var(--ink)]"
-                    data-tip={segments.slice(0, -1).join(" / ")}
+                    data-tip={segments.slice(0, -1).map(crumbLabel).join(" / ")}
                     aria-label="Parent folders"
                     onClick={() => navigate(section, segments.slice(0, -1).join("/"))}
                   >
@@ -1213,9 +1281,9 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
                     <button
                       className={`truncate hover:text-[var(--ink)] ${last ? "font-semibold text-[var(--ink)]" : "max-w-[160px] shrink-[2] text-[var(--mut)]"}`}
                       onClick={() => setView({ kind: "browse", accountId: account.id, section, path: segments.slice(0, i + 1).join("/") })}
-                      data-tip={seg}
+                      data-tip={crumbLabel(seg)}
                     >
-                      {seg}
+                      {crumbLabel(seg)}
                     </button>
                   </span>
                 );
@@ -1227,12 +1295,12 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
         </div>
       </div>
 
-      {/* Second toolbar row: section pills left, action controls right — the
+      {/* Second toolbar row: section pills left, action controls right - the
           controls live here so the breadcrumb above gets the full width. */}
       <div className="flex items-center gap-3 px-6 pb-3">
         {!embedded && !q.trim() && (
           <div className="flex items-center gap-1.5">
-            {/* "Shared with me" pill dropped — the Shared Drives screen covers it. */}
+            {/* "Shared with me" pill dropped - the Shared Drives screen covers it. */}
             {(Object.keys(SECTION_TITLE) as Section[]).filter((k) => k !== "shared").map((k) => {
               const on = section === k;
               return (
@@ -1314,7 +1382,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
             </button>
           ))}
         </div>
-        {/* Group by — Type / Date / Size (or none). Applies to List + Grid. */}
+        {/* Group by - Type / Date / Size (or none). Applies to List + Grid. */}
         <div className="relative">
           <button
             onClick={() => setGroupOpen((o) => !o)}
@@ -1365,20 +1433,13 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
       <div
         className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
         onContextMenu={(e) => {
-          // Only when right-clicking empty space — rows/cards handle their own.
+          // Only when right-clicking empty space - rows/cards handle their own.
           if ((e.target as HTMLElement).closest("[data-row],[data-item]")) return;
           if (!folderView && !canUpload && items.length === 0) return;
           e.preventDefault();
           setBgMenu({ x: e.clientX, y: e.clientY });
         }}
       >
-        {status === "error" && (
-          <div className="mb-3 flex items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--error)]">
-            <AlertCircle size={16} /> {entry?.error}
-            <button className="ml-2 underline" onClick={() => useIndex.getState().recrawl(account)}>retry</button>
-          </div>
-        )}
-
         {spinner && !(columns && folderView && !q.trim()) ? (
           <FileListSkeleton />
         ) : serverState === "error" ? (
@@ -1440,7 +1501,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
             </thead>
             <tbody>
               {grouped ? (
-                // Grouped: header rows + all items (virtualization off — opt-in).
+                // Grouped: header rows + all items (virtualization off - opt-in).
                 groups.map((g) => (
                   <Fragment key={g.key}>
                     <tr className="bg-[var(--surface)]">
@@ -1489,20 +1550,20 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
           />
         )}
 
-        {/* Drop overlay — shown while dragging over the background (upload to the
+        {/* Drop overlay - shown while dragging over the background (upload to the
             CURRENT folder). Hovering a folder row highlights that row instead. */}
         {dropTarget === "" && (
           <div className="animate-fade pointer-events-none absolute inset-2 z-30 flex items-center justify-center rounded-[14px] border-2 border-dashed border-[var(--acc)] bg-[var(--accw)]">
             <div className="animate-pop flex items-center gap-2.5 rounded-[13px] border border-[var(--line2)] bg-[var(--card)] px-4 py-2.5 shadow-[var(--shadow-lg)]">
               <FileUp size={15} className="text-[var(--acc)]" />
               <span className="text-[12.5px] font-semibold text-[var(--ink)]">
-                Drop to upload to <span className="text-[var(--acc)]">{segments.length ? segments[segments.length - 1] : displayLabel}</span>
+                Drop to upload to <span className="text-[var(--acc)]">{currentFolder || displayLabel}</span>
               </span>
             </div>
           </div>
         )}
 
-        {/* Floating selection pill — spans EVERY drive's selection. */}
+        {/* Floating selection pill - spans EVERY drive's selection. */}
         {globalCount > 0 && (
           <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3.5 rounded-[13px] border border-[var(--line2)] bg-[var(--card)] py-2 pl-4 pr-2.5 shadow-[var(--shadow-lg)]">
             <span className="whitespace-nowrap font-mono text-[11.5px] text-[var(--ink)]">
@@ -1527,15 +1588,15 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
         )}
       </div>
 
-      {/* Right preview panel — toggleable so it doesn't obstruct browsing */}
+      {/* Right preview panel - toggleable so it doesn't obstruct browsing */}
       {showPreview && (
       <PreviewPanel
         item={focused}
         rootLabel={displayLabel}
-        currentFolderName={segments.length ? segments[segments.length - 1] : displayLabel}
+        currentFolderName={currentFolder || displayLabel}
         size={focused ? sizeOf(focused) : 0}
         dateStr={focused ? formatDate(dateOf(focused)) : ""}
-        parentName={segments.length ? segments[segments.length - 1] : "ROOT"}
+        parentName={currentFolder || "ROOT"}
         isStarred={focused ? starred.includes(focused.Path) : false}
         dl={focused ? dlStatusMap.get(focused.Path) : undefined}
         folderSize={focused && focused.IsDir ? folderSizeState(focused.Path) : undefined}
@@ -1557,7 +1618,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
         </span>
       </div>
 
-      {/* Delete confirmation (cloud deletes go to the provider Trash — recoverable). */}
+      {/* Delete confirmation (cloud deletes go to the provider Trash - recoverable). */}
       {pendingDelete && pendingDelete.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-6" onClick={() => !deleting && setPendingDelete(null)}>
           <div className="w-full max-w-md rounded-[12px] border border-[var(--border-strong)] bg-[var(--card)] p-5 shadow-[var(--shadow-lg)]" onClick={(e) => e.stopPropagation()}>
@@ -1582,7 +1643,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
         </div>
       )}
 
-      {/* New-folder dialog — name it, then create in the current folder. */}
+      {/* New-folder dialog - name it, then create in the current folder. */}
       {newFolder !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-6" onClick={() => !creatingFolder && setNewFolder(null)}>
           <div className="animate-pop w-full max-w-sm rounded-[12px] border border-[var(--border-strong)] bg-[var(--card)] p-5 shadow-[var(--shadow-lg)]" onClick={(e) => e.stopPropagation()}>
@@ -1591,7 +1652,7 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
               <h2 className="text-base font-semibold">New folder</h2>
             </div>
             <p className="mt-1.5 text-[12.5px] text-[var(--text-2)]">
-              In <span className="font-mono text-[var(--text)]">{segments.length ? segments[segments.length - 1] : displayLabel}</span>
+              In <span className="font-mono text-[var(--text)]">{currentFolder || displayLabel}</span>
             </p>
             <input
               autoFocus
@@ -1784,7 +1845,7 @@ const FileRow = memo(function FileRow({
         <div className="flex min-w-0 items-center gap-3">
           {nameCell}
         </div>
-        {/* Hover actions — 3 states from useActionMode (fixed / inline-shift /
+        {/* Hover actions - 3 states from useActionMode (fixed / inline-shift /
             flyout). All share the same measured horizontal `left`; flyout lifts
             above the row with a merged tab background. */}
         {action.mode === "flyout" ? (
@@ -1872,7 +1933,7 @@ const FileRow = memo(function FileRow({
   prev.dl?.pct === next.dl?.pct &&
   folderSizeEqual(prev.folderSize, next.folderSize));
 
-/** One grid-view card — same memoization rationale as FileRow. */
+/** One grid-view card - same memoization rationale as FileRow. */
 const FileGridItem = memo(function FileGridItem({
   item,
   isSelected,
@@ -1934,7 +1995,7 @@ const FileGridItem = memo(function FileGridItem({
         onClick={(e) => (e.shiftKey ? actions.toggle(item.Path, true) : item.IsDir ? actions.openDir(item) : actions.focus(item))}
         onDoubleClick={() => !item.IsDir && isPreviewable(item.Name) && actions.openPreview(item)}
       >
-        {/* Icon "container" — big glyph on a rounded tile that lights up on
+        {/* Icon "container" - big glyph on a rounded tile that lights up on
             hover/selection (the macOS Finder look). The name sits BELOW it. */}
         <span className={`relative flex h-[64px] w-[64px] items-center justify-center rounded-[16px] transition-colors ${isSelected ? "bg-[var(--accw)]" : "group-hover:bg-[var(--soft)]"}`}>
           <ft.Icon size={38} style={{ color: ft.color }} />
@@ -1974,7 +2035,7 @@ function PvRow({ k, v, mono, wrap }: { k: string; v: string; mono?: boolean; wra
   );
 }
 
-/** Right preview panel — a focused file's details + actions, or a folder card. */
+/** Right preview panel - a focused file's details + actions, or a folder card. */
 function PreviewPanel({
   item, rootLabel, currentFolderName, size, dateStr, parentName, isStarred, dl, folderSize, folderStats, onIndexFolder, indexing, actions,
 }: {
@@ -2018,8 +2079,8 @@ function PreviewPanel({
         </div>
         <div className="flex flex-col gap-2 px-4 py-3">
           <PvRow k="TYPE" v={ft.label} />
-          <PvRow k="SIZE" v={size > 0 ? formatBytes(size) : "—"} mono />
-          <PvRow k="MODIFIED" v={dateStr || "—"} mono />
+          <PvRow k="SIZE" v={size > 0 ? formatBytes(size) : "-"} mono />
+          <PvRow k="MODIFIED" v={dateStr || "-"} mono />
           <PvRow k="PATH" v={"/" + item.Path} mono wrap />
         </div>
         <div className="mt-auto flex flex-col gap-2 px-4 pb-4">
@@ -2052,7 +2113,7 @@ function PreviewPanel({
   // Folder focused, or nothing focused → show the current/selected folder with
   // its RECURSIVE totals (all files + all subfolders anywhere beneath it).
   const name = item ? item.Name : currentFolderName;
-  const sizeStr = folderSize?.kind === "known" && folderSize.bytes > 0 ? formatBytes(folderSize.bytes) : folderSize?.kind === "loading" ? "…" : "—";
+  const sizeStr = folderSize?.kind === "known" && folderSize.bytes > 0 ? formatBytes(folderSize.bytes) : folderSize?.kind === "loading" ? "…" : "-";
   const fmt = (n: number) => n.toLocaleString();
   return (
     <div className="flex w-[296px] shrink-0 flex-col overflow-y-auto border-l border-[var(--line)]">
@@ -2065,7 +2126,7 @@ function PreviewPanel({
       <div className="flex flex-col gap-2 px-5 py-4">
         <PvRow k="TYPE" v="Folder" />
         <PvRow k="SIZE" v={sizeStr} mono />
-        {/* Recursive totals — every file/subfolder anywhere beneath this folder,
+        {/* Recursive totals - every file/subfolder anywhere beneath this folder,
             not just its direct children. Available once the subtree is indexed. */}
         {folderStats.indexed ? (
           <>
@@ -2146,7 +2207,7 @@ function ColumnsView({
               <span className="shrink-0 font-mono text-[9.5px] text-[var(--faint)]">{list?.length ?? ""}</span>
             </div>
             {list === undefined ? (
-              // Skeleton confined to THIS column — already-loaded columns stay visible.
+              // Skeleton confined to THIS column - already-loaded columns stay visible.
               <div data-testid="column-skeleton">
                 {Array.from({ length: 7 }).map((_, si) => (
                   <div key={si} className="flex items-center gap-2 px-2 py-[7px]">
@@ -2196,7 +2257,7 @@ function ColumnsView({
                     onContextMenu={(e) => { e.preventDefault(); actions.contextMenu(e.clientX, e.clientY, it); }}
                     className={`group flex cursor-pointer select-none items-center gap-2 rounded-[8px] px-2 py-1.5 ${it.Path === dropTarget ? "bg-[var(--accw)] outline-dashed outline-1 outline-[var(--acc)]" : hi ? "bg-[var(--accw)]" : "hover:bg-[var(--soft)]"}`}
                   >
-                    {/* Selection tick — folders too. Shift ranges within this column. */}
+                    {/* Selection tick - folders too. Shift ranges within this column. */}
                     <button
                       onClick={(e) => { e.stopPropagation(); actions.toggle(it.Path, e.shiftKey, list); actions.focus(it); }}
                       aria-label={`Select ${it.Name}`}
@@ -2206,7 +2267,7 @@ function ColumnsView({
                     </button>
                     <span className="relative shrink-0">
                       {it.IsDir ? <Folder size={14} className={hi ? "text-[var(--acc)]" : "text-[var(--mut)]"} /> : <ft.Icon size={14} style={{ color: ft.color }} />}
-                      {/* Mini open/downloaded dot — column-sized version of FolderBadge. */}
+                      {/* Mini open/downloaded dot - column-sized version of FolderBadge. */}
                       {(hasDl || visited) && (
                         <span
                           data-tip={hasDl ? "Has downloads" : "Opened"}

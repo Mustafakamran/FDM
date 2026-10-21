@@ -112,7 +112,7 @@ describe("sortItems", () => {
   });
 
   it("size sort parks still-computing folders at the bottom regardless of direction", () => {
-    // 'big' has no known size yet (sizeKnown=false) — it must sit last in BOTH
+    // 'big' has no known size yet (sizeKnown=false) - it must sit last in BOTH
     // directions rather than being treated as 0 and jumping to the top.
     const rs: SortResolvers = {
       sizeOf: (i) => (i.IsDir ? agg[i.Path]?.size ?? 0 : Math.max(0, i.Size)),

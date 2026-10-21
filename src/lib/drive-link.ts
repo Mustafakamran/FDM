@@ -7,7 +7,7 @@ import { useToasts } from "../store/toast";
  * A Google Drive folder-SHORTCUT can't be reached by name-path (its target lives
  * outside the `shared_with_me` namespace and folder names may contain `/`), so we
  * root a linked-folder account (`drivelink_*`, via get_or_create_drive_link) at
- * the target folder id — the same engine as "Add Drive link" — and browse/download
+ * the target folder id - the same engine as "Add Drive link" - and browse/download
  * that. Reused across the browse pane and search results.
  */
 
@@ -33,6 +33,26 @@ export async function downloadShortcutFolder(baseAccountId: string, label: strin
   } catch (e) {
     useToasts.getState().push(`Couldn’t download “${label}”: ${e instanceof Error ? e.message : String(e)}`, "error");
   }
+}
+
+/**
+ * Download ONE Google Drive file addressed by id. A plain-Drive account browses
+ * by id (no rclone name-path), so to hand the file to rclone we root a drivelink
+ * at its PARENT folder id and copy it by name - the same id-rooted engine as a
+ * folder-shortcut, inside which a single filename resolves cleanly.
+ */
+export async function downloadDriveFile(
+  baseAccountId: string,
+  parentFolderId: string,
+  parentLabel: string,
+  fileName: string,
+  size: number,
+  dest: string,
+): Promise<void> {
+  const acct = await getOrCreateDriveLink(baseAccountId, parentLabel, parentFolderId);
+  await useApp.getState().loadAccounts();
+  const item: DownloadItem = { path: fileName, name: fileName, isDir: false, size, id: "" };
+  useTransfers.getState().enqueue(acct.id, [item], dest);
 }
 
 /** Open a Google Shared Drive (Team Drive) as a linked account and browse it. */
