@@ -1,28 +1,16 @@
-import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { invoke } from "@tauri-apps/api/core";
 import { useSettings } from "../store/settings";
 
 /**
  * "Transfer complete" feedback: a desktop notification + a short chime, each
- * gated by its own setting. Both are best-effort - a denied notification
- * permission or a blocked AudioContext must never throw into the poll loop.
+ * gated by its own setting. Both are best-effort - a failed notification or a
+ * blocked AudioContext must never throw into the poll loop.
+ *
+ * The desktop notification is posted from RUST (`notify_desktop`), not the
+ * webview plugin: on macOS the webview plugin silently drops notifications from
+ * the unsigned `tauri dev` binary, whereas the Rust side uses `osascript` which
+ * works in dev too (and the native plugin on Windows/Linux).
  */
-
-let permo: Promise<boolean> | null = null;
-
-/** Resolve (and cache) whether we may post desktop notifications. */
-async function ensurePermission(): Promise<boolean> {
-  if (!permo) {
-    permo = (async () => {
-      try {
-        if (await isPermissionGranted()) return true;
-        return (await requestPermission()) === "granted";
-      } catch {
-        return false;
-      }
-    })();
-  }
-  return permo;
-}
 
 /** A soft two-note chime via Web Audio - no bundled asset, no autoplay file. */
 function playChime(): void {
@@ -62,15 +50,10 @@ export function notifyTransferComplete(name: string, kind: CompleteKind): void {
   const { notifyOnComplete, completionSound } = useSettings.getState();
   if (completionSound) playChime();
   if (!notifyOnComplete) return;
-  void ensurePermission().then((ok) => {
-    if (!ok) return;
-    try {
-      sendNotification({
-        title: kind === "upload" ? "Upload complete" : "Download complete",
-        body: name,
-      });
-    } catch {
-      /* ignore */
-    }
+  void invoke("notify_desktop", {
+    title: kind === "upload" ? "Upload complete" : "Download complete",
+    body: name,
+  }).catch(() => {
+    /* not in a Tauri webview (tests) / notification unavailable - ignore */
   });
 }

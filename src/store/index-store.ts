@@ -13,6 +13,7 @@ import {
 } from "../lib/account-index";
 import type { Account } from "../lib/tauri/commands";
 import { useToasts } from "./toast";
+import { driveSegmentLabel } from "../lib/rc/browse";
 
 export type IndexStatus = "idle" | "loading" | "crawling" | "ready" | "error";
 
@@ -110,8 +111,15 @@ export const useIndex = create<IndexState>((set, get) => {
           patch(ev.payload.accountId, { status: "ready", progress: blankProgress(), index: idx, error: undefined, target: undefined });
           if (wasCrawling) {
             // Per-folder index → name that folder; whole-drive → total file count.
-            const msg = target
-              ? `Indexed ${target}`
+            // Drive targets are id chains, so resolve the id to a folder name.
+            const acct = ev.payload.accountId;
+            const label = target
+              ? acct.startsWith("drive_")
+                ? driveSegmentLabel(acct, target.split("/").filter(Boolean).pop() ?? target)
+                : (target.split("/").pop() ?? target)
+              : undefined;
+            const msg = label
+              ? `Indexed ${label}`
               : `Index complete · ${(idx?.tree ? Object.values(idx.tree).reduce((n, arr) => n + arr.filter((i) => !i.IsDir).length, 0) : 0).toLocaleString()} files`;
             useToasts.getState().push(msg, "success");
           }

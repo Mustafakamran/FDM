@@ -214,6 +214,28 @@ struct FileTask {
 
 /// Exponential backoff (0.5s, 1s, 2s, … capped 30s) for `attempt`, waking early
 /// if the job is paused/cancelled so a stuck retry doesn't ignore a pause.
+/// Turn a provider's HTTP error (status + raw body, often a wall of API JSON)
+/// into one clean sentence for the transfer row - no raw JSON, no stack of codes.
+fn friendly_http_error(status: u16, body: &str) -> String {
+    // Pull the provider's own human message out of the JSON, if present + short.
+    let api_msg = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()).map(String::from))
+        .filter(|m| !m.is_empty() && m.len() <= 160);
+    let base = match status {
+        401 => "Sign-in expired. Reconnect this account and try again.".to_string(),
+        403 => "Access denied. You may not have permission to download this file.".to_string(),
+        404 => "File not found. It may have been moved, deleted, or unshared.".to_string(),
+        429 => "The provider is rate-limiting downloads. It will retry shortly.".to_string(),
+        s if (500..600).contains(&s) => "The provider had a temporary server error. It will retry.".to_string(),
+        s => format!("Download failed (HTTP {s})."),
+    };
+    match api_msg {
+        Some(m) if status != 401 => format!("{base} ({m})"),
+        _ => base,
+    }
+}
+
 fn backoff(attempt: u32, h: &NativeHandles) {
     let secs = (0.5_f64 * 2f64.powi(attempt.saturating_sub(1) as i32)).min(30.0);
     let mut slept = 0.0;
@@ -279,7 +301,7 @@ fn fetch_block(auth: &Auth, client: &reqwest::blocking::Client, t: &FileTask, of
         if !status.is_success() {
             // A permanent client error (404 gone, 400, …) — fail.
             let b = resp.text().unwrap_or_default();
-            return Err(format!("download {status}: {}", b.chars().take(300).collect::<String>()));
+            return Err(friendly_http_error(status.as_u16(), &b));
         }
         match resp.bytes() {
             Ok(bytes) => return Ok(bytes.to_vec()),
@@ -645,7 +667,7 @@ fn download_http(url: &str, dest: &Path, headers: &HashMap<String, String>, h: &
     }
     if !status.is_success() {
         let b = resp.text().unwrap_or_default();
-        return Err(format!("download {status}: {}", b.chars().take(200).collect::<String>()));
+        return Err(friendly_http_error(status.as_u16(), &b));
     }
     // No content-type guard: download whatever the server returns (like wget/curl).
     // The extension's interception hands us the real file URL; a guard here just
@@ -927,6 +949,8 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
         match provider::kind_of(&account_id) {
             Kind::Wetransfer => return crate::wetransfer::download_share(&item.id, Path::new(&dest), &h),
             Kind::Filemail => return crate::filemail::download_share(&item.id, Path::new(&dest), &h),
+            // MEGA public folder: listed + decrypted natively (E2E encrypted).
+            Kind::Mega => return crate::mega::download_share(&item.id, Path::new(&dest), &h),
             // Frame.io: the quality choice (originals vs a proxy rendition) rides
             // in the item's headers, set by the paste-a-link UI.
             Kind::Frameio => {
@@ -966,7 +990,7 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
             .map_err(|e| e.to_string())?;
         let dest_root = Path::new(&dest);
 
-        let tasks = if item.is_dir {
+        let mut tasks = if item.is_dir {
             // A URL download is always a single file; reject folder selections so
             // an http item never reaches enumerate_folder (which needs rclone).
             if provider::kind_of(&account_id) == Kind::Http {
@@ -976,6 +1000,25 @@ pub fn download_item(app: AppHandle, conn: RcConnection, account_id: String, ite
         } else {
             vec![FileTask { fid: item.id.clone(), path: item.path.clone(), size: item.size, dest: safe_join(dest_root, &item.name) }]
         };
+
+        // Drive rows can be SHORTCUTS (a pointer with no binary content, so
+        // `files/{id}?alt=media` 404s). Resolve each file's id to its real target
+        // before downloading, so shortcut-based folders (common for footage
+        // organised as links to shared files) download correctly. Best-effort and
+        // id-keyed, so a normal file's id is returned unchanged.
+        if auth.kind == Kind::Drive {
+            for t in tasks.iter_mut() {
+                // rclone encodes a shortcut's id as `targetId\tshortcutId`; keep the
+                // real (target) id. Then resolve shortcut -> target id + real size
+                // (the browse size is 0 for a shortcut, which would write a 0 B file).
+                let clean = t.fid.split('\t').next().unwrap_or(&t.fid).to_string();
+                let (id, size) = crate::drive::resolve_download_target(&conn, &account_id, &clean);
+                t.fid = id;
+                if size > 0 {
+                    t.size = size;
+                }
+            }
+        }
 
         // Publish the real total (sum of ALL files) so a resumed folder shows its
         // full size + true progress, not just the bytes already on disk (the job's

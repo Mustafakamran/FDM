@@ -50,6 +50,8 @@ export const WETRANSFER_ACCOUNT_ID = "wetransfer";
 export const FILEMAIL_ACCOUNT_ID = "filemail";
 /** Synthetic account for Frame.io public share links (fetched natively, secondary lane). */
 export const FRAMEIO_ACCOUNT_ID = "frameio";
+/** Synthetic account for MEGA public folder links (fetched + decrypted natively). */
+export const MEGA_ACCOUNT_ID = "mega";
 /** Synthetic account for BitTorrent (magnet / .torrent) via the rqbit engine. */
 export const TORRENT_ACCOUNT_ID = "torrent";
 
@@ -150,6 +152,9 @@ export function classifyTransferUrl(url: string): { accountId: string; name: str
   }
   if (host === "frame.io" || host.endsWith(".frame.io") || host === "f.io") {
     return { accountId: FRAMEIO_ACCOUNT_ID, name: "Frame.io share" };
+  }
+  if (host === "mega.nz" || host === "mega.co.nz" || host.endsWith(".mega.nz")) {
+    return { accountId: MEGA_ACCOUNT_ID, name: "MEGA folder" };
   }
   return { accountId: HTTP_ACCOUNT_ID, name: filenameFromUrl(url) };
 }

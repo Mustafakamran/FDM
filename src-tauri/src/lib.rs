@@ -6,6 +6,8 @@ pub mod drive;
 pub mod dropbox;
 pub mod filemail;
 pub mod frameio;
+pub mod mega;
+pub mod notify;
 pub mod hls;
 pub mod index;
 pub mod ingest;
@@ -285,6 +287,7 @@ pub fn run() {
             drive::drive_folder_path,
             drive::drive_resolve_shortcut,
             drive::drive_list,
+            notify::notify_desktop,
             drive::drive_share_link,
             drive::dropbox_share_link,
             index::index_start,

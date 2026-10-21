@@ -18,9 +18,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
-// v4: Drive is ID-native (id-chain paths, shortcut-safe sizes). Older on-disk
-// indexes used name-paths and double-counted shortcut trees, so they're dropped.
-const INDEX_VERSION: u32 = 4;
+// v6: Drive crawl now resolves FILE-shortcut target sizes (v5 left them 0, so
+// shortcut-based folders showed no size) - drop v5 so sizes recompute.
+const INDEX_VERSION: u32 = 6;
 
 /// Auto-index worker pool size. Kept small (BFS, non-recursive) so a crawl never
 /// saturates the shared rclone daemon and freezes the rest of the app.
@@ -396,18 +396,29 @@ fn drive_list_children(
     };
     Ok(rows
         .into_iter()
-        // Skip shortcuts: a shortcut is a pointer, not containment, so counting /
-        // recursing its target double-counts a tree already indexed where it lives
-        // (this is what inflated My Drive to ~18TB). Browse still shows shortcuts.
-        .filter(|r| !r.is_shortcut)
-        .map(|r| Entry {
-            name: r.name,
-            path: format!("{}/{}", dir.path, r.id),
-            size: r.size as i64,
-            is_dir: r.is_dir,
-            mod_time: r.mod_time,
-            mime_type: r.mime_type,
-            id: r.id,
+        // Skip only FOLDER shortcuts: following a folder-shortcut recrawls a whole
+        // tree already indexed where it lives, which inflated My Drive to ~18TB.
+        // FILE shortcuts are KEPT - for footage organised as links to shared files
+        // they ARE the content; each is counted once by its target id (deduped).
+        .filter(|r| !(r.is_shortcut && r.is_dir))
+        .map(|r| {
+            // A FILE shortcut lists with size 0 (the target's size isn't in the
+            // listing), so fetch it so folder sizes are real. One extra call per
+            // shortcut file - fine for an explicit/background index.
+            let size = if r.is_shortcut && !r.is_dir {
+                crate::drive::file_size_by_id(client, &access, &r.id)
+            } else {
+                r.size as i64
+            };
+            Entry {
+                name: r.name,
+                path: format!("{}/{}", dir.path, r.id),
+                size,
+                is_dir: r.is_dir,
+                mod_time: r.mod_time,
+                mime_type: r.mime_type,
+                id: r.id,
+            }
         })
         .collect())
 }

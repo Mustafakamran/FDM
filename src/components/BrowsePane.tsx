@@ -31,11 +31,11 @@ import { formatBytes, formatDate } from "../lib/format";
 import { sortItems, groupItems, DEFAULT_SORT, type SortField, type SortState, type GroupBy } from "../lib/sort";
 import { computeVirtualRange } from "../lib/virtual-rows";
 import type { RcItem } from "../lib/rc/browse";
-import { createFolder, isPlainDrive, driveSegmentLabel, DRIVE_MY, DRIVE_SHARED } from "../lib/rc/browse";
+import { createFolder, isPlainDrive, driveSegmentLabel } from "../lib/rc/browse";
 import { deleteItem, moveItem } from "../lib/tauri/commands";
 import type { Account, DownloadItem } from "../lib/tauri/commands";
 import { pickDownloadDest } from "../lib/ingest";
-import { openShortcutFolder, downloadShortcutFolder, downloadDriveFile } from "../lib/drive-link";
+import { openShortcutFolder, downloadShortcutFolder } from "../lib/drive-link";
 import { loadJson, saveJson } from "../lib/persisted";
 import { showError } from "../store/error-dialog";
 
@@ -211,19 +211,6 @@ function GroupHeader({ label, count }: { label: string; count: number }) {
       <span className="h-px flex-1 bg-[var(--line)]" />
     </div>
   );
-}
-
-/**
- * Parent-folder id for a plain-Drive FILE row, to root a drivelink for its
- * download. The id chain ends in the file's own id, so its parent is the segment
- * before it; a loose "Shared with me" file (no folder id in the chain) carries
- * its real parent in ParentId. Falls back to My Drive.
- */
-function driveFileParent(item: RcItem): string {
-  const segs = item.Path.split("/").filter(Boolean);
-  const parent = segs[segs.length - 2];
-  if (parent && parent !== DRIVE_SHARED) return parent;
-  return item.ParentId || DRIVE_MY;
 }
 
 /** Stable-callback props every row/grid-item shares - identical shape so both
@@ -1006,14 +993,13 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
     }
     const normal = its.filter((i) => !i.LinkFolderId);
     if (normal.length === 0) return;
-    // Plain-Drive files are id-addressed: root a drivelink at each file's parent
-    // folder id and copy it by name (no usable rclone name-path).
+    // Plain-Drive files download by their (shortcut-resolved) file ID via the
+    // native Drive engine (files/{id}?alt=media) - NOT by name, which would hit
+    // an un-downloadable shortcut row. Path is left empty (id is the locator).
     if (isPlainDrive(account)) {
-      for (const f of normal) {
-        const parent = driveFileParent(f);
-        await downloadDriveFile(account.id, parent, driveSegmentLabel(account.id, parent), f.Name, sizeOf(f), dest);
-      }
-      toast(`Queued ${normal.length} download${normal.length === 1 ? "" : "s"}`, "success");
+      const chosen: DownloadItem[] = normal.map((i) => ({ path: "", name: i.Name, isDir: false, size: sizeOf(i), id: i.ID ?? "" }));
+      enqueue(account.id, chosen, dest);
+      toast(`Queued ${chosen.length} download${chosen.length === 1 ? "" : "s"}`, "success");
       return;
     }
     const chosen: DownloadItem[] = normal.map((i) => ({ path: i.Path, name: i.Name, isDir: i.IsDir, size: sizeOf(i), id: i.ID ?? "" }));
@@ -1042,11 +1028,10 @@ export function BrowsePane({ account, section, path, onNavigate }: { account: Ac
       if (normal.length === 0) continue;
       const acct = allAccounts.find((a) => a.id === accId);
       if (acct && isPlainDrive(acct)) {
-        for (const e of normal) {
-          const parent = driveFileParent(e.item);
-          await downloadDriveFile(accId, parent, driveSegmentLabel(accId, parent), e.item.Name, e.size, dest);
-          queued += 1;
-        }
+        // Download by resolved file ID (handles shortcut rows); never by name.
+        const chosen: DownloadItem[] = normal.map((e) => ({ path: "", name: e.item.Name, isDir: false, size: e.size, id: e.item.ID ?? "" }));
+        enqueue(accId, chosen, dest);
+        queued += chosen.length;
         continue;
       }
       const chosen: DownloadItem[] = normal.map((e) => ({ path: e.item.Path, name: e.item.Name, isDir: e.item.IsDir, size: e.size, id: e.item.ID ?? "" }));

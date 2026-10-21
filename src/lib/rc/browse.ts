@@ -183,9 +183,13 @@ export async function listFolder(account: Account, path: string): Promise<RcItem
 
   let list = await rawList(buildFs(account), path);
 
-  // Resolve Drive shortcuts so a folder-shortcut opens its real folder instead of
-  // showing an un-openable "FILE" (see resolveDriveShortcuts).
   if (account.provider === "drive") {
+    // rclone reports a shortcut's ID as a TAB-separated `targetId\tshortcutId`
+    // compound; only the first (target) id is a real, downloadable file id - the
+    // raw compound 404s on files/{id}?alt=media. Clean it before anything uses it.
+    list = list.map((i) => (i.ID && i.ID.includes("\t") ? { ...i, ID: i.ID.split("\t")[0] } : i));
+    // Resolve Drive shortcuts so a folder-shortcut opens its real folder instead of
+    // showing an un-openable "FILE" (see resolveDriveShortcuts).
     list = await resolveDriveShortcuts(list, () => account.id);
   }
 

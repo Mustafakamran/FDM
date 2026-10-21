@@ -217,6 +217,22 @@ pub async fn drive_list(
     .map_err(|e| e.to_string())?
 }
 
+/// Byte size of one Drive file by id (0 on any error). Used by the index crawler
+/// to get a FILE SHORTCUT's real size - `files.list` reports a shortcut's size as
+/// 0, so a folder of shortcuts would otherwise show no size.
+pub(crate) fn file_size_by_id(client: &reqwest::blocking::Client, access: &str, id: &str) -> i64 {
+    let url = format!("https://www.googleapis.com/drive/v3/files/{id}?fields=size&supportsAllDrives=true");
+    client
+        .get(&url)
+        .bearer_auth(access)
+        .send()
+        .ok()
+        .filter(|r| r.status().is_success())
+        .and_then(|r| r.json::<Value>().ok())
+        .and_then(|v| v.get("size").and_then(|s| s.as_str()).and_then(|s| s.parse::<i64>().ok()))
+        .unwrap_or(0)
+}
+
 /// HTTP-only Drive `files.list` for one folder id (no token fetch - caller passes
 /// a fresh access token). Resolves shortcuts inline and follows pagination.
 /// Shared by the browse command and the background index crawler.
@@ -287,6 +303,42 @@ pub(crate) fn drive_list_rows(
         }
     }
     Ok(rows)
+}
+
+/// Resolve a Drive file id to its DOWNLOADABLE target id AND byte size.
+///
+/// Two problems this fixes, both for Drive SHORTCUTS: (1) a shortcut has no
+/// binary content, so `alt=media` on its own id 404s - the target id must be used
+/// instead; (2) the browse listing reports a shortcut's size as 0 (the Drive
+/// `files.list` shortcutDetails carry no size), so the block engine would write an
+/// empty file - the target's real size must be fetched. One `files.get` for a
+/// normal file, two for a shortcut. Best-effort: returns `(fid, 0)` on any error,
+/// and a 0 size simply means "size unknown" (the engine streams the whole body).
+pub fn resolve_download_target(conn: &RcConnection, account_id: &str, fid: &str) -> (String, i64) {
+    let fallback = (fid.to_string(), 0i64);
+    let access = match drive_access_token(conn, account_id) {
+        Ok(a) => a,
+        Err(_) => return fallback,
+    };
+    let client = reqwest::blocking::Client::new();
+    let get = |id: &str| -> Option<Value> {
+        let url = format!("https://www.googleapis.com/drive/v3/files/{id}?fields=size,shortcutDetails/targetId&supportsAllDrives=true");
+        let resp = client.get(&url).bearer_auth(&access).send().ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        resp.json().ok()
+    };
+    let size_of = |v: &Value| v.get("size").and_then(|s| s.as_str()).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+    let Some(v) = get(fid) else { return fallback };
+    match v.get("shortcutDetails").and_then(|s| s.get("targetId")).and_then(|t| t.as_str()) {
+        Some(target) => {
+            // Shortcut: the target carries the real binary + size.
+            let size = get(target).map(|tv| size_of(&tv)).unwrap_or(0);
+            (target.to_string(), size)
+        }
+        None => (fid.to_string(), size_of(&v)),
+    }
 }
 
 /// A resolved Google Drive shortcut's target.
